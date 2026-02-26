@@ -1,0 +1,31 @@
+# Buddy configuration
+# See README for all options. Environment variables override these values:
+#   BUDDY_API_KEY, BUDDY_BASE_URL, BUDDY_MODEL
+# Legacy AGENT_* variables are still accepted for compatibility.
+
+[api]
+base_url = "https://api.openai.com/v1"   # any OpenAI-compatible endpoint
+# Only one of api_key, api_key_env, or api_key_file may be set.
+api_key_env = "OPENAI_API_KEY"             # env var name containing your API key
+# api_key = "sk-..."                       # inline API key (discouraged)
+# api_key_file = "/path/to/key.txt"        # file containing the API key
+model = "gpt-5.2-codex"
+# context_limit = 128000                  # auto-detected from model if omitted
+
+[agent]
+# system_prompt = "Optional override. If unset, uses the built-in prompt template."
+max_iterations = 20
+# temperature = 0.7
+# top_p = 1.0
+
+[tools]
+shell_enabled = true
+fetch_enabled = true
+files_enabled = true
+search_enabled = true
+shell_confirm = true                       # ask before running shell commands
+
+[display]
+color = true
+show_tokens = false
+show_tool_calls = true

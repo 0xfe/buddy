@@ -1,0 +1,19 @@
+# Rust build artifacts
+/target/
+
+# Local runtime/session state
+/.buddyx/
+/.agentx/
+old/
+
+# Environment/local secrets
+.env
+.env.*
+buddy.toml
+agent.toml
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo

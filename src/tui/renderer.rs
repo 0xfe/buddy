@@ -1,0 +1,720 @@
+//! Terminal output renderer for status and trace messages.
+
+use crate::tui::highlight::{highlight_lines_for_path, StyledToken};
+use crate::tui::markdown::render_markdown_for_terminal;
+use crate::tui::progress::{set_progress_enabled, start_progress, ProgressHandle, ProgressMetrics};
+use crate::tui::settings;
+use crate::tui::text::{
+    clip_to_width, snippet_preview, truncate_single_line, visible_width, wrap_for_block,
+};
+use crossterm::style::{Color, Print, PrintStyledContent, Stylize};
+use crossterm::terminal;
+use crossterm::QueueableCommand;
+use std::io::{self, Write};
+use std::sync::{Mutex, OnceLock};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SnippetTone {
+    Tool,
+    Reasoning,
+    Approval,
+    Assistant,
+}
+
+impl SnippetTone {
+    fn bg(self) -> Color {
+        match self {
+            Self::Tool => settings::COLOR_SNIPPET_TOOL_BG,
+            Self::Reasoning => settings::COLOR_SNIPPET_REASONING_BG,
+            Self::Approval => settings::COLOR_SNIPPET_APPROVAL_BG,
+            Self::Assistant => settings::COLOR_SNIPPET_ASSISTANT_BG,
+        }
+    }
+
+    fn fg(self) -> Color {
+        match self {
+            Self::Tool => settings::COLOR_SNIPPET_TOOL_TEXT,
+            Self::Reasoning => settings::COLOR_SNIPPET_REASONING_TEXT,
+            Self::Approval => settings::COLOR_SNIPPET_APPROVAL_TEXT,
+            Self::Assistant => settings::COLOR_SNIPPET_ASSISTANT_TEXT,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BlockWrapMode {
+    Wrap,
+    Clip,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BlockTarget {
+    Stdout,
+    Stderr,
+}
+
+#[derive(Debug, Default)]
+struct StreamSpacingState {
+    stdout_blank: bool,
+    stderr_blank: bool,
+}
+
+impl StreamSpacingState {
+    fn is_blank(&self, target: BlockTarget) -> bool {
+        match target {
+            BlockTarget::Stdout => self.stdout_blank,
+            BlockTarget::Stderr => self.stderr_blank,
+        }
+    }
+
+    fn set_blank(&mut self, target: BlockTarget, blank: bool) {
+        match target {
+            BlockTarget::Stdout => self.stdout_blank = blank,
+            BlockTarget::Stderr => self.stderr_blank = blank,
+        }
+    }
+}
+
+fn spacing_state() -> &'static Mutex<StreamSpacingState> {
+    static STATE: OnceLock<Mutex<StreamSpacingState>> = OnceLock::new();
+    STATE.get_or_init(|| Mutex::new(StreamSpacingState::default()))
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BlockSpec<'a> {
+    tone: SnippetTone,
+    target: BlockTarget,
+    wrap_mode: BlockWrapMode,
+    max_source_lines: Option<usize>,
+    syntax_path: Option<&'a str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RowContent {
+    Plain(String),
+    Highlighted(Vec<StyledToken>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RenderedRow {
+    content: RowContent,
+    muted: bool,
+}
+
+impl RenderedRow {
+    fn plain(text: String) -> Self {
+        Self {
+            content: RowContent::Plain(text),
+            muted: false,
+        }
+    }
+
+    fn highlighted(tokens: Vec<StyledToken>) -> Self {
+        Self {
+            content: RowContent::Highlighted(tokens),
+            muted: false,
+        }
+    }
+
+    fn muted(text: String) -> Self {
+        Self {
+            content: RowContent::Plain(text),
+            muted: true,
+        }
+    }
+
+    fn as_plain_text(&self) -> String {
+        match &self.content {
+            RowContent::Plain(text) => text.clone(),
+            RowContent::Highlighted(tokens) => {
+                let mut out = String::new();
+                for token in tokens {
+                    out.push_str(&token.text);
+                }
+                out
+            }
+        }
+    }
+}
+
+/// Handles all terminal output formatting.
+#[derive(Debug, Clone, Copy)]
+pub struct Renderer {
+    color: bool,
+}
+
+impl Renderer {
+    /// Create a renderer with optional color output.
+    pub fn new(color: bool) -> Self {
+        Self { color }
+    }
+
+    /// Globally enable/disable live progress spinners.
+    pub fn set_progress_enabled(enabled: bool) {
+        set_progress_enabled(enabled);
+    }
+
+    /// Print the user input prompt indicator (to stderr).
+    pub fn prompt(&self) {
+        if self.color {
+            eprint!(
+                "{} ",
+                settings::PROMPT_SYMBOL
+                    .with(settings::COLOR_AGENT_LABEL)
+                    .bold()
+            );
+        } else {
+            eprint!("{}", settings::PROMPT_LOCAL_PRIMARY);
+        }
+    }
+
+    /// Print the assistant's response as a markdown-friendly wrapped block.
+    pub fn assistant_message(&self, content: &str) {
+        let rendered = render_markdown_for_terminal(content);
+        self.render_block(
+            &rendered,
+            BlockSpec {
+                tone: SnippetTone::Assistant,
+                target: BlockTarget::Stdout,
+                wrap_mode: BlockWrapMode::Wrap,
+                max_source_lines: None,
+                syntax_path: None,
+            },
+        );
+    }
+
+    /// Start a spinner with a status label on stderr.
+    pub fn progress(&self, label: &str) -> ProgressHandle {
+        self.progress_with_metrics(label, ProgressMetrics::default())
+    }
+
+    /// Start a spinner with optional metric key/value pairs.
+    pub fn progress_with_metrics(&self, label: &str, metrics: ProgressMetrics) -> ProgressHandle {
+        start_progress(label.to_string(), self.color, Some(metrics))
+    }
+
+    /// Print the model/session header.
+    pub fn header(&self, model: &str) {
+        if self.color {
+            eprintln!(
+                "{} {}",
+                settings::LABEL_AGENT
+                    .with(settings::COLOR_AGENT_LABEL)
+                    .bold(),
+                model.with(settings::COLOR_MODEL_NAME),
+            );
+        } else {
+            eprintln!("{} ({model})", settings::LABEL_AGENT);
+        }
+        mark_stream_nonblank(BlockTarget::Stderr);
+    }
+
+    /// Print a tool call invocation (to stderr).
+    pub fn tool_call(&self, name: &str, args: &str) {
+        let preview = truncate_single_line(args, 80);
+        if self.color {
+            eprintln!(
+                "{}{} {}({})",
+                settings::INDENT_1,
+                settings::GLYPH_TOOL_CALL.with(settings::COLOR_TOOL_CALL_GLYPH),
+                name.with(settings::COLOR_TOOL_CALL_NAME).bold(),
+                preview.with(settings::COLOR_TOOL_CALL_ARGS),
+            );
+        } else {
+            eprintln!(
+                "{}{} {name}({preview})",
+                settings::INDENT_1,
+                settings::GLYPH_TOOL_CALL_PLAIN
+            );
+        }
+        mark_stream_nonblank(BlockTarget::Stderr);
+    }
+
+    /// Print a tool result summary (to stderr).
+    pub fn tool_result(&self, result: &str) {
+        let preview = truncate_single_line(result, 120);
+        if self.color {
+            eprintln!(
+                "{}{} {}",
+                settings::INDENT_1,
+                settings::GLYPH_TOOL_RESULT.with(settings::COLOR_TOOL_RESULT_GLYPH),
+                preview.with(settings::COLOR_TOOL_RESULT_TEXT),
+            );
+        } else {
+            eprintln!(
+                "{}{} {preview}",
+                settings::INDENT_1,
+                settings::GLYPH_TOOL_RESULT_PLAIN
+            );
+        }
+        mark_stream_nonblank(BlockTarget::Stderr);
+        if let Some((_, after_stdout)) = result.split_once("\nstdout:\n") {
+            let (stdout, stderr) = after_stdout
+                .split_once("\nstderr:\n")
+                .unwrap_or((after_stdout, ""));
+            self.command_output_block(stdout);
+            if !stderr.trim().is_empty() {
+                self.command_output_block(stderr);
+            }
+            return;
+        }
+        if result.contains('\n') {
+            self.tool_output_block(result, None);
+        }
+    }
+
+    /// Print token usage for the current request (to stderr).
+    pub fn token_usage(&self, prompt: u32, completion: u32, session_total: u32) {
+        if self.color {
+            eprintln!(
+                "{}{} prompt:{} completion:{} session:{}",
+                settings::INDENT_1,
+                settings::LABEL_TOKENS.with(settings::COLOR_TOKEN_LABEL),
+                prompt.to_string().with(settings::COLOR_TOKEN_VALUE),
+                completion.to_string().with(settings::COLOR_TOKEN_VALUE),
+                session_total
+                    .to_string()
+                    .with(settings::COLOR_TOKEN_SESSION),
+            );
+        } else {
+            eprintln!(
+                "{}{} prompt:{prompt} completion:{completion} session:{session_total}",
+                settings::INDENT_1,
+                settings::LABEL_TOKENS
+            );
+        }
+        mark_stream_nonblank(BlockTarget::Stderr);
+    }
+
+    /// Print a model-emitted reasoning/thinking trace (to stderr).
+    pub fn reasoning_trace(&self, field: &str, trace: &str) {
+        if trace.trim().is_empty() {
+            return;
+        }
+
+        if self.color {
+            eprintln!(
+                "{}{} {}",
+                settings::INDENT_1,
+                settings::LABEL_THINKING
+                    .with(settings::COLOR_REASONING_LABEL)
+                    .bold(),
+                format!("({field})").with(settings::COLOR_REASONING_META),
+            );
+        } else {
+            eprintln!(
+                "{}{} ({field})",
+                settings::INDENT_1,
+                settings::LABEL_THINKING
+            );
+        }
+        mark_stream_nonblank(BlockTarget::Stderr);
+        self.reasoning_block(trace);
+    }
+
+    /// Print a warning (to stderr).
+    pub fn warn(&self, msg: &str) {
+        if self.color {
+            eprintln!(
+                "{} {msg}",
+                settings::LABEL_WARNING.with(settings::COLOR_WARNING).bold()
+            );
+        } else {
+            eprintln!("{} {msg}", settings::LABEL_WARNING);
+        }
+        mark_stream_nonblank(BlockTarget::Stderr);
+    }
+
+    /// Print a small section header in status-style output.
+    pub fn section(&self, title: &str) {
+        if self.color {
+            eprintln!(
+                "{} {}",
+                settings::GLYPH_SECTION_BULLET.with(settings::COLOR_SECTION_BULLET),
+                title.with(settings::COLOR_SECTION_TITLE).bold()
+            );
+        } else {
+            eprintln!("{title}:");
+        }
+        mark_stream_nonblank(BlockTarget::Stderr);
+    }
+
+    /// Print an activity line (bold gray) for task/prompt lifecycle updates.
+    pub fn activity(&self, text: &str) {
+        if self.color {
+            eprintln!(
+                "{} {}",
+                settings::GLYPH_SECTION_BULLET.with(settings::COLOR_SECTION_BULLET),
+                text.with(settings::COLOR_ACTIVITY_TEXT).bold()
+            );
+        } else {
+            eprintln!("{text}");
+        }
+        mark_stream_nonblank(BlockTarget::Stderr);
+    }
+
+    /// Print a key/value line under a status section.
+    pub fn field(&self, key: &str, value: &str) {
+        if self.color {
+            eprintln!(
+                "{}{} {}",
+                settings::INDENT_1,
+                format!("{key}:").with(settings::COLOR_FIELD_KEY),
+                value.with(settings::COLOR_FIELD_VALUE),
+            );
+        } else {
+            eprintln!("{}{key}: {value}", settings::INDENT_1);
+        }
+        mark_stream_nonblank(BlockTarget::Stderr);
+    }
+
+    /// Print a simple indented detail line.
+    pub fn detail(&self, text: &str) {
+        if self.color {
+            eprintln!(
+                "{}{}",
+                settings::INDENT_1,
+                text.with(settings::COLOR_FIELD_VALUE)
+            );
+        } else {
+            eprintln!("{}{text}", settings::INDENT_1);
+        }
+        mark_stream_nonblank(BlockTarget::Stderr);
+    }
+
+    /// Print an error (to stderr).
+    pub fn error(&self, msg: &str) {
+        if self.color {
+            eprintln!(
+                "{} {msg}",
+                settings::LABEL_ERROR.with(settings::COLOR_ERROR).bold()
+            );
+        } else {
+            eprintln!("{} {msg}", settings::LABEL_ERROR);
+        }
+        mark_stream_nonblank(BlockTarget::Stderr);
+    }
+
+    /// Render a clipped, tinted block for file/tool output (wrapped).
+    pub fn tool_output_block(&self, text: &str, syntax_path: Option<&str>) {
+        self.render_block(
+            text,
+            BlockSpec {
+                tone: SnippetTone::Tool,
+                target: BlockTarget::Stderr,
+                wrap_mode: BlockWrapMode::Wrap,
+                max_source_lines: Some(settings::SNIPPET_PREVIEW_LINES),
+                syntax_path,
+            },
+        );
+    }
+
+    /// Render a clipped, tinted block for shell/command output (no wrapping).
+    pub fn command_output_block(&self, text: &str) {
+        self.render_block(
+            text,
+            BlockSpec {
+                tone: SnippetTone::Tool,
+                target: BlockTarget::Stderr,
+                wrap_mode: BlockWrapMode::Clip,
+                max_source_lines: Some(settings::SNIPPET_PREVIEW_LINES),
+                syntax_path: None,
+            },
+        );
+    }
+
+    /// Render a clipped, tinted block for model reasoning traces.
+    pub fn reasoning_block(&self, text: &str) {
+        self.render_block(
+            text,
+            BlockSpec {
+                tone: SnippetTone::Reasoning,
+                target: BlockTarget::Stderr,
+                wrap_mode: BlockWrapMode::Wrap,
+                max_source_lines: None,
+                syntax_path: None,
+            },
+        );
+    }
+
+    /// Render a clipped, tinted block for approval-related text.
+    pub fn approval_block(&self, text: &str) {
+        self.render_block(
+            text,
+            BlockSpec {
+                tone: SnippetTone::Approval,
+                target: BlockTarget::Stderr,
+                wrap_mode: BlockWrapMode::Wrap,
+                max_source_lines: Some(settings::SNIPPET_PREVIEW_LINES),
+                syntax_path: None,
+            },
+        );
+    }
+
+    fn render_block(&self, text: &str, spec: BlockSpec<'_>) {
+        let preview = match spec.max_source_lines {
+            Some(max_lines) => snippet_preview(text, max_lines),
+            None => {
+                let lines = text.lines().collect::<Vec<_>>();
+                let remaining_lines = 0;
+                crate::tui::text::SnippetPreview {
+                    lines,
+                    remaining_lines,
+                }
+            }
+        };
+        if preview.lines.is_empty() {
+            return;
+        }
+
+        let block_width = block_content_width();
+        let highlighted = spec
+            .syntax_path
+            .and_then(|path| highlight_lines_for_path(path, &preview.lines));
+        let mut rows = Vec::<RenderedRow>::new();
+
+        for (idx, line) in preview.lines.iter().enumerate() {
+            if let Some(tokens_by_line) = &highlighted {
+                if let Some(tokens) = tokens_by_line.get(idx) {
+                    rows.extend(split_highlighted_line(tokens, block_width, spec.wrap_mode));
+                    continue;
+                }
+            }
+            rows.extend(split_plain_line(line, block_width, spec.wrap_mode));
+        }
+
+        if preview.remaining_lines > 0 {
+            rows.push(RenderedRow::muted(format!(
+                "...{} more lines...",
+                preview.remaining_lines
+            )));
+        }
+
+        let write_result = match spec.target {
+            BlockTarget::Stdout => {
+                let mut stdout = io::stdout();
+                self.prepare_block_spacing(&mut stdout, spec.target)
+                    .and_then(|_| self.write_rows(&mut stdout, &rows, block_width, spec.tone))
+                    .and_then(|_| {
+                        mark_stream_nonblank(spec.target);
+                        self.finish_block_spacing(&mut stdout, spec.target)
+                    })
+            }
+            BlockTarget::Stderr => {
+                let mut stderr = io::stderr();
+                self.prepare_block_spacing(&mut stderr, spec.target)
+                    .and_then(|_| self.write_rows(&mut stderr, &rows, block_width, spec.tone))
+                    .and_then(|_| {
+                        mark_stream_nonblank(spec.target);
+                        self.finish_block_spacing(&mut stderr, spec.target)
+                    })
+            }
+        };
+        if write_result.is_err() {
+            if !stream_is_blank(spec.target) {
+                match spec.target {
+                    BlockTarget::Stdout => println!(),
+                    BlockTarget::Stderr => eprintln!(),
+                }
+            }
+            for row in rows {
+                match spec.target {
+                    BlockTarget::Stdout => {
+                        println!("{}{}", settings::INDENT_1, row.as_plain_text())
+                    }
+                    BlockTarget::Stderr => {
+                        eprintln!("{}{}", settings::INDENT_1, row.as_plain_text())
+                    }
+                }
+            }
+            match spec.target {
+                BlockTarget::Stdout => println!(),
+                BlockTarget::Stderr => eprintln!(),
+            }
+            mark_stream_blank(spec.target);
+        }
+    }
+
+    fn write_rows<W: Write + QueueableCommand>(
+        &self,
+        out: &mut W,
+        rows: &[RenderedRow],
+        block_width: usize,
+        tone: SnippetTone,
+    ) -> io::Result<()> {
+        let bg = tone.bg();
+        let default_fg = tone.fg();
+
+        for row in rows {
+            out.queue(Print(settings::INDENT_1))?;
+            if self.color {
+                let mut used = 0usize;
+                match &row.content {
+                    RowContent::Plain(text) => {
+                        let clipped = clip_to_width(text, block_width);
+                        used = visible_width(&clipped);
+                        let fg = if row.muted {
+                            settings::COLOR_SNIPPET_TRUNCATED
+                        } else {
+                            default_fg
+                        };
+                        out.queue(PrintStyledContent(clipped.with(fg).on(bg)))?;
+                    }
+                    RowContent::Highlighted(tokens) => {
+                        for token in tokens {
+                            if used >= block_width {
+                                break;
+                            }
+                            let clipped = clip_to_width(&token.text, block_width - used);
+                            if clipped.is_empty() {
+                                continue;
+                            }
+                            used += visible_width(&clipped);
+                            let mut styled = clipped.as_str().with(Color::Rgb {
+                                r: token.rgb.0,
+                                g: token.rgb.1,
+                                b: token.rgb.2,
+                            });
+                            styled = styled.on(bg);
+                            if token.bold {
+                                styled = styled.bold();
+                            }
+                            if token.italic {
+                                styled = styled.italic();
+                            }
+                            if token.underline {
+                                styled = styled.underlined();
+                            }
+                            out.queue(PrintStyledContent(styled))?;
+                        }
+                    }
+                }
+
+                let pad = block_width.saturating_sub(used);
+                if pad > 0 {
+                    out.queue(PrintStyledContent(" ".repeat(pad).with(default_fg).on(bg)))?;
+                }
+            } else {
+                out.queue(Print(clip_to_width(&row.as_plain_text(), block_width)))?;
+            }
+            out.queue(Print("\n"))?;
+        }
+        Ok(())
+    }
+
+    fn prepare_block_spacing<W: Write + QueueableCommand>(
+        &self,
+        out: &mut W,
+        target: BlockTarget,
+    ) -> io::Result<()> {
+        if !stream_is_blank(target) {
+            out.queue(Print("\n"))?;
+        }
+        mark_stream_blank(target);
+        Ok(())
+    }
+
+    fn finish_block_spacing<W: Write + QueueableCommand>(
+        &self,
+        out: &mut W,
+        target: BlockTarget,
+    ) -> io::Result<()> {
+        out.queue(Print("\n"))?;
+        out.flush()?;
+        mark_stream_blank(target);
+        Ok(())
+    }
+}
+
+fn block_content_width() -> usize {
+    let cols = terminal::size()
+        .map(|(w, _)| w as usize)
+        .unwrap_or(settings::BLOCK_FALLBACK_COLUMNS);
+    let indent = settings::INDENT_1.chars().count();
+    cols.saturating_sub(indent + settings::BLOCK_RIGHT_MARGIN)
+        .max(1)
+}
+
+fn split_plain_line(line: &str, width: usize, wrap_mode: BlockWrapMode) -> Vec<RenderedRow> {
+    match wrap_mode {
+        BlockWrapMode::Wrap => wrap_for_block(line, width)
+            .into_iter()
+            .map(RenderedRow::plain)
+            .collect(),
+        BlockWrapMode::Clip => vec![RenderedRow::plain(clip_to_width(line, width))],
+    }
+}
+
+fn split_highlighted_line(
+    tokens: &[StyledToken],
+    width: usize,
+    wrap_mode: BlockWrapMode,
+) -> Vec<RenderedRow> {
+    if tokens.is_empty() {
+        return vec![RenderedRow::plain(String::new())];
+    }
+
+    let mut rows = Vec::<Vec<StyledToken>>::new();
+    let mut current = Vec::<StyledToken>::new();
+    let mut used = 0usize;
+
+    'token_loop: for token in tokens {
+        for ch in token.text.chars() {
+            if used >= width {
+                match wrap_mode {
+                    BlockWrapMode::Wrap => {
+                        rows.push(current);
+                        current = Vec::new();
+                        used = 0;
+                    }
+                    BlockWrapMode::Clip => break 'token_loop,
+                }
+            }
+            push_highlighted_char(&mut current, token, ch);
+            used += 1;
+        }
+    }
+    rows.push(current);
+
+    rows.into_iter().map(RenderedRow::highlighted).collect()
+}
+
+fn push_highlighted_char(current: &mut Vec<StyledToken>, style: &StyledToken, ch: char) {
+    if let Some(last) = current.last_mut() {
+        if same_style(last, style) {
+            last.text.push(ch);
+            return;
+        }
+    }
+
+    current.push(StyledToken {
+        text: ch.to_string(),
+        rgb: style.rgb,
+        bold: style.bold,
+        italic: style.italic,
+        underline: style.underline,
+    });
+}
+
+fn same_style(a: &StyledToken, b: &StyledToken) -> bool {
+    a.rgb == b.rgb && a.bold == b.bold && a.italic == b.italic && a.underline == b.underline
+}
+
+fn stream_is_blank(target: BlockTarget) -> bool {
+    spacing_state()
+        .lock()
+        .map(|state| state.is_blank(target))
+        .unwrap_or(false)
+}
+
+fn mark_stream_nonblank(target: BlockTarget) {
+    if let Ok(mut state) = spacing_state().lock() {
+        state.set_blank(target, false);
+    }
+}
+
+fn mark_stream_blank(target: BlockTarget) {
+    if let Ok(mut state) = spacing_state().lock() {
+        state.set_blank(target, true);
+    }
+}
