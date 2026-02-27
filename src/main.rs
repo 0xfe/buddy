@@ -440,7 +440,7 @@ async fn main() {
                     continue;
                 }
 
-                renderer.approval_block(
+                renderer.warn(
                     "Approval required. Reply with y/yes or n/no. You can also use /ps, /kill <id>, /timeout <dur> [id], /approve <mode>, /status, /context.",
                 );
                 pending_approval = Some(approval);
