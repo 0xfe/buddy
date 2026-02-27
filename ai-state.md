@@ -10,6 +10,10 @@
   - Done / partially done:
     - `T1` foundation: API trait seam exists (`ModelClient`), runtime event tests added.
     - `U1` progressed: responses ingestion + tool stream events now flow through runtime events and CLI adapter (`cli_event_renderer`); further UX polish can build on this boundary.
+    - `U2` done: context warnings now include actionable guidance (`/compact`, `/session new`) and hard-limit refusal guidance.
+    - `U3` done: `/model` switching emits explicit API/auth mode-change warning to reduce protocol mismatch confusion.
+    - `U4` done: startup and model-switch preflight validation now surfaces actionable base-url/model/auth errors before API calls.
+    - `U5` done: REPL input history now persists at `~/.config/buddy/history` with config toggle (`display.persist_history`).
     - `C1` done: runtime actor now drives both `buddy exec` and interactive REPL prompt/task/approval flows.
     - `B1` done: UTF-8-safe truncation helpers (`src/textutil.rs`) now back shell/files/fetch/capture/tui/preview truncation paths.
     - `R1` done: centralized request timeouts with `[network]` config (`api_timeout_secs`, `fetch_timeout_secs`) now applied in API and fetch clients.
@@ -19,15 +23,14 @@
     - `B2` done: token accounting promoted to `u64` with saturating arithmetic across tracker/runtime/API usage structures.
     - `B3` done: generated session IDs now use OS-backed CSPRNG bytes.
     - `B5` done: responses SSE parser now handles event blocks, multiline `data:` payloads, and comment lines.
+    - `B4` done: `web_search` now uses selector-based HTML parsing (`scraper`) plus parser-break diagnostics on empty parses.
     - `R2` done: context budget hard-limit enforcement and history compaction landed, including `/compact`.
     - `R3` done: API client now retries transient failures (429/5xx/timeouts/connectivity) with capped backoff and `Retry-After` support.
     - `R4` done: SSH control-master drop path has explicit cleanup verification coverage.
     - `R5` done: web search/auth flows now reuse shared HTTP clients instead of per-call client construction.
   - Not done yet (active backlog):
-    - `B4`
     - `T2`, `T3`, `T4`
     - `D1`, `D2`, `D3`, `D4`
-    - `U2`, `U3`, `U4`, `U5`
     - `C2`, `C3`
   - Repro/runbook:
     - `docs/playbook-remediation.md` contains reproducible commands and baseline checks.
@@ -151,6 +154,12 @@
 
 - SSH control-master cleanup coverage:
   - `SshContext` drop path now has explicit cleanup verification (`ssh_context_drop_triggers_control_cleanup`), ensuring control socket shutdown logic remains exercised in tests.
+
+- Milestone 6 UX follow-up updates:
+  - Added shared preflight validation (`src/preflight.rs`) used at startup and runtime model switches to catch malformed base URLs, empty model ids, and missing auth state with actionable messages.
+  - `/model` mode switches now emit explicit warnings when API/auth mode changes (for example completions/api-key -> responses/login) and continue to surface selected profile details.
+  - REPL command history now persists in `~/.config/buddy/history` by default; loading/saving is controlled by `[display].persist_history`.
+  - `web_search` parsing moved from brittle string splitting to `scraper` CSS selectors, with a diagnostic message when a DuckDuckGo layout parse fails.
 
 - Input/render stability fixes:
   - REPL editor now memoizes render frames and skips redundant full-surface redraws when nothing visible changed.

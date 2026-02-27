@@ -124,7 +124,8 @@ pub struct ReplState {
 }
 ```
 
-Input history is in-memory only; it is not written to disk.
+History is loaded from/saved to `~/.config/buddy/history` by default. Set
+`[display].persist_history = false` to keep history in-memory only.
 
 ---
 
@@ -180,7 +181,7 @@ are processed by the REPL loop before being sent to the agent.
 | Command | Description |
 |---------|-------------|
 | `/status` | Show model name, base URL, enabled tools, and session token counts |
-| `/model [name\|index]` | Switch active configured model profile (`/model` with no args opens arrow-key picker) |
+| `/model [name\|index]` | Switch active configured model profile (`/model` with no args opens arrow-key picker); warns when API/auth mode changes |
 | `/login [name\|index]` | Start login flow for a profile (opens browser when available) |
 | `/context` | Show estimated context window fill % and message counts |
 | `/compact` | Compact older turns to reclaim context budget |

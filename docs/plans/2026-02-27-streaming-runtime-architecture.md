@@ -5,8 +5,8 @@
 - Current milestone: Completed
 - Current status: `S0`-`S5` complete (integrated with `docs/plans/2026-02-27-claude-feedback-remediation-plan.md`)
 - Next steps:
-  1. Continue remediation Milestone 6 UX follow-up using the stabilized runtime event boundaries.
-  2. Re-run model regression suite when all default-provider credentials are available.
+  1. Runtime plan is in maintenance mode; drive new work through remediation Milestone 7.
+  2. Keep model-regression and runtime parity checks as release gates when runtime event contracts change.
 
 ## Task Board
 
@@ -461,3 +461,7 @@ Commit:
   - Updated integrated remediation/streaming plan statuses to reflect `S0`-`S5` completion.
   - Validation: `cargo test -q` passed.
   - commit: `6858f9c`
+- 2026-02-27: Runtime-plan handoff checkpoint:
+  - Remediation Milestone 6 follow-up work closed using the stabilized runtime boundaries (`U3`/`U4`/`U5`/`B4` slices).
+  - Re-ran live model regression suite with all default profiles passing.
+  - Updated status/next-steps to maintenance mode with Milestone 7 handoff.

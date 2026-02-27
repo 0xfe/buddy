@@ -62,6 +62,7 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
   - `buddy init --force` overwrites the file after writing a timestamped backup into the same directory.
   - Startup still auto-creates `~/.config/buddy/buddy.toml` when missing.
   - Built-in template includes OpenAI `responses` profiles for `gpt-codex` (`gpt-5.3-codex`) and `gpt-spark` (`gpt-5.3-codex-spark`), plus OpenRouter examples for DeepSeek V3.2 and GLM, with `gpt-codex` selected by default.
+  - Active-profile preflight validation runs at startup and `/model` switches (base URL validity, model name, and auth readiness) to surface actionable config errors before API calls.
   - Network timeout policy is configurable via `[network]`:
     - `api_timeout_secs` for model API requests.
     - `fetch_timeout_secs` for `fetch_url` requests.
@@ -74,7 +75,7 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
   - `run_shell` with optional confirmation flow, denylist guardrails, output truncation, and configurable wait modes (`true`, `false`, or duration timeout).
   - `read_file` and `write_file` with output safety limits; `write_file` blocks sensitive directories by default and supports path allowlisting.
   - `fetch_url` HTTP GET tool with default SSRF protections (localhost/private/link-local blocking), optional domain allow/deny policy, and optional confirmation prompts.
-  - `web_search` (DuckDuckGo HTML results parsing).
+  - `web_search` (DuckDuckGo HTML parsing via CSS selectors with parser-break diagnostics).
   - `capture-pane` for tmux pane snapshots (supports common `tmux capture-pane` options plus delayed capture for polling); defaults to tmux screenshot behavior (visible pane content) and gracefully falls back when alternate screen is unavailable.
   - `send-keys` for tmux key injection (for example Ctrl-C/Ctrl-Z/Enter/arrows) to control interactive terminal programs.
   - `time` for harness-recorded wall-clock time in multiple common UTC/epoch formats.
@@ -98,6 +99,7 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
     - ssh target: `(ssh user@host)> `
   - Slash-command autocomplete and built-in slash commands (`/status`, `/context`, `/compact`, `/ps`, `/kill`, `/timeout`, `/approve`, `/session`, `/model`, `/login`, `/help`, `/quit`, `/exit`, `/q`).
   - Command history navigation (`Up/Down`, `Ctrl-P/N`).
+  - REPL history persistence to `~/.config/buddy/history` (toggle: `[display].persist_history`).
   - Multiline editing with `Alt+Enter`.
   - Common cursor/edit shortcuts (`Ctrl-A/E/B/F/K/U/W`, arrows, home/end, delete/backspace).
   - Background prompt execution with task IDs, `/ps` listing, cooperative `/kill <id>` cancellation, per-task `/timeout <duration> [id]`, and command gating while tasks are active.
@@ -342,6 +344,7 @@ The interactive REPL reads input via `tui/input.rs`, which runs in raw mode and 
 - prompt `> ` (or `(ssh user@host)> ` when using `--ssh`)
 - slash-command autocomplete when input starts with `/`
 - command history navigation (`↑`/`↓`, `Ctrl-P`/`Ctrl-N`)
+- history persistence across restarts via `~/.config/buddy/history` (toggle: `[display].persist_history`)
 - multiline entry with `Alt+Enter`
 - common line editing shortcuts (`Ctrl-A`, `Ctrl-E`, `Ctrl-B`, `Ctrl-F`, `Ctrl-K`, `Ctrl-U`, `Ctrl-W`)
 - background prompt execution with task tracking (`/ps`), cooperative cancellation (`/kill <id>`), and per-task timeout control (`/timeout <duration> [id]`)
@@ -350,7 +353,7 @@ The interactive REPL reads input via `tui/input.rs`, which runs in raw mode and 
 - approval policy controls for shell confirmations (`/approve ask|all|none|<duration>`)
 - persistent ID-based sessions stored locally under `.buddyx/` (`/session`, `/session resume <session-id|last>`, `/session new`, and CLI `buddy resume <session-id>|--last`)
 - manual context-history compaction via `/compact` (when no background tasks are active)
-- model-profile switching from config via `/model [name|index]` (no-arg opens arrow-key picker)
+- model-profile switching from config via `/model [name|index]` (no-arg opens arrow-key picker), with protocol/auth mode-switch warning guidance
 
 Supported slash commands:
 - `/status` — current model, endpoint, enabled tools, and session counters
@@ -377,7 +380,7 @@ Ctrl-D (EOF) also exits cleanly.
 
 **Why truncate tool output?** Tool results go into the conversation history. A single `cat` of a large file could exhaust the entire context window. Truncation is a crude but effective safety measure. The limits (4K for shell, 8K for files/fetch) are configurable-by-code — a future version could make them configurable via TOML.
 
-**Why DuckDuckGo for search?** It requires no API key, no account, and no rate limit management. The HTML endpoint is stable and parseable with simple string operations. This keeps the tool self-contained with zero setup.
+**Why DuckDuckGo for search?** It requires no API key, no account, and no rate limit management. Buddy parses the HTML endpoint with CSS selectors (`scraper`) to reduce brittleness from attribute-order/layout drift, while still keeping the tool self-contained with zero setup.
 
 **Why hand-written errors?** The error surface is small (4 enums, ~10 variants total). Manual `Display` and `From` impls take about 50 lines and add zero dependencies. `thiserror` would save a few lines but add a proc-macro dependency.
 

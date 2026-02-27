@@ -3,7 +3,7 @@
 ## Status
 
 - Program status: Active (integrated with `docs/plans/2026-02-27-streaming-runtime-architecture.md`)
-- Current focus: close Milestone 6 UX follow-up checkpoints now that streaming/runtime `S0`-`S5` and remediation Milestone 4 are complete.
+- Current focus: prepare Milestone 7 deferred architecture slices now that Milestone 6 UX follow-up checkpoints are closed.
 - Completed so far:
   1. Streaming/runtime `S0` complete (typed runtime command/event schema).
   2. Streaming/runtime `S1` complete (agent emits runtime events with mockable model client interface).
@@ -20,10 +20,11 @@
   13. Streaming/runtime `S4` landed (CLI event-renderer adapter + alternate frontend example parity path).
   14. Streaming/runtime `S5` landed (runtime docs/stabilization updates across README/DESIGN/ai-state + plan sync).
   15. Remediation Milestone 4 landed (context budget hard-stop + compaction path, `/compact`, `u64` token accounting, CSPRNG session IDs, SSH control cleanup verification).
+  16. Remediation Milestone 6 follow-up slices landed (`U3`, `U4`, `U5`, `B4`) with fresh model-regression validation.
 - Next steps:
-  1. Continue Milestone 6 UX follow-up work on top of the new runtime event boundaries.
-  2. Re-run model regression gate once provider credentials are available for all default profiles.
-  3. Start Milestone 7 deferred architecture slices once Milestone 6 gates are closed.
+  1. Start Milestone 7 deferred architecture slices (`D1`/`D2`) on top of the stabilized runtime.
+  2. Add deprecation policy/timeline work (`C3`) once Milestone 7 extraction boundaries are in place.
+  3. Keep model-regression suite as a release gate whenever default provider/model profiles change.
 
 ## Integrated Program Board
 
@@ -33,7 +34,7 @@
 - [x] Milestone 3: API Correctness and Robustness (P2)
 - [x] Milestone 4: Conversation Safety and Session Robustness (P2)
 - [x] Milestone 5: Testability and Modularization (P2/P3)
-- [ ] Milestone 6: UX Improvements (P3) - in progress via streaming runtime milestones
+- [x] Milestone 6: UX Improvements (P3)
 - [ ] Milestone 7: Deferred Design Extensions (P4)
 
 ## Goal
@@ -321,15 +322,13 @@ Address `U1`, `U2`, `U3`, `U4`, `U5`, and `B4`.
 
 ### Tasks
 
-1. Expose true incremental streaming render for responses/completions where supported.
-2. Implement the runtime/event refactor track in `docs/plans/2026-02-27-streaming-runtime-architecture.md` so streaming is a first-class library interface (not just CLI rendering).
-3. Improve context warnings with actionable next steps (`/compact`, `/session new`).
-4. Add protocol-switch warning on `/model` when API/auth mode changes.
-5. Add pre-flight model/profile validation to reduce cryptic API errors.
-6. Persist input history to `~/.config/buddy/history`.
-7. Upgrade DuckDuckGo parser:
-   - short-term diagnostics for empty parse;
-   - medium-term HTML parser crate migration.
+1. [x] Expose incremental runtime stream surfaces for model/tool output (`S0`-`S5` runtime track); continue iterating renderer polish as follow-up work.
+2. [x] Implement the runtime/event refactor track in `docs/plans/2026-02-27-streaming-runtime-architecture.md` so streaming is a first-class library interface (not just CLI rendering).
+3. [x] Improve context warnings with actionable next steps (`/compact`, `/session new`).
+4. [x] Add protocol-switch warning on `/model` when API/auth mode changes.
+5. [x] Add pre-flight model/profile validation to reduce cryptic API errors.
+6. [x] Persist input history to `~/.config/buddy/history`.
+7. [x] Upgrade DuckDuckGo parser with empty-parse diagnostics and selector-based HTML parsing.
 
 ### Acceptance Gate
 
@@ -352,11 +351,10 @@ Address `U1`, `U2`, `U3`, `U4`, `U5`, and `B4`.
 
 ### Commits
 
-1. `feat(runtime): introduce streaming command/event interface for model/tool/metrics flows`
-2. `feat(ui): stream assistant output incrementally for supported apis`
-3. `feat(repl): improve context/model-switch guidance and preflight errors`
-4. `feat(repl): persist command history across sessions`
-5. `fix(search): improve parser resilience and diagnostics`
+1. `324b0d2` — `feat(runtime): introduce streaming command/event interface for model/tool/metrics flows`
+2. `c877b06` — `feat(repl): add profile preflight checks and model mode-switch warnings`
+3. `95b77f9` — `feat(repl): persist input history with configurable toggle`
+4. `f9fba20` — `fix(search): switch to scraper-based DuckDuckGo parsing with diagnostics`
 
 ## Milestone 7: Deferred Design Extensions (P4)
 
@@ -494,3 +492,22 @@ Address lower-priority architecture items after stabilization (`D1`, `D2`, `D3`,
   - Added SSH control-master cleanup verification hook test to ensure shutdown cleanup is exercised on drop.
   - Validation: `cargo test -q` passed.
   - commits: `571b124`, `2fc542d`
+- 2026-02-27: Re-ran live provider regression gate before closing Milestone 6:
+  - Validation command: `cargo test --test model_regression -- --ignored --nocapture`.
+  - Result: all default template profiles passed (`gpt-codex`, `gpt-spark`, `kimi`, `openrouter-deepseek`, `openrouter-glm`).
+- 2026-02-27: Completed Milestone 6 follow-up slice `U3` + `U4`:
+  - Added shared preflight validation module (`src/preflight.rs`) for startup + model-switch checks (base URL, model name, auth readiness).
+  - Runtime model switching now emits explicit API/auth mode-change warnings and includes selected API/auth in `ProfileSwitched` events.
+  - Validation: `cargo test -q` passed.
+  - commit: `c877b06`
+- 2026-02-27: Completed Milestone 6 follow-up slice `U5`:
+  - Added REPL history load/save (`~/.config/buddy/history`) with compatibility fallback for line-based files.
+  - Added config toggle `[display].persist_history` and template/docs updates.
+  - Validation: `cargo test -q` passed.
+  - commit: `95b77f9`
+- 2026-02-27: Completed Milestone 6 follow-up slice `B4`:
+  - Migrated `web_search` parsing from string splitting to CSS-selector parsing using `scraper`.
+  - Added empty-parse diagnostics so parser breakage is distinguishable from true no-results pages.
+  - Added parser resilience tests (attribute reordering, fallback extraction, limit enforcement).
+  - Validation: `cargo test -q` passed.
+  - commit: `f9fba20`

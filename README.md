@@ -80,7 +80,7 @@ buddy resume --last
 | Command | Description |
 |---------|-------------|
 | `/status` | Show current model, base URL, enabled tools, and session counters. |
-| `/model [name\|index]` | Switch the active configured model profile (`/model` opens arrow-key picker). |
+| `/model [name\|index]` | Switch the active configured model profile (`/model` opens arrow-key picker). Warns if API/auth mode changes. |
 | `/login [name\|index]` | Show login health and start login flow for a configured profile. |
 | `/context` | Show estimated context usage (`messages` estimate / context window) and token stats. |
 | `/compact` | Summarize and trim older turns to reclaim context budget. |
@@ -95,6 +95,7 @@ buddy resume --last
 | `/quit` `/exit` `/q` | Exit interactive mode (only when no background tasks are running). |
 
 Buddy tracks context usage continuously. It warns as usage rises, attempts automatic compaction before hard-limit failures, and if still over budget it refuses the send with guidance to run `/compact` or `/session new`.
+REPL input history is persisted to `~/.config/buddy/history` (disable with `display.persist_history = false`).
 
 
 ## Developers
@@ -272,6 +273,7 @@ fetch_timeout_secs = 20                    # fetch_url timeout (seconds)
 color = true                               # ANSI color output
 show_tokens = false                        # show token usage after each turn
 show_tool_calls = true                     # show tool invocations inline
+persist_history = true                     # persist REPL input history to ~/.config/buddy/history
 ```
 
 ### CLI flags
@@ -304,6 +306,7 @@ At startup, the system prompt is rendered from one compiled template with runtim
 `buddy exec` is non-interactive. If `tools.shell_confirm=true`, exec fails closed unless you explicitly pass `--dangerously-auto-approve`.
 
 Login credentials are stored in `~/.config/buddy/auth.json` using machine-derived encryption-at-rest with per-record nonces. Use `buddy login --check` to inspect saved login health and `buddy login --reset` to clear saved provider credentials and re-authenticate.
+Buddy performs profile preflight validation at startup and on `/model` switches (base URL shape, model name, and auth readiness) so common misconfigurations fail with targeted guidance before API calls.
 
 ### Built-in tools
 
@@ -313,7 +316,7 @@ Login credentials are stored in `~/.config/buddy/auth.json` using machine-derive
 | `fetch_url` | HTTP GET a URL, return body as text. Truncated to 8K chars. Uses `[network].fetch_timeout_secs`. Blocks localhost/private/link-local targets by default, with optional tools-domain allow/deny policy. |
 | `read_file` | Read a file's contents. Truncated to 8K chars. Respects `--container`, `--ssh`, and `--tmux`. |
 | `write_file` | Write content to a file. Creates or overwrites. Respects `--container`, `--ssh`, and `--tmux`. Blocks sensitive directories by default and can be scoped with `tools.files_allowed_paths`. |
-| `web_search` | Search DuckDuckGo and return top results with titles, URLs, and snippets. No API key needed. |
+| `web_search` | Search DuckDuckGo and return top results with titles, URLs, and snippets. No API key needed. Emits a parser-layout diagnostic when a page cannot be parsed. |
 | `capture-pane` | Capture tmux pane output (with common `capture-pane` flags and optional delay) to inspect interactive/stuck terminal state. By default it uses tmux screenshot behavior (current visible pane content). |
 | `send-keys` | Inject tmux keys/text into a pane (Ctrl-C/Ctrl-Z/Enter/arrows/literal text) for interactive control. |
 | `time` | Return harness-recorded current wall-clock time in multiple common formats (epoch + UTC text formats). |
