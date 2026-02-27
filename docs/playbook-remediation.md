@@ -25,7 +25,7 @@ cargo test
 | ID | Area | Repro Command / Flow | Expected Current Behavior (before fix) |
 | --- | --- | --- | --- |
 | `S1` | shell guardrails | `cargo test tools::shell::tests::execute_confirm_approved_via_broker_runs_command -- --nocapture` | Approval flow works, but no denylist/sandbox policy yet. |
-| `S2` | fetch SSRF | Manual REPL with `fetch_url` against `http://127.0.0.1:<port>` | Request is currently allowed (no SSRF blocklist yet). |
+| `S2` | fetch SSRF | Manual REPL with `fetch_url` against `http://127.0.0.1:<port>` | Request is blocked by default unless explicitly allowed in `tools.fetch_allowed_domains`. |
 | `S3` | file write path policy | `cargo test tools::files::tests::write_file_creates_and_reports_bytes -- --nocapture` | Write works with no allowlist/denylist path checks yet. |
 | `B1` | UTF-8 truncation | Add/execute non-ASCII truncation case in `tools::shell` / `tools::files` | Some truncation code still slices by byte index and can panic. |
 | `R1` | HTTP timeout | `cargo test api::client::tests::api_client_respects_timeout_policy -- --nocapture` and `cargo test tools::fetch::tests::fetch_tool_respects_configured_timeout -- --nocapture` | Requests time out predictably using configured `[network]` timeout policy. |
@@ -55,7 +55,7 @@ Manual local probe:
 
 1. Start a local server: `python3 -m http.server 8787`
 2. In buddy, trigger `fetch_url` for `http://127.0.0.1:8787`.
-3. Current baseline: request is allowed (this is the issue to fix).
+3. Expected now: request is blocked by default. To allow intentionally, add host/domain to `tools.fetch_allowed_domains`.
 
 ### HTTP timeout behavior (`R1`)
 

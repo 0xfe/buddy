@@ -11,9 +11,10 @@
   4. Remediation Milestone 0 artifacts landed (`ai-state` tracking, `docs/playbook-remediation.md`, shared test fixtures).
   5. Remediation Milestone 1 `B1` landed (UTF-8-safe truncation helper and call-site migrations).
   6. Remediation Milestone 1 `R1` landed (centralized API/fetch timeout policy with config).
+  7. Remediation Milestone 1 `S2` landed (fetch SSRF controls and domain policy).
 - Next steps:
   1. Complete runtime `S2` interactive-path migration and approval command wiring.
-  2. Execute remaining Milestone 1 P1 fixes in small gated commits (`S2`, `S3`, `S1`).
+  2. Execute remaining Milestone 1 P1 fixes in small gated commits (`S3`, `S1`).
   3. Keep Milestones 5/6 checkpoints synchronized with streaming `S2`-`S4`.
 
 ## Integrated Program Board
@@ -99,7 +100,7 @@ Address `S2`, `S3`, `B1`, `R1` first, then tighten `S1` to fail closed safely.
 2. [x] `R1` timeouts:
    - centralized `reqwest::Client` construction with default API timeout (configurable).
    - shorter timeout for `fetch_url`.
-3. [ ] `S2` fetch SSRF controls:
+3. [x] `S2` fetch SSRF controls:
    - block loopback/link-local/RFC1918/metadata IPs by default.
    - add config `fetch_allowed_domains` and `fetch_blocked_domains`.
    - optional confirm mode for fetch (default off for compatibility, documented).
@@ -430,3 +431,10 @@ Address lower-priority architecture items after stabilization (`D1`, `D2`, `D3`,
   - Validation: `cargo test` passed (`219` lib, `31` bin, doc-tests pass).
 - 2026-02-27: Checkpoint commit created for integrated runtime/remediation baseline and Milestone 0/B1/R1 slices.
   - commit: `ace8000`
+- 2026-02-27: Completed Milestone 1 `S2` (fetch SSRF policy + confirm controls):
+  - Added default fetch target blocking for localhost/private/link-local IP ranges.
+  - Added `tools.fetch_allowed_domains` and `tools.fetch_blocked_domains` policy config.
+  - Added optional `tools.fetch_confirm` and interactive approval-broker integration.
+  - Updated docs/template/config tests for new policy fields.
+  - Validation: `cargo test` passed (lib/bin/doc tests).
+  - commit: `26e389d`

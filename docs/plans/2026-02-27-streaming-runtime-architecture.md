@@ -428,3 +428,8 @@ Commit:
   - Runtime milestone status unchanged: `S2` remains active next step.
 - 2026-02-27: Checkpoint commit created after integrated runtime+remediation baseline work.
   - commit: `ace8000`
+- 2026-02-27: Parallel remediation Milestone 1 slice `S2` completed:
+  - Added fetch SSRF protections and domain allow/deny policy controls.
+  - Added optional fetch confirmation flow with shared approval broker wiring.
+  - Validation: `cargo test` passed.
+  - commit: `26e389d`
