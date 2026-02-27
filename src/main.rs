@@ -222,6 +222,7 @@ async fn main() {
         });
         tools.register(WriteFileTool {
             execution: execution.clone(),
+            allowed_paths: config.tools.files_allowed_paths.clone(),
         });
     }
     if config.tools.search_enabled {

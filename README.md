@@ -247,6 +247,7 @@ fetch_confirm = false                      # optional confirmation before fetch_
 fetch_allowed_domains = []                 # optional allowlist (empty = no allowlist)
 fetch_blocked_domains = ["localhost"]      # optional denylist (exact + subdomain match)
 files_enabled = true                       # read_file / write_file tools
+files_allowed_paths = []                   # optional write_file allowlist roots
 search_enabled = true                      # web_search tool (DuckDuckGo)
 shell_confirm = true                       # prompt before running shell commands
 
@@ -292,7 +293,7 @@ At startup, the system prompt is rendered from one compiled template with runtim
 | `run_shell` | Execute shell commands. Output truncated to 4K chars. Optional user confirmation. `wait` can be `true` (default), `false` (tmux-backed targets; return immediately), or a timeout duration string like `10m`. Respects `--container`, `--ssh`, and `--tmux`. |
 | `fetch_url` | HTTP GET a URL, return body as text. Truncated to 8K chars. Uses `[network].fetch_timeout_secs`. Blocks localhost/private/link-local targets by default, with optional tools-domain allow/deny policy. |
 | `read_file` | Read a file's contents. Truncated to 8K chars. Respects `--container`, `--ssh`, and `--tmux`. |
-| `write_file` | Write content to a file. Creates or overwrites. Respects `--container`, `--ssh`, and `--tmux`. |
+| `write_file` | Write content to a file. Creates or overwrites. Respects `--container`, `--ssh`, and `--tmux`. Blocks sensitive directories by default and can be scoped with `tools.files_allowed_paths`. |
 | `web_search` | Search DuckDuckGo and return top results with titles, URLs, and snippets. No API key needed. |
 | `capture-pane` | Capture tmux pane output (with common `capture-pane` flags and optional delay) to inspect interactive/stuck terminal state. By default it uses tmux screenshot behavior (current visible pane content). |
 | `send-keys` | Inject tmux keys/text into a pane (Ctrl-C/Ctrl-Z/Enter/arrows/literal text) for interactive control. |

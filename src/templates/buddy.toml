@@ -60,6 +60,7 @@ fetch_confirm = false                         # optional confirmation before fet
 fetch_allowed_domains = []                    # optional allowlist (empty = no allowlist)
 fetch_blocked_domains = ["localhost"]         # optional denylist (exact + subdomain match)
 files_enabled = true
+files_allowed_paths = []                      # optional write_file allowlist roots
 search_enabled = true
 shell_confirm = true                          # ask before running shell commands
 

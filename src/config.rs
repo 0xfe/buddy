@@ -193,6 +193,9 @@ pub struct ToolsConfig {
     /// Domain denylist for `fetch_url`. Matches exact domain and subdomains.
     pub fetch_blocked_domains: Vec<String>,
     pub files_enabled: bool,
+    /// Optional allowlist roots for `write_file`. When non-empty, writes are
+    /// only permitted under one of these paths.
+    pub files_allowed_paths: Vec<String>,
     pub search_enabled: bool,
     /// Whether to prompt the user before running shell commands.
     pub shell_confirm: bool,
@@ -207,6 +210,7 @@ impl Default for ToolsConfig {
             fetch_allowed_domains: Vec::new(),
             fetch_blocked_domains: Vec::new(),
             files_enabled: true,
+            files_allowed_paths: Vec::new(),
             search_enabled: true,
             shell_confirm: true,
         }
@@ -799,6 +803,7 @@ mod tests {
             fetch_confirm = true
             fetch_allowed_domains = ["example.com", "api.example.com"]
             fetch_blocked_domains = ["internal.example.com", "localhost"]
+            files_allowed_paths = ["/workspace", "/tmp/project"]
         "#;
         let c = parse_file_config_for_test(toml).unwrap();
         assert!(c.tools.fetch_confirm);
@@ -809,6 +814,10 @@ mod tests {
         assert_eq!(
             c.tools.fetch_blocked_domains,
             vec!["internal.example.com", "localhost"]
+        );
+        assert_eq!(
+            c.tools.files_allowed_paths,
+            vec!["/workspace", "/tmp/project"]
         );
     }
 
