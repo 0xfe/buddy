@@ -64,6 +64,7 @@ Fix the currently reported regressions:
 - Commits:
   - `3a64534` runtime/test fixes
   - `5f44127` docs + plan updates
+  - `ba464cb` approval guidance rendering polish
 
 ## Notes
 
