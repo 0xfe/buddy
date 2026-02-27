@@ -3,7 +3,7 @@
 ## Status
 
 - Program status: Active (integrated with `docs/plans/2026-02-27-streaming-runtime-architecture.md`)
-- Current focus: finish runtime refactor milestones needed for remediation Milestones 5/6 while starting P1 security fixes.
+- Current focus: finish runtime refactor milestones needed for remediation Milestones 5/6 while Milestone 1 is closed.
 - Completed so far:
   1. Streaming/runtime `S0` complete (typed runtime command/event schema).
   2. Streaming/runtime `S1` complete (agent emits runtime events with mockable model client interface).
@@ -13,15 +13,16 @@
   6. Remediation Milestone 1 `R1` landed (centralized API/fetch timeout policy with config).
   7. Remediation Milestone 1 `S2` landed (fetch SSRF controls and domain policy).
   8. Remediation Milestone 1 `S3` landed (write-file path controls).
+  9. Remediation Milestone 1 `S1` landed (shell denylist + non-interactive exec fail-closed behavior).
 - Next steps:
   1. Complete runtime `S2` interactive-path migration and approval command wiring.
-  2. Execute remaining Milestone 1 P1 fixes in small gated commits (`S1`).
-  3. Keep Milestones 5/6 checkpoints synchronized with streaming `S2`-`S4`.
+  2. Keep Milestones 5/6 checkpoints synchronized with streaming `S2`-`S4`.
+  3. Start Milestone 2 auth/token-storage work in small gated commits.
 
 ## Integrated Program Board
 
 - [x] Milestone 0: Baseline, Repro Harness, and Safety Net
-- [ ] Milestone 1: Immediate Security + Crash/Hang Fixes (P1)
+- [x] Milestone 1: Immediate Security + Crash/Hang Fixes (P1)
 - [ ] Milestone 2: Auth and Credential Hardening (P1/P2)
 - [ ] Milestone 3: API Correctness and Robustness (P2)
 - [ ] Milestone 4: Conversation Safety and Session Robustness (P2)
@@ -39,7 +40,7 @@ Address the issues raised in `docs/plans/claude-feedback-0.md` with an increment
 2. Prioritize fixes that reduce risk immediately (security, panics, hangs) before large refactors.
 3. Add tests before or with behavior changes, especially in high-churn surfaces (`main.rs`, API protocol handling, execution tools).
 4. Keep compatibility where possible, but add explicit deprecation warnings and timelines.
-5. Commit between tasks/milestones, and record the commit ID in the execution log when a task is marked complete.
+5. Commit between tasks/milestones before marking a task complete, and record the commit ID in the execution log and task notes.
 
 ## Feedback Alignment and Disagreements
 
@@ -109,7 +110,7 @@ Address `S2`, `S3`, `B1`, `R1` first, then tighten `S1` to fail closed safely.
    - add `files_allowed_paths`.
    - hard-block sensitive paths unless explicitly allowed.
    - clear error messages when denied.
-5. [ ] `S1` shell guardrails phase 1:
+5. [x] `S1` shell guardrails phase 1:
    - explicit non-interactive behavior in `exec` mode (fail closed with actionable message).
    - add config denylist with conservative dangerous patterns.
    - add CLI flag `--dangerously-auto-approve` and warning banner.
@@ -445,3 +446,9 @@ Address lower-priority architecture items after stabilization (`D1`, `D2`, `D3`,
   - Enforced policy in `WriteFileTool` with deterministic deny messages.
   - Validation: `cargo test` passed.
   - commit: `81325b0`
+- 2026-02-27: Completed Milestone 1 `S1` (shell guardrails phase 1):
+  - Added `tools.shell_denylist` config with conservative dangerous patterns and enforcement in `run_shell`.
+  - Added `buddy exec` fail-closed behavior when `tools.shell_confirm=true` without interactive approval path.
+  - Added CLI escape hatch `--dangerously-auto-approve` with explicit warning path.
+  - Validation: `cargo test` passed.
+  - commit: `e5ad7ee`

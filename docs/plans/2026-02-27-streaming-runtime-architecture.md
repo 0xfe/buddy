@@ -32,7 +32,7 @@
 1. Keep this **Status** section at the top and update it as work progresses.
 2. Check off milestones/tasks immediately when complete.
 3. Append a new entry to **Execution Log** for each meaningful implementation step (what changed, tests run, results, next step).
-4. Commit between tasks/milestones; include commit IDs in log entries when marking tasks complete.
+4. Commit between tasks/milestones before marking any task complete; include the commit ID in the corresponding log entry.
 5. If scope changes, record the rationale in the log and adjust the Task Board/next steps.
 6. Do not delete historical log entries; append only.
 
@@ -437,3 +437,8 @@ Commit:
   - Added `write_file` path policy controls (`tools.files_allowed_paths` + sensitive directory guardrails).
   - Validation: `cargo test` passed.
   - commit: `81325b0`
+- 2026-02-27: Parallel remediation Milestone 1 slice `S1` completed:
+  - Added shell denylist policy (`tools.shell_denylist`) and denylist enforcement in `run_shell`.
+  - Added one-shot `buddy exec` fail-closed guard when shell confirmation is enabled, plus `--dangerously-auto-approve` override.
+  - Validation: `cargo test` passed.
+  - commit: `e5ad7ee`
