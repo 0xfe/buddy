@@ -22,6 +22,8 @@ const MAX_OUTPUT_LEN: usize = 4000;
 pub struct ShellTool {
     /// Whether to require user confirmation before execution.
     pub confirm: bool,
+    /// Denylist patterns used to block dangerous commands.
+    pub denylist: Vec<String>,
     /// Whether terminal UI should use color.
     pub color: bool,
     /// Where shell commands are actually executed (local/container/ssh).
@@ -129,6 +131,11 @@ impl Tool for ShellTool {
     async fn execute(&self, arguments: &str) -> Result<String, ToolError> {
         let args: Args = serde_json::from_str(arguments)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
+        if let Some(pattern) = matched_denylist_pattern(&args.command, &self.denylist) {
+            return Err(ToolError::ExecutionFailed(format!(
+                "command blocked by tools.shell_denylist pattern `{pattern}`"
+            )));
+        }
         let wait = parse_wait_mode(args.wait)?;
 
         // Prompt for confirmation if enabled.
@@ -223,6 +230,16 @@ fn truncate_output(s: &str, max: usize) -> String {
     truncate_with_suffix_by_bytes(s, max, "...[truncated]")
 }
 
+fn matched_denylist_pattern(command: &str, denylist: &[String]) -> Option<String> {
+    let lowered = command.to_ascii_lowercase();
+    denylist
+        .iter()
+        .map(|pattern| pattern.trim())
+        .filter(|pattern| !pattern.is_empty())
+        .find(|pattern| lowered.contains(&pattern.to_ascii_lowercase()))
+        .map(ToString::to_string)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,6 +295,7 @@ mod tests {
         assert_eq!(
             ShellTool {
                 confirm: false,
+                denylist: Vec::new(),
                 color: false,
                 execution: ExecutionContext::local(),
                 approval: None,
@@ -291,6 +309,7 @@ mod tests {
     async fn execute_invalid_json_returns_error() {
         let err = ShellTool {
             confirm: false,
+            denylist: Vec::new(),
             color: false,
             execution: ExecutionContext::local(),
             approval: None,
@@ -305,6 +324,7 @@ mod tests {
     async fn execute_echo_command() {
         let result = ShellTool {
             confirm: false,
+            denylist: Vec::new(),
             color: false,
             execution: ExecutionContext::local(),
             approval: None,
@@ -320,6 +340,7 @@ mod tests {
     async fn execute_failing_command_reports_exit_code() {
         let result = ShellTool {
             confirm: false,
+            denylist: Vec::new(),
             color: false,
             execution: ExecutionContext::local(),
             approval: None,
@@ -334,6 +355,7 @@ mod tests {
     async fn execute_stderr_captured() {
         let result = ShellTool {
             confirm: false,
+            denylist: Vec::new(),
             color: false,
             execution: ExecutionContext::local(),
             approval: None,
@@ -352,6 +374,7 @@ mod tests {
             .is_some_and(|v| v.trim() == "1");
         let outcome = ShellTool {
             confirm: false,
+            denylist: Vec::new(),
             color: false,
             execution: ExecutionContext::local(),
             approval: None,
@@ -378,6 +401,7 @@ mod tests {
     async fn execute_wait_duration_can_timeout() {
         let err = ShellTool {
             confirm: false,
+            denylist: Vec::new(),
             color: false,
             execution: ExecutionContext::local(),
             approval: None,
@@ -398,6 +422,7 @@ mod tests {
         let join = tokio::spawn(async move {
             ShellTool {
                 confirm: true,
+                denylist: Vec::new(),
                 color: false,
                 execution: ExecutionContext::local(),
                 approval: Some(broker),
@@ -422,6 +447,7 @@ mod tests {
         let join = tokio::spawn(async move {
             ShellTool {
                 confirm: true,
+                denylist: Vec::new(),
                 color: false,
                 execution: ExecutionContext::local(),
                 approval: Some(broker),
@@ -436,5 +462,23 @@ mod tests {
 
         let result = join.await.expect("join should succeed").unwrap();
         assert_eq!(result, "Command execution denied by user.");
+    }
+
+    #[tokio::test]
+    async fn execute_blocks_commands_matching_denylist() {
+        let err = ShellTool {
+            confirm: false,
+            denylist: vec!["rm -rf /".to_string()],
+            color: false,
+            execution: ExecutionContext::local(),
+            approval: None,
+        }
+        .execute(r#"{"command":"rm -rf /tmp/test"}"#)
+        .await
+        .expect_err("denylist should block this command");
+        assert!(
+            err.to_string().contains("tools.shell_denylist"),
+            "unexpected error: {err}"
+        );
     }
 }

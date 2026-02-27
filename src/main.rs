@@ -11,7 +11,7 @@ use buddy::config::ensure_default_global_config;
 use buddy::config::initialize_default_global_config;
 use buddy::config::load_config;
 use buddy::config::select_model_profile;
-use buddy::config::{AuthMode, Config, GlobalConfigInitResult};
+use buddy::config::{AuthMode, Config, GlobalConfigInitResult, ToolsConfig};
 use buddy::prompt::{render_system_prompt, ExecutionTarget, SystemPromptParams};
 use buddy::render::Renderer;
 use buddy::runtime::{
@@ -41,6 +41,27 @@ use tokio::task::JoinHandle;
 
 const BACKGROUND_TASK_WARNING: &str =
     "Background tasks are in progress. Allowed commands now: /ps, /kill <id>, /timeout <dur> [id], /approve <mode>, /status, /context.";
+
+fn enforce_exec_shell_guardrails(
+    is_exec_command: bool,
+    dangerously_auto_approve: bool,
+    tools: &mut ToolsConfig,
+) -> Result<Option<String>, String> {
+    if !is_exec_command || !tools.shell_enabled || !tools.shell_confirm {
+        return Ok(None);
+    }
+    if dangerously_auto_approve {
+        tools.shell_confirm = false;
+        return Ok(Some(
+            "Dangerous mode enabled: auto-approving run_shell commands for this exec invocation."
+                .to_string(),
+        ));
+    }
+    Err(
+        "buddy exec is non-interactive and fails closed when tools.shell_confirm=true. Run interactive buddy, set tools.shell_confirm=false, or pass --dangerously-auto-approve."
+            .to_string(),
+    )
+}
 
 #[tokio::main]
 async fn main() {
@@ -120,6 +141,20 @@ async fn main() {
         std::process::exit(1);
     }
 
+    let is_exec_command = matches!(args.command.as_ref(), Some(cli::Command::Exec { .. }));
+    match enforce_exec_shell_guardrails(
+        is_exec_command,
+        args.dangerously_auto_approve,
+        &mut config.tools,
+    ) {
+        Ok(Some(warning)) => renderer.warn(&warning),
+        Ok(None) => {}
+        Err(msg) => {
+            renderer.error(&msg);
+            std::process::exit(1);
+        }
+    }
+
     if (args.container.is_some() || args.ssh.is_some() || args.tmux.is_some())
         && !config.tools.shell_enabled
         && !config.tools.files_enabled
@@ -194,6 +229,7 @@ async fn main() {
     if config.tools.shell_enabled {
         tools.register(ShellTool {
             confirm: config.tools.shell_confirm,
+            denylist: config.tools.shell_denylist.clone(),
             color: config.display.color,
             execution: execution.clone(),
             approval: shell_approval_broker.clone(),
@@ -2288,6 +2324,30 @@ mod tests {
         cfg.api.base_url = "https://openrouter.ai/api/v1".to_string();
         let err = ensure_active_auth_ready(&cfg).unwrap_err();
         assert!(err.contains("not an OpenAI login endpoint"));
+    }
+
+    #[test]
+    fn exec_shell_guardrails_fail_closed_without_override() {
+        let mut tools = ToolsConfig::default();
+        tools.shell_enabled = true;
+        tools.shell_confirm = true;
+        let err = enforce_exec_shell_guardrails(true, false, &mut tools).unwrap_err();
+        assert!(
+            err.contains("--dangerously-auto-approve"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn exec_shell_guardrails_auto_approve_disables_shell_confirm() {
+        let mut tools = ToolsConfig::default();
+        tools.shell_enabled = true;
+        tools.shell_confirm = true;
+        let warning = enforce_exec_shell_guardrails(true, true, &mut tools)
+            .expect("guardrail should allow override")
+            .expect("warning expected");
+        assert!(warning.contains("Dangerous mode"));
+        assert!(!tools.shell_confirm);
     }
 
     #[test]

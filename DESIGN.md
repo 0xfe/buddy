@@ -33,6 +33,7 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
 - Dual runtime modes:
   - Interactive REPL mode.
   - One-shot mode via `buddy exec <prompt>`.
+  - One-shot mode fails closed when `tools.shell_confirm=true` unless `--dangerously-auto-approve` is passed.
 - Developer-facing runtime event schema scaffolding:
   - `src/runtime.rs` defines typed `RuntimeCommand` and `RuntimeEvent` families plus `RuntimeEventEnvelope`.
   - Includes adapter helpers from existing `AgentUiEvent` into runtime events for incremental migration.
@@ -65,7 +66,7 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
   - Executes returned tool calls.
   - Feeds tool results back until a final assistant response or max-iteration cap.
 - Built-in tools:
-  - `run_shell` with optional confirmation flow, output truncation, and configurable wait modes (`true`, `false`, or duration timeout).
+  - `run_shell` with optional confirmation flow, denylist guardrails, output truncation, and configurable wait modes (`true`, `false`, or duration timeout).
   - `read_file` and `write_file` with output safety limits; `write_file` blocks sensitive directories by default and supports path allowlisting.
   - `fetch_url` HTTP GET tool with default SSRF protections (localhost/private/link-local blocking), optional domain allow/deny policy, and optional confirmation prompts.
   - `web_search` (DuckDuckGo HTML results parsing).
@@ -141,7 +142,7 @@ Configuration is defined with model profiles and runtime resolution:
 - **`ModelConfig`** — profile fields under `[models.<name>]`: `api_base_url`, `api` (`completions|responses`), `auth` (`api-key|login`), `api_key`, `api_key_env`, `api_key_file`, optional `model`, optional `context_limit`
 - **`ApiConfig`** — resolved active runtime API settings (`base_url`, resolved `api_key`, concrete `model`, resolved `protocol`, resolved `auth`, active `profile`, optional `context_limit`)
 - **`AgentConfig`** — `model` (active profile key), `system_prompt`, `max_iterations`, optional `temperature`/`top_p`
-- **`ToolsConfig`** — boolean flags for each built-in tool, plus `shell_confirm`, `fetch_confirm`, `fetch_allowed_domains`, `fetch_blocked_domains`, and `files_allowed_paths`
+- **`ToolsConfig`** — boolean flags for each built-in tool, plus `shell_confirm`, `shell_denylist`, `fetch_confirm`, `fetch_allowed_domains`, `fetch_blocked_domains`, and `files_allowed_paths`
 - **`NetworkConfig`** — HTTP timeout policy (`api_timeout_secs`, `fetch_timeout_secs`)
 - **`DisplayConfig`** — `color`, `show_tokens`, `show_tool_calls`
 
@@ -207,7 +208,7 @@ The trait uses `async_trait` because dyn dispatch with native async fn in traits
 
 **Built-in tools:**
 
-**`shell.rs` — `run_shell`**: Executes commands via `tokio::process::Command` with `sh -c`. If `confirm` is true, the tool either prompts directly (one-shot / non-brokered mode) or sends a foreground approval request through a channel consumed by the interactive REPL loop. Output (stdout + stderr + exit code) is truncated to 4000 characters to prevent blowing up the context window.
+**`shell.rs` — `run_shell`**: Executes commands via `tokio::process::Command` with `sh -c`. Commands are screened against `tools.shell_denylist` before execution. If `confirm` is true, the tool either prompts directly (one-shot / non-brokered mode) or sends a foreground approval request through a channel consumed by the interactive REPL loop. Output (stdout + stderr + exit code) is truncated to 4000 characters to prevent blowing up the context window.
 
 **`fetch.rs` — `fetch_url`**: Async HTTP GET via a timeout-configured reqwest client. Enforces SSRF policy (blocks localhost/private/link-local targets by default), supports optional domain allow/deny policy, and returns response text truncated to 8000 characters.
 

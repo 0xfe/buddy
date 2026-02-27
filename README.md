@@ -250,6 +250,7 @@ files_enabled = true                       # read_file / write_file tools
 files_allowed_paths = []                   # optional write_file allowlist roots
 search_enabled = true                      # web_search tool (DuckDuckGo)
 shell_confirm = true                       # prompt before running shell commands
+shell_denylist = ["rm -rf /", "mkfs"]      # block dangerous run_shell patterns
 
 [network]
 api_timeout_secs = 120                     # model API request timeout (seconds)
@@ -279,6 +280,8 @@ Options:
       --container <ID/NAME>  Run shell/files tools with docker/podman exec in this container
       --ssh <USER@HOST>      Run shell/files tools on this host over persistent ssh
       --tmux [SESSION]       optional tmux session override (tmux-backed execution is the default when shell/files tools are enabled)
+      --dangerously-auto-approve
+                              in `buddy exec`, bypass run_shell confirmations (dangerous)
       --no-color             Disable color output
   -h, --help                 Print help
   -V, --version              Print version
@@ -286,11 +289,13 @@ Options:
 
 At startup, the system prompt is rendered from one compiled template with runtime placeholders (enabled tools, execution target, and optional `[agent].system_prompt` operator instructions). When `--container` or `--ssh` is set, the rendered prompt includes explicit remote-target guidance.
 
+`buddy exec` is non-interactive. If `tools.shell_confirm=true`, exec fails closed unless you explicitly pass `--dangerously-auto-approve`.
+
 ### Built-in tools
 
 | Tool | Description |
 |------|-------------|
-| `run_shell` | Execute shell commands. Output truncated to 4K chars. Optional user confirmation. `wait` can be `true` (default), `false` (tmux-backed targets; return immediately), or a timeout duration string like `10m`. Respects `--container`, `--ssh`, and `--tmux`. |
+| `run_shell` | Execute shell commands. Output truncated to 4K chars. Optional user confirmation and denylist guardrails via `tools.shell_denylist`. `wait` can be `true` (default), `false` (tmux-backed targets; return immediately), or a timeout duration string like `10m`. Respects `--container`, `--ssh`, and `--tmux`. |
 | `fetch_url` | HTTP GET a URL, return body as text. Truncated to 8K chars. Uses `[network].fetch_timeout_secs`. Blocks localhost/private/link-local targets by default, with optional tools-domain allow/deny policy. |
 | `read_file` | Read a file's contents. Truncated to 8K chars. Respects `--container`, `--ssh`, and `--tmux`. |
 | `write_file` | Write content to a file. Creates or overwrites. Respects `--container`, `--ssh`, and `--tmux`. Blocks sensitive directories by default and can be scoped with `tools.files_allowed_paths`. |

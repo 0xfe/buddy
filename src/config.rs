@@ -199,6 +199,8 @@ pub struct ToolsConfig {
     pub search_enabled: bool,
     /// Whether to prompt the user before running shell commands.
     pub shell_confirm: bool,
+    /// Command denylist patterns for `run_shell`.
+    pub shell_denylist: Vec<String>,
 }
 
 impl Default for ToolsConfig {
@@ -213,6 +215,14 @@ impl Default for ToolsConfig {
             files_allowed_paths: Vec::new(),
             search_enabled: true,
             shell_confirm: true,
+            shell_denylist: vec![
+                "rm -rf /".to_string(),
+                "mkfs".to_string(),
+                "shutdown".to_string(),
+                "reboot".to_string(),
+                "dd if=".to_string(),
+                ":(){ :|:& };:".to_string(),
+            ],
         }
     }
 }
@@ -771,6 +781,7 @@ mod tests {
         assert!(c.models.contains_key("openrouter-deepseek"));
         assert!(c.models.contains_key("openrouter-glm"));
         assert!(c.models.contains_key("kimi"));
+        assert!(!c.tools.shell_denylist.is_empty());
         assert_eq!(c.network.api_timeout_secs, DEFAULT_API_TIMEOUT_SECS);
         assert_eq!(c.network.fetch_timeout_secs, DEFAULT_FETCH_TIMEOUT_SECS);
     }
@@ -804,6 +815,7 @@ mod tests {
             fetch_allowed_domains = ["example.com", "api.example.com"]
             fetch_blocked_domains = ["internal.example.com", "localhost"]
             files_allowed_paths = ["/workspace", "/tmp/project"]
+            shell_denylist = ["rm -rf /", "mkfs"]
         "#;
         let c = parse_file_config_for_test(toml).unwrap();
         assert!(c.tools.fetch_confirm);
@@ -819,6 +831,7 @@ mod tests {
             c.tools.files_allowed_paths,
             vec!["/workspace", "/tmp/project"]
         );
+        assert_eq!(c.tools.shell_denylist, vec!["rm -rf /", "mkfs"]);
     }
 
     #[test]

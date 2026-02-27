@@ -63,6 +63,13 @@ files_enabled = true
 files_allowed_paths = []                      # optional write_file allowlist roots
 search_enabled = true
 shell_confirm = true                          # ask before running shell commands
+shell_denylist = [                            # block dangerous run_shell commands
+  "rm -rf /",
+  "mkfs",
+  "shutdown",
+  "reboot",
+  "dd if=",
+]
 
 [network]
 api_timeout_secs = 120

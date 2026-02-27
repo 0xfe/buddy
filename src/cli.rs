@@ -35,6 +35,15 @@ pub struct Args {
     #[arg(long = "no-color", global = true)]
     pub no_color: bool,
 
+    /// In `buddy exec`, bypass shell confirmation prompts and auto-approve
+    /// `run_shell` commands. Dangerous: use only in trusted contexts.
+    #[arg(
+        long = "dangerously-auto-approve",
+        global = true,
+        default_value_t = false
+    )]
+    pub dangerously_auto_approve: bool,
+
     #[command(subcommand)]
     pub command: Option<Command>,
 }
@@ -136,5 +145,11 @@ mod tests {
         let args = Args::parse_from(["buddy", "--container", "dev", "--tmux", "buddy-dev"]);
         assert_eq!(args.container.as_deref(), Some("dev"));
         assert_eq!(args.tmux, Some(Some("buddy-dev".to_string())));
+    }
+
+    #[test]
+    fn dangerously_auto_approve_flag_parses() {
+        let args = Args::parse_from(["buddy", "--dangerously-auto-approve", "exec", "hi"]);
+        assert!(args.dangerously_auto_approve);
     }
 }
