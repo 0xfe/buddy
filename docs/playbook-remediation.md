@@ -114,6 +114,12 @@ cargo test api::responses::tests -- --nocapture
 cargo test auth::tests -- --nocapture
 ```
 
+Optional parser property-test suite:
+
+```bash
+cargo test --features fuzz-tests
+```
+
 ## Ignored / Network Regression Suite
 
 Run only when credentials/network are available:

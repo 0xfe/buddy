@@ -11,6 +11,10 @@ path = "src/main.rs"
 name = "buddy"
 path = "src/lib.rs"
 
+[features]
+default = []
+fuzz-tests = ["dep:proptest"]
+
 [dependencies]
 aes-gcm-siv = "0.11"
 async-trait = "0.1"
@@ -31,6 +35,7 @@ termimad = "0.34"
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 tokio = { version = "1", features = ["full"] }
 toml = "0.8"
+proptest = { version = "1.6", optional = true }
 
 [dev-dependencies]
 termimad = "0.34"

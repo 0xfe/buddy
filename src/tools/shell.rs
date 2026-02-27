@@ -551,4 +551,40 @@ mod tests {
         assert!(saw_stdout, "missing stdout stream event");
         assert!(saw_completed, "missing completed stream event");
     }
+
+    #[cfg(feature = "fuzz-tests")]
+    mod prop_tests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn parse_duration_arg_accepts_supported_units(
+                value in 1u64..10_000u64,
+                unit in prop_oneof![Just("ms"), Just("s"), Just("m"), Just("h"), Just("d")]
+            ) {
+                let raw = format!("{value}{unit}");
+                let parsed = parse_duration_arg(&raw).expect("duration should parse");
+                let expected = match unit {
+                    "ms" => Duration::from_millis(value),
+                    "s" => Duration::from_secs(value),
+                    "m" => Duration::from_secs(value.saturating_mul(60)),
+                    "h" => Duration::from_secs(value.saturating_mul(3600)),
+                    "d" => Duration::from_secs(value.saturating_mul(86_400)),
+                    _ => unreachable!("covered by generator"),
+                };
+                prop_assert_eq!(parsed, expected);
+            }
+
+            #[test]
+            fn parse_duration_arg_rejects_unknown_suffixes(
+                value in 1u64..10_000u64,
+                suffix in proptest::string::string_regex("[a-z]{1,3}").expect("regex")
+            ) {
+                prop_assume!(suffix != "ms" && suffix != "s" && suffix != "m" && suffix != "h" && suffix != "d");
+                let raw = format!("{value}{suffix}");
+                prop_assert_eq!(parse_duration_arg(&raw), None);
+            }
+        }
+    }
 }

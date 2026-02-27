@@ -760,4 +760,39 @@ mod tests {
         assert!(msg.extra.contains_key("reasoning"));
         assert_eq!(parsed.usage.as_ref().map(|u| u.total_tokens), Some(15));
     }
+
+    #[cfg(feature = "fuzz-tests")]
+    mod prop_tests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn parse_sse_event_payloads_round_trips_data_blocks(
+                payloads in proptest::collection::vec(
+                    proptest::collection::vec(
+                        proptest::string::string_regex("[ -~]{0,24}").expect("regex"),
+                        1..4
+                    ),
+                    0..8
+                )
+            ) {
+                let mut stream = String::new();
+                let mut expected = Vec::new();
+                for (idx, payload_lines) in payloads.iter().enumerate() {
+                    stream.push_str(": keepalive\n");
+                    stream.push_str(&format!("event: e{idx}\n"));
+                    for line in payload_lines {
+                        stream.push_str("data: ");
+                        stream.push_str(line);
+                        stream.push('\n');
+                    }
+                    stream.push_str("id: 1\n\n");
+                    expected.push(payload_lines.join("\n"));
+                }
+
+                prop_assert_eq!(parse_sse_event_payloads(&stream), expected);
+            }
+        }
+    }
 }
