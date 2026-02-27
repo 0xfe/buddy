@@ -5,12 +5,12 @@ mod cli_event_renderer;
 
 use buddy::agent::Agent;
 use buddy::auth::{
-    complete_openai_device_login, login_provider_key_for_base_url,
-    provider_login_health, reset_provider_tokens, save_provider_tokens, start_openai_device_login,
-    supports_openai_login, try_open_browser,
+    complete_openai_device_login, login_provider_key_for_base_url, provider_login_health,
+    reset_provider_tokens, save_provider_tokens, start_openai_device_login, supports_openai_login,
+    try_open_browser,
 };
-use buddy::config::ensure_default_global_config;
 use buddy::config::default_history_path;
+use buddy::config::ensure_default_global_config;
 use buddy::config::initialize_default_global_config;
 use buddy::config::load_config;
 use buddy::config::select_model_profile;
@@ -586,7 +586,6 @@ async fn main() {
                 continue;
             }
 
-            let mut interrupted_approval: Option<PendingApproval> = None;
             if let Some(latest) = agent
                 .try_lock()
                 .ok()
@@ -605,31 +604,14 @@ async fn main() {
                 repl::PromptMode::Normal,
                 None,
                 || {
-                    let mut should_interrupt = false;
-                    collect_runtime_events(&mut runtime_events, &mut pending_runtime_events);
-                    process_runtime_events(
-                        &renderer,
-                        &mut pending_runtime_events,
-                        &mut background_tasks,
-                        &mut completed_tasks,
-                        &mut pending_approval,
-                        &mut config,
-                        &mut active_session,
-                        &mut runtime_context,
-                    );
-                    if pending_approval.is_some() {
-                        interrupted_approval = pending_approval.take();
-                        should_interrupt = true;
-                    }
-                    if has_finished_background_tasks(&completed_tasks) {
-                        should_interrupt = true;
-                    }
-                    if has_elapsed_timeouts(&background_tasks) {
-                        should_interrupt = true;
-                    }
-
+                    // If runtime events arrive while the input editor is visible, interrupt the
+                    // editor immediately. Rendering those events while raw-mode input is active
+                    // causes overlapping lines and cursor drift.
+                    let has_new_runtime_events =
+                        collect_runtime_events(&mut runtime_events, &mut pending_runtime_events);
                     repl::ReadPoll {
-                        interrupt: should_interrupt,
+                        interrupt: has_new_runtime_events
+                            || has_elapsed_timeouts(&background_tasks),
                         status_line: background_liveness_line(&background_tasks),
                     }
                 },
@@ -637,10 +619,7 @@ async fn main() {
                 Ok(repl::ReadOutcome::Line(line)) => line,
                 Ok(repl::ReadOutcome::Eof) => break,
                 Ok(repl::ReadOutcome::Cancelled) => break,
-                Ok(repl::ReadOutcome::Interrupted) => {
-                    pending_approval = interrupted_approval;
-                    continue;
-                }
+                Ok(repl::ReadOutcome::Interrupted) => continue,
                 Err(e) => {
                     renderer.error(&format!("failed to read input: {e}"));
                     break;
@@ -1596,10 +1575,6 @@ struct CompletedBackgroundTask {
     kind: String,
     started_at: Instant,
     result: Result<String, String>,
-}
-
-fn has_finished_background_tasks(completed: &[CompletedBackgroundTask]) -> bool {
-    !completed.is_empty()
 }
 
 enum BackgroundTaskState {
