@@ -43,6 +43,9 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
   - Runtime actor is available via `spawn_runtime(...)`, `spawn_runtime_with_agent(...)`, and `spawn_runtime_with_shared_agent(...)` with command/event channels.
   - Both one-shot `exec` and interactive REPL prompt execution run through runtime commands/events.
   - Explicit approval flow is runtime-commanded (`RuntimeCommand::Approve`) and surfaced as `TaskEvent::WaitingApproval`.
+  - Tool runtime events now include incremental tool-stream variants (`CallStarted`, `StdoutChunk`, `StderrChunk`, `Info`, `Completed`) in addition to final `Result`.
+  - CLI runtime-event rendering is isolated in `src/cli_event_renderer.rs` so terminal rendering is no longer coupled to runtime orchestration code paths.
+  - `examples/alternate_frontend.rs` demonstrates driving Buddy entirely through runtime commands/events from a non-default frontend.
 - CLI subcommands:
   - `buddy` (REPL)
   - `buddy init [--force]`
@@ -179,8 +182,9 @@ The public method `chat()`:
    - `api = "completions"` -> `{base_url}/chat/completions`
    - `api = "responses"` -> `{base_url}/responses`
 3. For OpenAI login-backed Responses requests (`auth = "login"` without API key), sends `store = false` and `stream = true` to match ChatGPT Codex backend requirements.
-4. Normalizes Responses API output back into the internal chat/tool-call structures used by the agent loop. For mandatory streaming paths, it consumes SSE and resolves the final `response.completed` payload.
-5. Captures non-2xx responses as `ApiError::Status`.
+4. Normalizes Responses API output back into the internal chat/tool-call structures used by the agent loop. For mandatory streaming paths, it now consumes SSE as event blocks (multiline `data:` support + comment handling) and resolves the final `response.completed` payload.
+5. Applies transient retry/backoff for 429/5xx/timeouts/connectivity with `Retry-After` support when present.
+6. Captures non-2xx responses as `ApiError::Status` (with optional parsed `retry_after_secs`) and adds protocol-mismatch hints for common 404 endpoint mistakes.
 
 ### `tools/` — Tool system
 
@@ -193,24 +197,25 @@ The tool system is built around one trait and one registry.
 pub trait Tool: Send + Sync {
     fn name(&self) -> &'static str;
     fn definition(&self) -> ToolDefinition;
-    async fn execute(&self, arguments: &str) -> Result<String, ToolError>;
+    async fn execute(&self, arguments: &str, context: &ToolContext) -> Result<String, ToolError>;
 }
 ```
 
 - `name()` returns the string the model uses to invoke the tool — it must match the `name` in the tool definition.
 - `definition()` returns the OpenAI-format tool definition including the JSON Schema for parameters.
-- `execute()` receives the raw JSON arguments string from the model and returns a text result.
+- `execute()` receives the raw JSON arguments string plus a `ToolContext` that can emit structured stream events while the tool runs, and returns a text result.
 
 The trait uses `async_trait` because dyn dispatch with native async fn in traits requires boxing the future, and `async_trait` handles this cleanly. All tools are `Send + Sync` so they work in async contexts.
 
 **`ToolRegistry`** holds a `Vec<Box<dyn Tool>>` and provides:
 - `register()` — add a tool
 - `definitions()` — collect all tool definitions for API requests
-- `execute(name, args)` — find the tool by name and call it
+- `execute(name, args)` — compatibility helper with empty tool context
+- `execute_with_context(name, args, context)` — context-aware execution for runtime streaming
 
 **Built-in tools:**
 
-**`shell.rs` — `run_shell`**: Executes commands via `tokio::process::Command` with `sh -c`. Commands are screened against `tools.shell_denylist` before execution. If `confirm` is true, the tool either prompts directly (one-shot / non-brokered mode) or sends a foreground approval request through a channel consumed by the interactive REPL loop. Output (stdout + stderr + exit code) is truncated to 4000 characters to prevent blowing up the context window.
+**`shell.rs` — `run_shell`**: Executes commands via execution backends (`local`, `container`, `ssh`, tmux variants). Commands are screened against `tools.shell_denylist` before execution. If `confirm` is true, the tool either prompts directly (one-shot / non-brokered mode) or sends a foreground approval request through a channel consumed by the interactive REPL loop. Output (stdout + stderr + exit code) is truncated to 4000 characters to prevent blowing up the context window. It emits tool stream events into `ToolContext` (`Started`, `StdoutChunk`, `StderrChunk`, `Completed`) so runtime consumers can render tool activity incrementally.
 
 **`fetch.rs` — `fetch_url`**: Async HTTP GET via a timeout-configured reqwest client. Enforces SSRF policy (blocks localhost/private/link-local targets by default), supports optional domain allow/deny policy, and returns response text truncated to 8000 characters.
 

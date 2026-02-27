@@ -3,7 +3,7 @@
 ## Status
 
 - Program status: Active (integrated with `docs/plans/2026-02-27-streaming-runtime-architecture.md`)
-- Current focus: complete streaming/runtime milestones `S3` and `S4` now that Milestone 3 correctness fixes are in.
+- Current focus: complete streaming/runtime documentation stabilization (`S5`) and close Milestone 6 UX follow-up checkpoints.
 - Completed so far:
   1. Streaming/runtime `S0` complete (typed runtime command/event schema).
   2. Streaming/runtime `S1` complete (agent emits runtime events with mockable model client interface).
@@ -16,10 +16,12 @@
   9. Remediation Milestone 1 `S1` landed (shell denylist + non-interactive exec fail-closed behavior).
   10. Remediation Milestone 2 `S4` landed (machine-derived encrypted auth storage + migration + login check/reset flow).
   11. Remediation Milestone 3 landed (SSE parser hardening, transient retry/backoff, shared HTTP client reuse, and protocol diagnostics).
+  12. Streaming/runtime `S3` landed (`ToolContext` + tool stream events with `run_shell` first).
+  13. Streaming/runtime `S4` landed (CLI event-renderer adapter + alternate frontend example parity path).
 - Next steps:
-  1. Land streaming/runtime `S3` (`ToolContext` + streamed shell events).
-  2. Land streaming/runtime `S4` (event-renderer boundary + alternate frontend example parity).
-  3. Continue Milestone 6 UX work once runtime `S3`/`S4` rendering is stabilized.
+  1. Complete streaming/runtime `S5` docs + stabilization gate.
+  2. Continue Milestone 6 UX follow-up work on top of the new runtime event boundaries.
+  3. Re-run model regression gate once provider credentials are available for all default profiles.
 
 ## Integrated Program Board
 
@@ -28,7 +30,7 @@
 - [x] Milestone 2: Auth and Credential Hardening (P1/P2)
 - [x] Milestone 3: API Correctness and Robustness (P2)
 - [ ] Milestone 4: Conversation Safety and Session Robustness (P2)
-- [ ] Milestone 5: Testability and Modularization (P2/P3) - in progress via streaming runtime milestones
+- [x] Milestone 5: Testability and Modularization (P2/P3)
 - [ ] Milestone 6: UX Improvements (P3) - in progress via streaming runtime milestones
 - [ ] Milestone 7: Deferred Design Extensions (P4)
 
@@ -472,3 +474,10 @@ Address lower-priority architecture items after stabilization (`D1`, `D2`, `D3`,
   - Added shared HTTP client reuse for auth flows and web search tool executions.
   - Validation: `cargo test` passed; `cargo test --test model_regression -- --ignored --nocapture` ran and failed only for missing `MOONSHOT_API_KEY` on `kimi` profile.
   - commit: `e4cf33c`
+- 2026-02-27: Completed streaming/runtime `S3` + `S4` cross-milestone tasks:
+  - Added `ToolContext` + `ToolStreamEvent` support in the tool interface/registry and wired runtime tool stream events through `Agent`.
+  - Added runtime tool event variants for incremental output and updated `run_shell` to emit stream events.
+  - Introduced `src/cli_event_renderer.rs` to decouple runtime-event rendering from `main.rs`.
+  - Added alternate frontend parity example (`examples/alternate_frontend.rs`) consuming runtime command/event APIs directly.
+  - Validation: `cargo test` and `cargo build --examples` passed.
+  - commit: `324b0d2`

@@ -160,7 +160,7 @@ Custom tools implement the `Tool` trait:
 
 ```rust
 use async_trait::async_trait;
-use buddy::tools::Tool;
+use buddy::tools::{Tool, ToolContext};
 use buddy::error::ToolError;
 use buddy::types::{ToolDefinition, FunctionDefinition};
 
@@ -181,10 +181,16 @@ impl Tool for MyTool {
         }
     }
 
-    async fn execute(&self, arguments: &str) -> Result<String, ToolError> {
+    async fn execute(&self, arguments: &str, _context: &ToolContext) -> Result<String, ToolError> {
         Ok("result".into())
     }
 }
+```
+
+Runtime/event embedding is available through the runtime actor API:
+
+```bash
+cargo run --example alternate_frontend -- "list files"
 ```
 
 ## Configuring
@@ -300,7 +306,7 @@ Login credentials are stored in `~/.config/buddy/auth.json` using machine-derive
 
 | Tool | Description |
 |------|-------------|
-| `run_shell` | Execute shell commands. Output truncated to 4K chars. Optional user confirmation and denylist guardrails via `tools.shell_denylist`. `wait` can be `true` (default), `false` (tmux-backed targets; return immediately), or a timeout duration string like `10m`. Respects `--container`, `--ssh`, and `--tmux`. |
+| `run_shell` | Execute shell commands. Output truncated to 4K chars. Optional user confirmation and denylist guardrails via `tools.shell_denylist`. `wait` can be `true` (default), `false` (tmux-backed targets; return immediately), or a timeout duration string like `10m`. Emits structured tool stream events (`started`, `stdout`, `stderr`, `completed`) to runtime consumers. Respects `--container`, `--ssh`, and `--tmux`. |
 | `fetch_url` | HTTP GET a URL, return body as text. Truncated to 8K chars. Uses `[network].fetch_timeout_secs`. Blocks localhost/private/link-local targets by default, with optional tools-domain allow/deny policy. |
 | `read_file` | Read a file's contents. Truncated to 8K chars. Respects `--container`, `--ssh`, and `--tmux`. |
 | `write_file` | Write content to a file. Creates or overwrites. Respects `--container`, `--ssh`, and `--tmux`. Blocks sensitive directories by default and can be scoped with `tools.files_allowed_paths`. |

@@ -2,22 +2,20 @@
 
 ## Status
 
-- Current milestone: `S3` (tool context + streaming tool outputs)
-- Current status: `S2` complete (integrated with `docs/plans/2026-02-27-claude-feedback-remediation-plan.md`)
+- Current milestone: Completed
+- Current status: `S0`-`S5` complete (integrated with `docs/plans/2026-02-27-claude-feedback-remediation-plan.md`)
 - Next steps:
-  1. Introduce `ToolContext` and compatibility adapter path.
-  2. Start incremental tool streaming with `run_shell` as first tool.
-  3. Keep renderer parity while moving to event-driven incremental updates.
-  4. Feed `S3` checkpoints back into remediation Milestone 6 gates.
+  1. Continue remediation Milestone 6 UX follow-up using the stabilized runtime event boundaries.
+  2. Re-run model regression suite when all default-provider credentials are available.
 
 ## Task Board
 
 - [x] S0: Event schema and adapter shims
 - [x] S1: Stream-capable agent core
 - [x] S2: Runtime actor + command plane
-- [ ] S3: Tool context and streaming tool outputs
-- [ ] S4: Renderer decoupling and alternate frontend parity
-- [ ] S5: Documentation and stabilization
+- [x] S3: Tool context and streaming tool outputs
+- [x] S4: Renderer decoupling and alternate frontend parity
+- [x] S5: Documentation and stabilization
 
 ## Remediation Linkage
 
@@ -451,3 +449,10 @@ Commit:
   - Landed SSE parser hardening, transient API retry/backoff with `Retry-After`, and shared auth/search HTTP client reuse.
   - Validation: `cargo test` passed; model regression suite executed with one expected missing-key failure for `kimi` (`MOONSHOT_API_KEY` not set).
   - commit: `e4cf33c`
+- 2026-02-27: Completed streaming/runtime milestone `S3` + `S4` in one runtime/frontend slice:
+  - Added `ToolContext` + `ToolStreamEvent` to the tool trait contract and registry compatibility adapter (`execute_with_context`).
+  - Updated `run_shell` to emit structured stream events and expanded runtime `ToolEvent` variants (`CallStarted`, `StdoutChunk`, `StderrChunk`, `Info`, `Completed`).
+  - Added CLI event-renderer adapter module (`src/cli_event_renderer.rs`) and delegated `main.rs` runtime-event rendering to it.
+  - Added alternate frontend example (`examples/alternate_frontend.rs`) that drives Buddy via runtime commands/events.
+  - Validation: `cargo test` and `cargo build --examples` passed.
+  - commit: `324b0d2`

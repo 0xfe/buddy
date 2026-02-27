@@ -9,13 +9,16 @@
 - Remediation tracking snapshot (issue IDs from `claude-feedback-0.md`):
   - Done / partially done:
     - `T1` foundation: API trait seam exists (`ModelClient`), runtime event tests added.
-    - `U1` foundation: responses ingestion supports streaming events internally; full incremental CLI render still pending.
+    - `U1` progressed: responses ingestion + tool stream events now flow through runtime events and CLI adapter (`cli_event_renderer`); further UX polish can build on this boundary.
     - `C1` done: runtime actor now drives both `buddy exec` and interactive REPL prompt/task/approval flows.
     - `B1` done: UTF-8-safe truncation helpers (`src/textutil.rs`) now back shell/files/fetch/capture/tui/preview truncation paths.
     - `R1` done: centralized request timeouts with `[network]` config (`api_timeout_secs`, `fetch_timeout_secs`) now applied in API and fetch clients.
     - `S1` done: shell guardrails phase 1 landed (`tools.shell_denylist`, denylist enforcement in `run_shell`, and fail-closed `buddy exec` behavior when approvals are required).
     - `S2` done: `fetch_url` now blocks localhost/private/link-local targets by default and supports `tools.fetch_allowed_domains` / `tools.fetch_blocked_domains` overrides plus optional `tools.fetch_confirm`.
     - `S3` done: `write_file` now enforces sensitive-path blocking and optional `tools.files_allowed_paths` allowlist.
+    - `B5` done: responses SSE parser now handles event blocks, multiline `data:` payloads, and comment lines.
+    - `R3` done: API client now retries transient failures (429/5xx/timeouts/connectivity) with capped backoff and `Retry-After` support.
+    - `R5` done: web search/auth flows now reuse shared HTTP clients instead of per-call client construction.
   - Not done yet (active backlog):
     - `B2`, `B3`, `B4`, `B5`
     - `R2`, `R3`, `R4`, `R5`
@@ -41,6 +44,14 @@
   - Handles submit/cancel/model-switch/session commands plus explicit approval command routing (`RuntimeCommand::Approve`).
   - Both `buddy exec` and interactive REPL prompt execution now consume runtime command/event flow.
 - Config load precedence (effective): env vars override TOML; CLI flags override loaded config in `main.rs`.
+- Tool runtime interface upgrade:
+  - `Tool::execute(&self, arguments, context)` now accepts `ToolContext`.
+  - `ToolContext` can emit `ToolStreamEvent` values (`Started`, `StdoutChunk`, `StderrChunk`, `Info`, `Completed`).
+  - `ToolRegistry` now has `execute_with_context(...)` for runtime-aware execution and keeps `execute(...)` compatibility wrapper.
+- CLI/runtime decoupling upgrade:
+  - Runtime event translation/rendering moved to `src/cli_event_renderer.rs`.
+  - `src/main.rs` now delegates runtime-event rendering through that adapter.
+  - `examples/alternate_frontend.rs` demonstrates non-default frontend parity via runtime commands/events.
 - Startup auto-creates `~/.config/buddy/buddy.toml` when missing (materialized from compiled `src/templates/buddy.toml`).
 - Explicit init flow exists via `buddy init` (`--force` writes `buddy.toml.<unix-seconds>.bak` then overwrites).
 - API protocol: OpenAI-compatible Chat Completions + Responses API (per-profile `api = "completions" | "responses"` in `src/config.rs`; wire handling in `src/api/` modules).
@@ -60,6 +71,8 @@
     - `src/api/responses.rs` (`/responses` payload/parsing/SSE handling),
     - `src/api/policy.rs` (provider-specific runtime rules).
   - OpenAI login-backed Responses requests now force `store = false` and `stream = true`, then internally consume SSE until `response.completed` so the rest of the agent loop stays non-streaming.
+  - Responses SSE parsing now follows event-block semantics (multiline `data:` payloads and comment lines).
+  - `ApiError::Status` now carries optional `retry_after_secs`; `ApiClient` retries transient failures and adds protocol mismatch hints for common 404 endpoint errors.
   - Added profile fields in `src/config.rs`:
     - `api` (`completions` / `responses`)
     - `auth` (`api-key` / `login`)
