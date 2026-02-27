@@ -530,3 +530,6 @@ Address lower-priority architecture items after stabilization (`D1`, `D2`, `D3`,
 - 2026-02-27: Milestone 7 closed.
   - Scope landed: `D1` foundation + `D2` + `C3` + `T4`.
   - Deferred by priority: optional `D3` plugin MVP.
+- 2026-02-27: Synced closure status across remediation/runtime plans and `ai-state`.
+  - Updated integrated board to mark Milestone 7 complete and refreshed next-step backlog.
+  - commit: `29cc58b`
