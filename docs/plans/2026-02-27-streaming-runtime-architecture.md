@@ -2,20 +2,19 @@
 
 ## Status
 
-- Current milestone: `S2` (runtime actor + command plane)
-- Current status: In progress (integrated with `docs/plans/2026-02-27-claude-feedback-remediation-plan.md`)
+- Current milestone: `S3` (tool context + streaming tool outputs)
+- Current status: `S2` complete (integrated with `docs/plans/2026-02-27-claude-feedback-remediation-plan.md`)
 - Next steps:
-  1. Wire interactive CLI orchestration to the runtime actor command/event loop (one-shot `exec` now uses runtime actor; interactive path is still legacy).
-  2. Replace direct `Agent`/background-task plumbing in `main.rs` with runtime adapter.
-  3. Finish explicit approval command flow (`RuntimeCommand::Approve`) in actor.
-  4. Add/adjust parity tests for runtime-backed interactive CLI behavior.
-  5. Feed runtime-complete checkpoints back into remediation Milestones 5/6 gates.
+  1. Introduce `ToolContext` and compatibility adapter path.
+  2. Start incremental tool streaming with `run_shell` as first tool.
+  3. Keep renderer parity while moving to event-driven incremental updates.
+  4. Feed `S3` checkpoints back into remediation Milestone 6 gates.
 
 ## Task Board
 
 - [x] S0: Event schema and adapter shims
 - [x] S1: Stream-capable agent core
-- [ ] S2: Runtime actor + command plane
+- [x] S2: Runtime actor + command plane
 - [ ] S3: Tool context and streaming tool outputs
 - [ ] S4: Renderer decoupling and alternate frontend parity
 - [ ] S5: Documentation and stabilization
@@ -442,3 +441,9 @@ Commit:
   - Added one-shot `buddy exec` fail-closed guard when shell confirmation is enabled, plus `--dangerously-auto-approve` override.
   - Validation: `cargo test` passed.
   - commit: `e5ad7ee`
+- 2026-02-27: Completed streaming/runtime milestone `S2`:
+  - Migrated interactive REPL prompt/task orchestration to runtime command/event flow.
+  - Wired explicit runtime approval flow (`RuntimeCommand::Approve`) and runtime-owned approval queue handling.
+  - Added runtime approval command regression test and runtime-context metric emission.
+  - Validation: `cargo test` passed.
+  - commit: `84724e3`

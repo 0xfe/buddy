@@ -3,27 +3,28 @@
 ## Status
 
 - Program status: Active (integrated with `docs/plans/2026-02-27-streaming-runtime-architecture.md`)
-- Current focus: finish runtime refactor milestones needed for remediation Milestones 5/6 while Milestone 1 is closed.
+- Current focus: execute Milestone 3+ correctness items while tracking streaming/runtime `S3` and `S4`.
 - Completed so far:
   1. Streaming/runtime `S0` complete (typed runtime command/event schema).
   2. Streaming/runtime `S1` complete (agent emits runtime events with mockable model client interface).
-  3. Streaming/runtime `S2` partial (runtime actor core and `buddy exec` path migrated).
+  3. Streaming/runtime `S2` complete (interactive REPL + exec now runtime command/event-driven with runtime approval flow).
   4. Remediation Milestone 0 artifacts landed (`ai-state` tracking, `docs/playbook-remediation.md`, shared test fixtures).
   5. Remediation Milestone 1 `B1` landed (UTF-8-safe truncation helper and call-site migrations).
   6. Remediation Milestone 1 `R1` landed (centralized API/fetch timeout policy with config).
   7. Remediation Milestone 1 `S2` landed (fetch SSRF controls and domain policy).
   8. Remediation Milestone 1 `S3` landed (write-file path controls).
   9. Remediation Milestone 1 `S1` landed (shell denylist + non-interactive exec fail-closed behavior).
+  10. Remediation Milestone 2 `S4` landed (machine-derived encrypted auth storage + migration + login check/reset flow).
 - Next steps:
-  1. Complete runtime `S2` interactive-path migration and approval command wiring.
-  2. Keep Milestones 5/6 checkpoints synchronized with streaming `S2`-`S4`.
-  3. Start Milestone 2 auth/token-storage work in small gated commits.
+  1. Keep Milestones 5/6 checkpoints synchronized with streaming `S3`-`S4`.
+  2. Start Milestone 3 API correctness/retry/parser hardening slices.
+  3. Continue Milestone 6 UX work once runtime `S3` event streaming is in place.
 
 ## Integrated Program Board
 
 - [x] Milestone 0: Baseline, Repro Harness, and Safety Net
 - [x] Milestone 1: Immediate Security + Crash/Hang Fixes (P1)
-- [ ] Milestone 2: Auth and Credential Hardening (P1/P2)
+- [x] Milestone 2: Auth and Credential Hardening (P1/P2)
 - [ ] Milestone 3: API Correctness and Robustness (P2)
 - [ ] Milestone 4: Conversation Safety and Session Robustness (P2)
 - [ ] Milestone 5: Testability and Modularization (P2/P3) - in progress via streaming runtime milestones
@@ -452,3 +453,15 @@ Address lower-priority architecture items after stabilization (`D1`, `D2`, `D3`,
   - Added CLI escape hatch `--dangerously-auto-approve` with explicit warning path.
   - Validation: `cargo test` passed.
   - commit: `e5ad7ee`
+- 2026-02-27: Completed streaming/runtime `S2` integration gate for Milestones 5/6:
+  - Migrated interactive REPL prompt/task flow to runtime command/event orchestration.
+  - Added runtime approval command wiring and approval command regression tests.
+  - Validation: `cargo test` passed.
+  - commit: `84724e3`
+- 2026-02-27: Completed Milestone 2 `S4` (auth hardening):
+  - Added machine-derived encrypted auth store with DEK wrapping and AEAD per-token records.
+  - Added legacy plaintext migration, tamper/error recovery messaging, and credential reset flow.
+  - Added login diagnostics (`buddy login --check`) and reset path (`buddy login --reset`) used by both CLI and REPL login flow.
+  - Added auth storage docs (`docs/auth-storage.md`) and auth regression tests.
+  - Validation: `cargo test` passed.
+  - commit: `84724e3`
