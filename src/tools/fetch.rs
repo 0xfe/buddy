@@ -10,7 +10,7 @@ use std::time::Duration;
 use tokio::net::lookup_host;
 
 use super::shell::ShellApprovalBroker;
-use super::Tool;
+use super::{Tool, ToolContext};
 use crate::error::ToolError;
 use crate::textutil::truncate_with_suffix_by_bytes;
 use crate::types::{FunctionDefinition, ToolDefinition};
@@ -94,7 +94,7 @@ impl Tool for FetchTool {
         }
     }
 
-    async fn execute(&self, arguments: &str) -> Result<String, ToolError> {
+    async fn execute(&self, arguments: &str, _context: &ToolContext) -> Result<String, ToolError> {
         let args: Args = serde_json::from_str(arguments)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
         let url =
@@ -353,7 +353,10 @@ mod tests {
             None,
         );
         let args = format!(r#"{{"url":"http://{addr}/hang"}}"#);
-        let outcome = tokio::time::timeout(Duration::from_millis(400), tool.execute(&args))
+        let outcome = tokio::time::timeout(
+            Duration::from_millis(400),
+            tool.execute(&args, &ToolContext::empty()),
+        )
             .await
             .expect("fetch should not hang indefinitely");
         assert!(outcome.is_err(), "expected fetch request to fail");
@@ -370,9 +373,13 @@ mod tests {
             Some(broker),
         );
         let join =
-            tokio::spawn(
-                async move { tool.execute(r#"{"url":"https://1.1.1.1/dns-query"}"#).await },
-            );
+            tokio::spawn(async move {
+                tool.execute(
+                    r#"{"url":"https://1.1.1.1/dns-query"}"#,
+                    &ToolContext::empty(),
+                )
+                .await
+            });
 
         let req = rx.recv().await.expect("approval request expected");
         assert!(req.command().contains("fetch https://1.1.1.1"));

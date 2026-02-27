@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use std::time::Duration;
 
-use super::Tool;
+use super::{Tool, ToolContext};
 use crate::error::ToolError;
 use crate::types::{FunctionDefinition, ToolDefinition};
 
@@ -68,7 +68,7 @@ impl Tool for WebSearchTool {
         }
     }
 
-    async fn execute(&self, arguments: &str) -> Result<String, ToolError> {
+    async fn execute(&self, arguments: &str, _context: &ToolContext) -> Result<String, ToolError> {
         let args: Args = serde_json::from_str(arguments)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
 

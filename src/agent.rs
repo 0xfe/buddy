@@ -14,7 +14,7 @@ use crate::runtime::{
     WarningEvent,
 };
 use crate::tokens::{self, TokenTracker};
-use crate::tools::ToolRegistry;
+use crate::tools::{ToolContext, ToolRegistry, ToolStreamEvent};
 use crate::types::{ChatRequest, Message, Role};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -377,6 +377,40 @@ impl Agent {
         self.renderer.tool_result(result);
     }
 
+    fn emit_tool_stream_event(&mut self, tool_name: &str, event: ToolStreamEvent) {
+        let Some(task) = self.current_task_ref() else {
+            return;
+        };
+        let runtime_event = match event {
+            ToolStreamEvent::Started { detail } => RuntimeEvent::Tool(ToolEvent::CallStarted {
+                task,
+                name: tool_name.to_string(),
+                detail,
+            }),
+            ToolStreamEvent::StdoutChunk { chunk } => RuntimeEvent::Tool(ToolEvent::StdoutChunk {
+                task,
+                name: tool_name.to_string(),
+                chunk,
+            }),
+            ToolStreamEvent::StderrChunk { chunk } => RuntimeEvent::Tool(ToolEvent::StderrChunk {
+                task,
+                name: tool_name.to_string(),
+                chunk,
+            }),
+            ToolStreamEvent::Info { message } => RuntimeEvent::Tool(ToolEvent::Info {
+                task,
+                name: tool_name.to_string(),
+                message,
+            }),
+            ToolStreamEvent::Completed { detail } => RuntimeEvent::Tool(ToolEvent::Completed {
+                task,
+                name: tool_name.to_string(),
+                detail,
+            }),
+        };
+        let _ = self.emit_runtime_event(runtime_event);
+    }
+
     /// Send a user message and run the full agentic loop.
     ///
     /// Returns the model's final text response. If the model invokes tools,
@@ -553,6 +587,8 @@ impl Agent {
                         self.renderer
                             .progress(&format!("running tool {}", tc.function.name))
                     });
+                    let (tool_stream_tx, mut tool_stream_rx) = mpsc::unbounded_channel();
+                    let tool_context = ToolContext::with_stream(tool_stream_tx);
 
                     let result = if cancelled || self.cancellation_requested() {
                         cancelled = true;
@@ -564,7 +600,7 @@ impl Agent {
                                 cancelled = true;
                                 CANCELLED_BY_USER_TOOL_RESULT.to_string()
                             }
-                            exec = self.tools.execute(&tc.function.name, &tc.function.arguments) => {
+                            exec = self.tools.execute_with_context(&tc.function.name, &tc.function.arguments, &tool_context) => {
                                 match exec {
                                     Ok(output) => output,
                                     Err(err) => format!("Tool error: {err}"),
@@ -574,13 +610,20 @@ impl Agent {
                     } else {
                         match self
                             .tools
-                            .execute(&tc.function.name, &tc.function.arguments)
+                            .execute_with_context(
+                                &tc.function.name,
+                                &tc.function.arguments,
+                                &tool_context,
+                            )
                             .await
                         {
                             Ok(output) => output,
                             Err(err) => format!("Tool error: {err}"),
                         }
                     };
+                    while let Ok(stream_event) = tool_stream_rx.try_recv() {
+                        self.emit_tool_stream_event(&tc.function.name, stream_event);
+                    }
 
                     if let Some(task) = self.current_task_ref() {
                         let _ = self.emit_runtime_event(RuntimeEvent::Tool(ToolEvent::Result {
@@ -1044,7 +1087,11 @@ mod tests {
             }
         }
 
-        async fn execute(&self, _arguments: &str) -> Result<String, ToolError> {
+        async fn execute(
+            &self,
+            _arguments: &str,
+            _context: &crate::tools::ToolContext,
+        ) -> Result<String, ToolError> {
             Ok("tool-ok".to_string())
         }
     }

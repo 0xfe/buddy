@@ -8,7 +8,7 @@ use serde::Deserialize;
 use std::time::Duration;
 
 use super::execution::{ExecutionContext, SendKeysOptions};
-use super::Tool;
+use super::{Tool, ToolContext};
 use crate::error::ToolError;
 use crate::types::{FunctionDefinition, ToolDefinition};
 
@@ -76,7 +76,7 @@ impl Tool for SendKeysTool {
         }
     }
 
-    async fn execute(&self, arguments: &str) -> Result<String, ToolError> {
+    async fn execute(&self, arguments: &str, _context: &ToolContext) -> Result<String, ToolError> {
         let args: Args = serde_json::from_str(arguments)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
         let delay = resolve_delay(args.delay.as_deref(), args.delay_ms)?;

@@ -9,7 +9,7 @@ use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 
 use super::execution::{ExecutionContext, ShellWait};
-use super::Tool;
+use super::{Tool, ToolContext, ToolStreamEvent};
 use crate::error::ToolError;
 use crate::render::Renderer;
 use crate::textutil::truncate_with_suffix_by_bytes;
@@ -128,7 +128,7 @@ impl Tool for ShellTool {
         }
     }
 
-    async fn execute(&self, arguments: &str) -> Result<String, ToolError> {
+    async fn execute(&self, arguments: &str, context: &ToolContext) -> Result<String, ToolError> {
         let args: Args = serde_json::from_str(arguments)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
         if let Some(pattern) = matched_denylist_pattern(&args.command, &self.denylist) {
@@ -137,6 +137,9 @@ impl Tool for ShellTool {
             )));
         }
         let wait = parse_wait_mode(args.wait)?;
+        context.emit(ToolStreamEvent::Started {
+            detail: format!("run_shell: {}", args.command),
+        });
 
         // Prompt for confirmation if enabled.
         if self.confirm {
@@ -151,6 +154,9 @@ impl Tool for ShellTool {
                 input.trim().eq_ignore_ascii_case("y")
             };
             if !approved {
+                context.emit(ToolStreamEvent::Completed {
+                    detail: "run_shell denied by user".to_string(),
+                });
                 return Ok("Command execution denied by user.".to_string());
             }
         }
@@ -164,10 +170,31 @@ impl Tool for ShellTool {
             .run_shell_command(&args.command, wait)
             .await?;
         if matches!(wait, ShellWait::NoWait) {
+            if !output.stdout.trim().is_empty() {
+                context.emit(ToolStreamEvent::Info {
+                    message: output.stdout.clone(),
+                });
+            }
+            context.emit(ToolStreamEvent::Completed {
+                detail: format!("run_shell completed with exit code {}", output.exit_code),
+            });
             return Ok(output.stdout);
         }
         let stdout_text = truncate_output(&output.stdout, MAX_OUTPUT_LEN);
         let stderr_text = truncate_output(&output.stderr, MAX_OUTPUT_LEN);
+        if !stdout_text.trim().is_empty() {
+            context.emit(ToolStreamEvent::StdoutChunk {
+                chunk: stdout_text.clone(),
+            });
+        }
+        if !stderr_text.trim().is_empty() {
+            context.emit(ToolStreamEvent::StderrChunk {
+                chunk: stderr_text.clone(),
+            });
+        }
+        context.emit(ToolStreamEvent::Completed {
+            detail: format!("run_shell completed with exit code {}", output.exit_code),
+        });
 
         Ok(format!(
             "exit code: {}\nstdout:\n{stdout_text}\nstderr:\n{stderr_text}",
@@ -314,7 +341,7 @@ mod tests {
             execution: ExecutionContext::local(),
             approval: None,
         }
-        .execute("not json")
+        .execute("not json", &ToolContext::empty())
         .await
         .unwrap_err();
         assert!(err.to_string().contains("invalid arguments"));
@@ -329,7 +356,7 @@ mod tests {
             execution: ExecutionContext::local(),
             approval: None,
         }
-        .execute(r#"{"command": "echo hello"}"#)
+        .execute(r#"{"command": "echo hello"}"#, &ToolContext::empty())
         .await
         .unwrap();
         assert!(result.contains("exit code: 0"), "got: {result}");
@@ -345,7 +372,7 @@ mod tests {
             execution: ExecutionContext::local(),
             approval: None,
         }
-        .execute(r#"{"command": "exit 42"}"#)
+        .execute(r#"{"command": "exit 42"}"#, &ToolContext::empty())
         .await
         .unwrap();
         assert!(result.contains("exit code: 42"), "got: {result}");
@@ -360,7 +387,7 @@ mod tests {
             execution: ExecutionContext::local(),
             approval: None,
         }
-        .execute(r#"{"command": "echo err >&2"}"#)
+        .execute(r#"{"command": "echo err >&2"}"#, &ToolContext::empty())
         .await
         .unwrap();
         assert!(result.contains("err"), "got: {result}");
@@ -379,7 +406,7 @@ mod tests {
             execution: ExecutionContext::local(),
             approval: None,
         }
-        .execute(r#"{"command":"echo hi","wait":false}"#)
+        .execute(r#"{"command":"echo hi","wait":false}"#, &ToolContext::empty())
         .await;
         if real_tmux_enabled
             && std::env::var("TMUX_PANE")
@@ -406,7 +433,7 @@ mod tests {
             execution: ExecutionContext::local(),
             approval: None,
         }
-        .execute(r#"{"command":"sleep 1","wait":"1ms"}"#)
+        .execute(r#"{"command":"sleep 1","wait":"1ms"}"#, &ToolContext::empty())
         .await
         .expect_err("timeout expected");
         assert!(
@@ -427,7 +454,7 @@ mod tests {
                 execution: ExecutionContext::local(),
                 approval: Some(broker),
             }
-            .execute(r#"{"command":"echo approved"}"#)
+            .execute(r#"{"command":"echo approved"}"#, &ToolContext::empty())
             .await
         });
 
@@ -452,7 +479,7 @@ mod tests {
                 execution: ExecutionContext::local(),
                 approval: Some(broker),
             }
-            .execute(r#"{"command":"echo denied"}"#)
+            .execute(r#"{"command":"echo denied"}"#, &ToolContext::empty())
             .await
         });
 
@@ -473,12 +500,46 @@ mod tests {
             execution: ExecutionContext::local(),
             approval: None,
         }
-        .execute(r#"{"command":"rm -rf /tmp/test"}"#)
+        .execute(r#"{"command":"rm -rf /tmp/test"}"#, &ToolContext::empty())
         .await
         .expect_err("denylist should block this command");
         assert!(
             err.to_string().contains("tools.shell_denylist"),
             "unexpected error: {err}"
         );
+    }
+
+    #[tokio::test]
+    async fn execute_emits_stream_events() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let context = ToolContext::with_stream(tx);
+        let result = ShellTool {
+            confirm: false,
+            denylist: Vec::new(),
+            color: false,
+            execution: ExecutionContext::local(),
+            approval: None,
+        }
+        .execute(r#"{"command":"echo streamed"}"#, &context)
+        .await
+        .expect("shell command should succeed");
+        assert!(result.contains("exit code: 0"), "got: {result}");
+
+        let mut saw_started = false;
+        let mut saw_stdout = false;
+        let mut saw_completed = false;
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                ToolStreamEvent::Started { .. } => saw_started = true,
+                ToolStreamEvent::StdoutChunk { chunk } if chunk.contains("streamed") => {
+                    saw_stdout = true;
+                }
+                ToolStreamEvent::Completed { .. } => saw_completed = true,
+                _ => {}
+            }
+        }
+        assert!(saw_started, "missing started stream event");
+        assert!(saw_stdout, "missing stdout stream event");
+        assert!(saw_completed, "missing completed stream event");
     }
 }

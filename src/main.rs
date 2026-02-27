@@ -1,6 +1,7 @@
 //! CLI entry point for buddy.
 
 mod cli;
+mod cli_event_renderer;
 
 use buddy::agent::Agent;
 use buddy::auth::{
@@ -17,8 +18,8 @@ use buddy::prompt::{render_system_prompt, ExecutionTarget, SystemPromptParams};
 use buddy::render::Renderer;
 use buddy::runtime::{
     spawn_runtime_with_agent, spawn_runtime_with_shared_agent, ApprovalDecision as RuntimeApprovalDecision,
-    BuddyRuntimeHandle, MetricsEvent, ModelEvent, PromptMetadata, RuntimeApprovalPolicy,
-    RuntimeCommand, RuntimeEvent, RuntimeEventEnvelope, TaskEvent, ToolEvent,
+    BuddyRuntimeHandle, ModelEvent, PromptMetadata, RuntimeApprovalPolicy, RuntimeCommand,
+    RuntimeEvent, RuntimeEventEnvelope, TaskEvent,
 };
 use buddy::session::{SessionStore, SessionSummary};
 use buddy::textutil::truncate_with_suffix_by_chars;
@@ -1418,198 +1419,16 @@ fn process_runtime_events(
     active_session: &mut String,
     runtime_context: &mut RuntimeContextState,
 ) {
-    for envelope in events.drain(..) {
-        match envelope.event {
-            RuntimeEvent::Lifecycle(_) => {}
-            RuntimeEvent::Warning(event) => {
-                if let Some(task) = event.task {
-                    renderer.warn(&format!("[task #{}] {}", task.task_id, event.message));
-                } else {
-                    renderer.warn(&event.message);
-                }
-            }
-            RuntimeEvent::Error(event) => {
-                if let Some(task) = event.task {
-                    renderer.error(&format!("[task #{}] {}", task.task_id, event.message));
-                } else {
-                    renderer.error(&event.message);
-                }
-            }
-            RuntimeEvent::Session(event) => match event {
-                buddy::runtime::SessionEvent::Created { session_id } => {
-                    *active_session = session_id.clone();
-                    renderer.section(&format!("created session: {session_id}"));
-                    eprintln!();
-                }
-                buddy::runtime::SessionEvent::Resumed { session_id } => {
-                    *active_session = session_id.clone();
-                    renderer.section(&format!("resumed session: {session_id}"));
-                    eprintln!();
-                }
-                buddy::runtime::SessionEvent::Saved { .. }
-                | buddy::runtime::SessionEvent::Compacted { .. } => {}
-            },
-            RuntimeEvent::Task(event) => match event {
-                TaskEvent::Queued {
-                    task,
-                    kind,
-                    details,
-                } => {
-                    background_tasks.push(BackgroundTask {
-                        id: task.task_id,
-                        kind,
-                        details,
-                        started_at: Instant::now(),
-                        state: BackgroundTaskState::Running,
-                        timeout_at: None,
-                        final_response: None,
-                    });
-                    Renderer::set_progress_enabled(false);
-                }
-                TaskEvent::Started { task } => {
-                    mark_task_running(background_tasks, task.task_id);
-                }
-                TaskEvent::WaitingApproval {
-                    task,
-                    approval_id,
-                    command,
-                } => {
-                    if mark_task_waiting_for_approval(
-                        background_tasks,
-                        task.task_id,
-                        &command,
-                        &approval_id,
-                    ) {
-                        if pending_approval.is_none() {
-                            *pending_approval = Some(PendingApproval {
-                                task_id: task.task_id,
-                                approval_id,
-                                command,
-                            });
-                        }
-                    }
-                }
-                TaskEvent::Cancelling { task } => {
-                    if let Some(bg) = background_tasks.iter_mut().find(|bg| bg.id == task.task_id) {
-                        bg.state = BackgroundTaskState::Cancelling {
-                            since: Instant::now(),
-                        };
-                    }
-                }
-                TaskEvent::Completed { task } => {
-                    if pending_approval
-                        .as_ref()
-                        .is_some_and(|approval| approval.task_id == task.task_id)
-                    {
-                        *pending_approval = None;
-                    }
-                    if let Some(index) = background_tasks.iter().position(|bg| bg.id == task.task_id)
-                    {
-                        let task = background_tasks.swap_remove(index);
-                        completed_tasks.push(CompletedBackgroundTask {
-                            id: task.id,
-                            kind: task.kind,
-                            started_at: task.started_at,
-                            result: Ok(task.final_response.unwrap_or_default()),
-                        });
-                    }
-                }
-                TaskEvent::Failed { task, message } => {
-                    if pending_approval
-                        .as_ref()
-                        .is_some_and(|approval| approval.task_id == task.task_id)
-                    {
-                        *pending_approval = None;
-                    }
-                    if let Some(index) = background_tasks.iter().position(|bg| bg.id == task.task_id)
-                    {
-                        let task = background_tasks.swap_remove(index);
-                        completed_tasks.push(CompletedBackgroundTask {
-                            id: task.id,
-                            kind: task.kind,
-                            started_at: task.started_at,
-                            result: Err(message),
-                        });
-                    }
-                }
-            },
-            RuntimeEvent::Model(event) => match event {
-                ModelEvent::ReasoningDelta { task, field, delta } => {
-                    renderer.reasoning_trace(&format!("task #{} {field}", task.task_id), &delta);
-                }
-                ModelEvent::MessageFinal { task, content } => {
-                    if let Some(bg) = background_tasks.iter_mut().find(|bg| bg.id == task.task_id) {
-                        bg.final_response = Some(content);
-                    }
-                }
-                ModelEvent::ProfileSwitched {
-                    profile,
-                    model,
-                    base_url,
-                } => {
-                    if let Err(err) = select_model_profile(config, &profile) {
-                        renderer.warn(&format!(
-                            "runtime switched model profile `{profile}`, but local config sync failed: {err}"
-                        ));
-                    }
-                    renderer.section(&format!("switched model profile: {profile}"));
-                    renderer.field("model", &model);
-                    renderer.field("base_url", &base_url);
-                    renderer.field(
-                        "context_limit",
-                        &config
-                            .api
-                            .context_limit
-                            .map(|v| v.to_string())
-                            .unwrap_or_else(|| "auto".to_string()),
-                    );
-                    eprintln!();
-                }
-                ModelEvent::RequestStarted { .. } | ModelEvent::TextDelta { .. } => {}
-            },
-            RuntimeEvent::Tool(event) => match event {
-                ToolEvent::Result {
-                    task,
-                    name,
-                    arguments_json,
-                    result,
-                } => render_tool_result(renderer, task.task_id, &name, &arguments_json, &result),
-                ToolEvent::CallRequested { .. } => {}
-            },
-            RuntimeEvent::Metrics(event) => match event {
-                MetricsEvent::TokenUsage {
-                    task,
-                    prompt_tokens,
-                    completion_tokens,
-                    session_total_tokens,
-                } => {
-                    runtime_context.last_prompt_tokens = prompt_tokens;
-                    runtime_context.last_completion_tokens = completion_tokens;
-                    runtime_context.session_total_tokens = session_total_tokens;
-                    renderer.section("task");
-                    renderer.field(
-                        "tokens",
-                        &format!(
-                            "#{} prompt:{prompt_tokens} completion:{completion_tokens} session:{session_total_tokens}",
-                            task.task_id
-                        ),
-                    );
-                    eprintln!();
-                }
-                MetricsEvent::ContextUsage {
-                    estimated_tokens,
-                    context_limit,
-                    used_percent,
-                    ..
-                } => {
-                    runtime_context.estimated_tokens = estimated_tokens;
-                    runtime_context.context_limit = context_limit;
-                    runtime_context.used_percent = used_percent;
-                }
-                MetricsEvent::PhaseDuration { .. } => {}
-            },
-        }
-    }
+    let mut context = cli_event_renderer::RuntimeEventRenderContext {
+        renderer,
+        background_tasks,
+        completed_tasks,
+        pending_approval,
+        config,
+        active_session,
+        runtime_context,
+    };
+    cli_event_renderer::process_runtime_events(events, &mut context);
 }
 
 fn drain_completed_tasks(renderer: &Renderer, completed: &mut Vec<CompletedBackgroundTask>) -> bool {
@@ -1710,97 +1529,6 @@ fn timeout_suffix_for_task(task: &BackgroundTask) -> String {
             format_elapsed_coarse(timeout_at.duration_since(now))
         )
     }
-}
-
-fn render_tool_result(renderer: &Renderer, task_id: u64, name: &str, args: &str, result: &str) {
-    match name {
-        "run_shell" => {
-            if let Some(shell) = parse_shell_tool_result(result) {
-                renderer.activity(&format!(
-                    "task #{task_id} exited with code {}",
-                    shell.exit_code
-                ));
-                if !shell.stdout.trim().is_empty() {
-                    renderer.command_output_block(&shell.stdout);
-                }
-                if !shell.stderr.trim().is_empty() {
-                    renderer.detail("stderr:");
-                    renderer.command_output_block(&shell.stderr);
-                }
-                return;
-            }
-            if result.contains("command dispatched to tmux pane") {
-                renderer.activity(&format!(
-                    "task #{task_id} run_shell: {}",
-                    truncate_preview(result, 140)
-                ));
-                eprintln!();
-                return;
-            }
-        }
-        "read_file" => {
-            let path = parse_tool_arg(args, "path").unwrap_or_else(|| "<path>".to_string());
-            renderer.activity(&format!("task #{task_id} read {path}"));
-            renderer.tool_output_block(result, Some(path.as_str()));
-            return;
-        }
-        "write_file" => {
-            renderer.activity(&format!(
-                "task #{task_id} write_file: {}",
-                truncate_preview(result, 120)
-            ));
-            eprintln!();
-            return;
-        }
-        "fetch_url" => {
-            let url = parse_tool_arg(args, "url").unwrap_or_else(|| "<url>".to_string());
-            renderer.activity(&format!(
-                "task #{task_id} fetched {url}: \"{}\"",
-                quote_preview(result, 120)
-            ));
-            eprintln!();
-            return;
-        }
-        "web_search" => {
-            let query = parse_tool_arg(args, "query").unwrap_or_else(|| "<query>".to_string());
-            renderer.activity(&format!(
-                "task #{task_id} searched \"{}\": \"{}\"",
-                truncate_preview(&query, 64),
-                quote_preview(result, 120)
-            ));
-            eprintln!();
-            return;
-        }
-        "capture-pane" => {
-            let target = parse_tool_arg(args, "target").unwrap_or_else(|| "<default>".to_string());
-            renderer.activity(&format!("task #{task_id} captured pane {target}"));
-            renderer.command_output_block(result);
-            return;
-        }
-        "time" => {
-            renderer.activity(&format!(
-                "task #{task_id} read harness time: \"{}\"",
-                quote_preview(result, 120)
-            ));
-            eprintln!();
-            return;
-        }
-        "send-keys" => {
-            renderer.activity(&format!(
-                "task #{task_id} send-keys: {}",
-                truncate_preview(result, 120)
-            ));
-            eprintln!();
-            return;
-        }
-        _ => {}
-    }
-
-    renderer.activity(&format!(
-        "task #{task_id} {name}: {}",
-        truncate_preview(result, 120)
-    ));
-    eprintln!();
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

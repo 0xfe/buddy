@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use serde::Serialize;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use super::Tool;
+use super::{Tool, ToolContext};
 use crate::error::ToolError;
 use crate::types::{FunctionDefinition, ToolDefinition};
 
@@ -36,7 +36,7 @@ impl Tool for TimeTool {
         }
     }
 
-    async fn execute(&self, arguments: &str) -> Result<String, ToolError> {
+    async fn execute(&self, arguments: &str, _context: &ToolContext) -> Result<String, ToolError> {
         let parsed: serde_json::Value = serde_json::from_str(arguments)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
         if !parsed.is_object() {

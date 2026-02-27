@@ -8,7 +8,7 @@ use serde::Deserialize;
 use std::path::{Component, Path, PathBuf};
 
 use super::execution::ExecutionContext;
-use super::Tool;
+use super::{Tool, ToolContext};
 use crate::error::ToolError;
 use crate::textutil::truncate_with_suffix_by_bytes;
 use crate::types::{FunctionDefinition, ToolDefinition};
@@ -57,7 +57,7 @@ impl Tool for ReadFileTool {
         }
     }
 
-    async fn execute(&self, arguments: &str) -> Result<String, ToolError> {
+    async fn execute(&self, arguments: &str, _context: &ToolContext) -> Result<String, ToolError> {
         let args: ReadArgs = serde_json::from_str(arguments)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
 
@@ -123,7 +123,7 @@ impl Tool for WriteFileTool {
         }
     }
 
-    async fn execute(&self, arguments: &str) -> Result<String, ToolError> {
+    async fn execute(&self, arguments: &str, _context: &ToolContext) -> Result<String, ToolError> {
         let args: WriteArgs = serde_json::from_str(arguments)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
         validate_write_path_policy(&args.path, &self.allowed_paths)?;
@@ -257,7 +257,7 @@ mod tests {
         let err = ReadFileTool {
             execution: ExecutionContext::local(),
         }
-        .execute("not json")
+        .execute("not json", &ToolContext::empty())
         .await
         .unwrap_err();
         assert!(err.to_string().contains("invalid arguments"));
@@ -268,7 +268,10 @@ mod tests {
         let err = ReadFileTool {
             execution: ExecutionContext::local(),
         }
-        .execute(r#"{"path": "/tmp/agent_no_such_file_xyz.txt"}"#)
+        .execute(
+            r#"{"path": "/tmp/agent_no_such_file_xyz.txt"}"#,
+            &ToolContext::empty(),
+        )
         .await
         .unwrap_err();
         assert!(err.to_string().contains("execution failed"));
@@ -283,7 +286,7 @@ mod tests {
         let result = ReadFileTool {
             execution: ExecutionContext::local(),
         }
-        .execute(&args)
+        .execute(&args, &ToolContext::empty())
         .await
         .unwrap();
         assert_eq!(result, "file content");
@@ -299,7 +302,7 @@ mod tests {
         let result = ReadFileTool {
             execution: ExecutionContext::local(),
         }
-        .execute(&args)
+        .execute(&args, &ToolContext::empty())
         .await
         .unwrap();
         assert!(result.ends_with("...[truncated]"), "got: {result}");
@@ -315,7 +318,7 @@ mod tests {
         let result = ReadFileTool {
             execution: ExecutionContext::local(),
         }
-        .execute(&args)
+        .execute(&args, &ToolContext::empty())
         .await
         .unwrap();
         assert!(result.ends_with("...[truncated]"), "got: {result}");
@@ -327,7 +330,7 @@ mod tests {
             execution: ExecutionContext::local(),
             allowed_paths: Vec::new(),
         }
-        .execute("not json")
+        .execute("not json", &ToolContext::empty())
         .await
         .unwrap_err();
         assert!(err.to_string().contains("invalid arguments"));
@@ -346,7 +349,7 @@ mod tests {
             execution: ExecutionContext::local(),
             allowed_paths: vec![fixture.path().display().to_string()],
         }
-        .execute(&args)
+        .execute(&args, &ToolContext::empty())
         .await
         .unwrap();
         assert!(result.contains(&content.len().to_string()), "got: {result}");

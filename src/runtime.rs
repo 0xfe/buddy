@@ -225,6 +225,31 @@ pub enum ToolEvent {
         name: String,
         arguments_json: String,
     },
+    CallStarted {
+        task: TaskRef,
+        name: String,
+        detail: String,
+    },
+    StdoutChunk {
+        task: TaskRef,
+        name: String,
+        chunk: String,
+    },
+    StderrChunk {
+        task: TaskRef,
+        name: String,
+        chunk: String,
+    },
+    Info {
+        task: TaskRef,
+        name: String,
+        message: String,
+    },
+    Completed {
+        task: TaskRef,
+        name: String,
+        detail: String,
+    },
     Result {
         task: TaskRef,
         name: String,

@@ -16,6 +16,7 @@ pub mod time;
 use crate::error::ToolError;
 use crate::types::ToolDefinition;
 use async_trait::async_trait;
+use tokio::sync::mpsc;
 
 // ---------------------------------------------------------------------------
 // Tool trait
@@ -35,7 +36,47 @@ pub trait Tool: Send + Sync {
 
     /// Execute the tool with the given JSON arguments string.
     /// Returns a text result to send back to the model.
-    async fn execute(&self, arguments: &str) -> Result<String, ToolError>;
+    async fn execute(&self, arguments: &str, context: &ToolContext) -> Result<String, ToolError>;
+}
+
+/// Incremental tool output emitted while a tool is running.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolStreamEvent {
+    Started { detail: String },
+    StdoutChunk { chunk: String },
+    StderrChunk { chunk: String },
+    Info { message: String },
+    Completed { detail: String },
+}
+
+/// Runtime context passed to tools.
+///
+/// This keeps the tool trait simple while giving tools an optional streaming
+/// side channel for incremental output.
+#[derive(Clone, Default)]
+pub struct ToolContext {
+    stream_tx: Option<mpsc::UnboundedSender<ToolStreamEvent>>,
+}
+
+impl ToolContext {
+    /// Build a no-op context (no streaming sink attached).
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    /// Build a context that forwards streaming events to a receiver.
+    pub fn with_stream(stream_tx: mpsc::UnboundedSender<ToolStreamEvent>) -> Self {
+        Self {
+            stream_tx: Some(stream_tx),
+        }
+    }
+
+    /// Emit one stream event if a sink is attached.
+    pub fn emit(&self, event: ToolStreamEvent) {
+        if let Some(tx) = &self.stream_tx {
+            let _ = tx.send(event);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -67,12 +108,23 @@ impl ToolRegistry {
 
     /// Find a tool by name and execute it.
     pub async fn execute(&self, name: &str, arguments: &str) -> Result<String, ToolError> {
+        self.execute_with_context(name, arguments, &ToolContext::empty())
+            .await
+    }
+
+    /// Find a tool by name and execute it with streaming context.
+    pub async fn execute_with_context(
+        &self,
+        name: &str,
+        arguments: &str,
+        context: &ToolContext,
+    ) -> Result<String, ToolError> {
         let tool = self
             .tools
             .iter()
             .find(|t| t.name() == name)
             .ok_or_else(|| ToolError::ExecutionFailed(format!("unknown tool: {name}")))?;
-        tool.execute(arguments).await
+        tool.execute(arguments, context).await
     }
 
     /// True if no tools are registered.
@@ -110,7 +162,11 @@ mod tests {
                 },
             }
         }
-        async fn execute(&self, arguments: &str) -> Result<String, ToolError> {
+        async fn execute(
+            &self,
+            arguments: &str,
+            _context: &ToolContext,
+        ) -> Result<String, ToolError> {
             Ok(arguments.to_string())
         }
     }
