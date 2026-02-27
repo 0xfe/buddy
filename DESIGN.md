@@ -36,17 +36,19 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
   - One-shot mode fails closed when `tools.shell_confirm=true` unless `--dangerously-auto-approve` is passed.
 - Developer-facing runtime event schema scaffolding:
   - `src/runtime.rs` defines typed `RuntimeCommand` and `RuntimeEvent` families plus `RuntimeEventEnvelope`.
-  - Includes adapter helpers from existing `AgentUiEvent` into runtime events for incremental migration.
+  - Includes adapter helpers from existing `AgentUiEvent` into runtime events.
   - `Agent` exposes `set_runtime_event_sink(...)` and emits runtime events for task/model/tool/metrics lifecycle during `send()`.
   - Added `ModelClient` trait and `Agent::with_client(...)` injection path so runtime/event behavior can be tested offline with deterministic mock clients.
   - Added `AgentRunner` facade as stream-capable runner entry point while preserving `Agent::send()` compatibility.
-  - Runtime actor scaffolding is available via `spawn_runtime(...)` / `spawn_runtime_with_agent(...)` with command/event channels; one-shot `exec` is now runtime-backed, while full interactive CLI migration is still pending.
+  - Runtime actor is available via `spawn_runtime(...)`, `spawn_runtime_with_agent(...)`, and `spawn_runtime_with_shared_agent(...)` with command/event channels.
+  - Both one-shot `exec` and interactive REPL prompt execution run through runtime commands/events.
+  - Explicit approval flow is runtime-commanded (`RuntimeCommand::Approve`) and surfaced as `TaskEvent::WaitingApproval`.
 - CLI subcommands:
   - `buddy` (REPL)
   - `buddy init [--force]`
   - `buddy exec <prompt>`
   - `buddy resume <session-id>` / `buddy resume --last`
-  - `buddy login [model-profile]`
+  - `buddy login [model-profile] [--check] [--reset]`
   - `buddy help`
 - Configurable model/API settings with precedence:
   - Environment variable overrides.
@@ -154,7 +156,7 @@ Every field has a default, so a completely empty config file (or no config file 
 4. `$XDG_CONFIG_HOME/buddy/buddy.toml` (or `~/.config/buddy/buddy.toml`)
 5. legacy `~/.config/agent/agent.toml` fallback
 
-`buddy init` explicitly materializes `~/.config/buddy/buddy.toml` from the compiled template; `--force` first writes a timestamped backup (`buddy.toml.<unix-seconds>.bak`) in the same directory. Startup also ensures `~/.config/buddy/buddy.toml` exists when missing. Login auth stores provider-scoped tokens in `~/.config/buddy/auth.json` (mode `0600` on Unix), so one login is reused across model profiles that target the same provider.
+`buddy init` explicitly materializes `~/.config/buddy/buddy.toml` from the compiled template; `--force` first writes a timestamped backup (`buddy.toml.<unix-seconds>.bak`) in the same directory. Startup also ensures `~/.config/buddy/buddy.toml` exists when missing. Login auth stores provider-scoped tokens in `~/.config/buddy/auth.json` (mode `0600` on Unix), encrypted at rest with a machine-derived KEK + random DEK wrapping so one login is reused across model profiles that target the same provider.
 
 API key resolution supports exactly one configured source per model profile: `api_key`, `api_key_env`, or `api_key_file`. The key source order is:
 1. `BUDDY_API_KEY` (legacy `AGENT_API_KEY` fallback)
@@ -310,7 +312,7 @@ All error types implement `Display` and `Error` manually (no `thiserror`). `From
 Uses clap with derive macros and subcommands:
 - `buddy` -> interactive REPL
 - `buddy exec <prompt>` -> one-shot mode (send, print response, exit)
-- `buddy login [profile]` -> provider login flow for configured model profile
+- `buddy login [profile] [--check] [--reset]` -> provider login health/check/reset + login flow for configured model profile
 
 CLI flags override config file values. This happens in `main.rs` after config loading.
 

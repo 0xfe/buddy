@@ -10,14 +10,13 @@
   - Done / partially done:
     - `T1` foundation: API trait seam exists (`ModelClient`), runtime event tests added.
     - `U1` foundation: responses ingestion supports streaming events internally; full incremental CLI render still pending.
-    - `C1` partial: runtime actor scaffolding exists but `main.rs` interactive path is still mostly monolithic.
+    - `C1` done: runtime actor now drives both `buddy exec` and interactive REPL prompt/task/approval flows.
     - `B1` done: UTF-8-safe truncation helpers (`src/textutil.rs`) now back shell/files/fetch/capture/tui/preview truncation paths.
     - `R1` done: centralized request timeouts with `[network]` config (`api_timeout_secs`, `fetch_timeout_secs`) now applied in API and fetch clients.
     - `S1` done: shell guardrails phase 1 landed (`tools.shell_denylist`, denylist enforcement in `run_shell`, and fail-closed `buddy exec` behavior when approvals are required).
     - `S2` done: `fetch_url` now blocks localhost/private/link-local targets by default and supports `tools.fetch_allowed_domains` / `tools.fetch_blocked_domains` overrides plus optional `tools.fetch_confirm`.
     - `S3` done: `write_file` now enforces sensitive-path blocking and optional `tools.files_allowed_paths` allowlist.
   - Not done yet (active backlog):
-    - `S4`
     - `B2`, `B3`, `B4`, `B5`
     - `R2`, `R3`, `R4`, `R5`
     - `T2`, `T3`, `T4`
@@ -37,10 +36,10 @@
   - `ModelClient` trait (`src/api/mod.rs`) abstracts model backend for deterministic tests/mocks.
   - `Agent::with_client(...)` supports dependency injection; `AgentRunner` facade added for stream-capable execution entry point.
   - `Agent::send(...)` now emits direct runtime lifecycle/model/tool/metrics events to runtime sink (independent of UI display flags).
-- Runtime actor scaffolding now exists in `src/runtime.rs`:
-  - `spawn_runtime(...)` / `spawn_runtime_with_agent(...)` return command handle + event stream.
-  - Handles submit/cancel/model-switch/session commands and forwards prompt-task events.
-  - `buddy exec` now uses runtime actor flow; interactive CLI (`main.rs`) is still largely legacy orchestration.
+- Runtime actor integration in `src/runtime.rs`:
+  - `spawn_runtime(...)`, `spawn_runtime_with_agent(...)`, and `spawn_runtime_with_shared_agent(...)`.
+  - Handles submit/cancel/model-switch/session commands plus explicit approval command routing (`RuntimeCommand::Approve`).
+  - Both `buddy exec` and interactive REPL prompt execution now consume runtime command/event flow.
 - Config load precedence (effective): env vars override TOML; CLI flags override loaded config in `main.rs`.
 - Startup auto-creates `~/.config/buddy/buddy.toml` when missing (materialized from compiled `src/templates/buddy.toml`).
 - Explicit init flow exists via `buddy init` (`--force` writes `buddy.toml.<unix-seconds>.bak` then overwrites).
@@ -64,17 +63,19 @@
   - Added profile fields in `src/config.rs`:
     - `api` (`completions` / `responses`)
     - `auth` (`api-key` / `login`)
-  - Added secure login token storage in `src/auth.rs`:
+  - Added encrypted login token storage in `src/auth.rs`:
     - file path: `~/.config/buddy/auth.json`
     - Unix perms: `0600`
-    - Provider-scoped storage key (for example `openai`), with legacy profile-scoped token fallback migration.
+    - Machine-derived KEK + random DEK wrapping with per-record AEAD nonces.
+    - Provider-scoped storage key (for example `openai`), with legacy plaintext/profile-scoped fallback migration.
     - OpenAI device-code login + refresh flow.
+    - Credential health/reset helpers (`buddy login --check`, `buddy login --reset`).
   - CLI now uses subcommands (`src/cli.rs`):
     - `buddy` (REPL)
     - `buddy init [--force]`
     - `buddy exec <prompt>`
     - `buddy resume <session-id>` / `buddy resume --last`
-    - `buddy login [model-profile]`
+    - `buddy login [model-profile] [--check] [--reset]`
     - `buddy help`
   - Added REPL slash command `/login [name|index]` (`src/tui/commands.rs`, `src/main.rs`).
   - Startup/model-switch auth checks now fail fast with actionable guidance when `auth = "login"` is set but the profile has no saved login.

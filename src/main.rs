@@ -2,10 +2,11 @@
 
 mod cli;
 
-use buddy::agent::{Agent, AgentUiEvent};
+use buddy::agent::Agent;
 use buddy::auth::{
     complete_openai_device_login, load_provider_tokens, login_provider_key_for_base_url,
-    save_provider_tokens, start_openai_device_login, supports_openai_login, try_open_browser,
+    provider_login_health, reset_provider_tokens, save_provider_tokens, start_openai_device_login,
+    supports_openai_login, try_open_browser,
 };
 use buddy::config::ensure_default_global_config;
 use buddy::config::initialize_default_global_config;
@@ -15,7 +16,9 @@ use buddy::config::{AuthMode, Config, GlobalConfigInitResult, ToolsConfig};
 use buddy::prompt::{render_system_prompt, ExecutionTarget, SystemPromptParams};
 use buddy::render::Renderer;
 use buddy::runtime::{
-    spawn_runtime_with_agent, ModelEvent, PromptMetadata, RuntimeCommand, RuntimeEvent, TaskEvent,
+    spawn_runtime_with_agent, spawn_runtime_with_shared_agent, ApprovalDecision as RuntimeApprovalDecision,
+    BuddyRuntimeHandle, MetricsEvent, ModelEvent, PromptMetadata, RuntimeApprovalPolicy,
+    RuntimeCommand, RuntimeEvent, RuntimeEventEnvelope, TaskEvent, ToolEvent,
 };
 use buddy::session::{SessionStore, SessionSummary};
 use buddy::textutil::truncate_with_suffix_by_chars;
@@ -26,7 +29,7 @@ use buddy::tools::fetch::FetchTool;
 use buddy::tools::files::{ReadFileTool, WriteFileTool};
 use buddy::tools::search::WebSearchTool;
 use buddy::tools::send_keys::SendKeysTool;
-use buddy::tools::shell::{ShellApprovalBroker, ShellApprovalRequest, ShellTool};
+use buddy::tools::shell::{ShellApprovalBroker, ShellTool};
 use buddy::tools::time::TimeTool;
 use buddy::tools::ToolRegistry;
 use buddy::tui as repl;
@@ -36,8 +39,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
-use tokio::sync::{mpsc, watch};
-use tokio::task::JoinHandle;
+use tokio::sync::mpsc;
 
 const BACKGROUND_TASK_WARNING: &str =
     "Background tasks are in progress. Allowed commands now: /ps, /kill <id>, /timeout <dur> [id], /approve <mode>, /status, /context.";
@@ -119,9 +121,14 @@ async fn main() {
         }
     };
 
-    if let Some(cli::Command::Login { model }) = args.command.as_ref() {
+    if let Some(cli::Command::Login {
+        model,
+        reset,
+        check,
+    }) = args.command.as_ref()
+    {
         let selector = model.as_deref();
-        if let Err(msg) = run_login_flow(&renderer, &config, selector).await {
+        if let Err(msg) = run_login_flow(&renderer, &config, selector, *reset, *check).await {
             renderer.error(&msg);
             std::process::exit(1);
         }
@@ -271,7 +278,8 @@ async fn main() {
 
     if let Some(cli::Command::Exec { prompt }) = args.command.as_ref() {
         // One-shot mode: run through the runtime actor command/event interface.
-        let (runtime, mut events) = spawn_runtime_with_agent(agent, config.clone(), None, None);
+        let (runtime, mut events) =
+            spawn_runtime_with_agent(agent, config.clone(), None, None, None);
         if let Err(e) = runtime
             .send(RuntimeCommand::SubmitPrompt {
                 prompt: prompt.clone(),
@@ -350,32 +358,39 @@ async fn main() {
 
         let mut repl_state = repl::ReplState::default();
         let agent = Arc::new(Mutex::new(agent));
+        let (runtime, mut runtime_events) = spawn_runtime_with_shared_agent(
+            Arc::clone(&agent),
+            config.clone(),
+            Some(session_store.clone()),
+            Some(active_session.clone()),
+            shell_approval_rx.take(),
+        );
         let mut background_tasks: Vec<BackgroundTask> = Vec::new();
-        let mut next_task_id: u64 = 1;
+        let mut completed_tasks: Vec<CompletedBackgroundTask> = Vec::new();
         let mut pending_approval: Option<PendingApproval> = None;
         let mut approval_policy = ApprovalPolicy::Ask;
-        let (agent_ui_tx, mut agent_ui_rx) = mpsc::unbounded_channel::<AgentUiEvent>();
-        let mut pending_ui_events: Vec<AgentUiEvent> = Vec::new();
+        let mut pending_runtime_events: Vec<RuntimeEventEnvelope> = Vec::new();
+        let mut runtime_context =
+            RuntimeContextState::new(config.api.context_limit.map(|limit| limit as u64));
         let mut last_prompt_context_used_percent: Option<u16> = None;
 
         loop {
-            enforce_task_timeouts(&renderer, &mut background_tasks, &mut pending_approval);
-            collect_agent_ui_events(&mut agent_ui_rx, &mut pending_ui_events);
-            render_agent_ui_events(&renderer, &mut pending_ui_events);
-            let completed_task = drain_finished_tasks(&renderer, &mut background_tasks).await;
-            if completed_task {
-                persist_active_session(&renderer, &session_store, &agent, &active_session).await;
-            }
-            enforce_task_timeouts(&renderer, &mut background_tasks, &mut pending_approval);
-            collect_agent_ui_events(&mut agent_ui_rx, &mut pending_ui_events);
-            render_agent_ui_events(&renderer, &mut pending_ui_events);
-            if pending_approval.is_none() {
-                pending_approval = collect_approval_request(
-                    &renderer,
-                    &mut background_tasks,
-                    &mut shell_approval_rx,
-                    &mut approval_policy,
-                );
+            enforce_task_timeouts(&renderer, &runtime, &mut background_tasks, &mut pending_approval)
+                .await;
+            collect_runtime_events(&mut runtime_events, &mut pending_runtime_events);
+            process_runtime_events(
+                &renderer,
+                &mut pending_runtime_events,
+                &mut background_tasks,
+                &mut completed_tasks,
+                &mut pending_approval,
+                &mut config,
+                &mut active_session,
+                &mut runtime_context,
+            );
+            let _ = drain_completed_tasks(&renderer, &mut completed_tasks);
+            if background_tasks.is_empty() {
+                Renderer::set_progress_enabled(true);
             }
 
             if let Some(approval) = pending_approval.take() {
@@ -400,11 +415,11 @@ async fn main() {
                 ) {
                     Ok(repl::ReadOutcome::Line(line)) => line,
                     Ok(repl::ReadOutcome::Eof) => {
-                        deny_pending_approval(&mut background_tasks, approval);
+                        deny_pending_approval(&runtime, &mut background_tasks, approval).await;
                         continue;
                     }
                     Ok(repl::ReadOutcome::Cancelled) => {
-                        deny_pending_approval(&mut background_tasks, approval);
+                        deny_pending_approval(&runtime, &mut background_tasks, approval).await;
                         break;
                     }
                     Ok(repl::ReadOutcome::Interrupted) => {
@@ -413,7 +428,7 @@ async fn main() {
                     }
                     Err(e) => {
                         renderer.error(&format!("failed to read approval input: {e}"));
-                        deny_pending_approval(&mut background_tasks, approval);
+                        deny_pending_approval(&runtime, &mut background_tasks, approval).await;
                         continue;
                     }
                 };
@@ -422,15 +437,10 @@ async fn main() {
                 eprintln!();
                 if let Some(decision) = parse_approval_decision(approval_input) {
                     let task_id = approval.task_id;
-                    match decision {
-                        ApprovalDecision::Approve => {
-                            mark_task_running(&mut background_tasks, task_id);
-                            approval.request.approve();
-                        }
-                        ApprovalDecision::Deny => {
-                            mark_task_running(&mut background_tasks, task_id);
-                            approval.request.deny();
-                        }
+                    if let Err(err) = send_approval_decision(&runtime, &approval, decision).await {
+                        renderer.warn(&err);
+                    } else {
+                        mark_task_running(&mut background_tasks, task_id);
                     }
                     continue;
                 }
@@ -443,6 +453,7 @@ async fn main() {
                                 &renderer,
                                 &config,
                                 guard.as_deref(),
+                                runtime_context,
                                 &background_tasks,
                                 approval_policy,
                                 capture_pane_enabled,
@@ -450,7 +461,12 @@ async fn main() {
                         }
                         repl::SlashCommandAction::Context => {
                             let guard = agent.try_lock().ok();
-                            render_context(&renderer, guard.as_deref(), &background_tasks);
+                            render_context(
+                                &renderer,
+                                guard.as_deref(),
+                                runtime_context,
+                                &background_tasks,
+                            );
                         }
                         repl::SlashCommandAction::Ps => {
                             render_background_tasks(&renderer, &background_tasks);
@@ -468,10 +484,12 @@ async fn main() {
                             };
                             kill_background_task(
                                 &renderer,
+                                &runtime,
                                 &mut background_tasks,
                                 &mut pending_approval,
                                 task_id,
-                            );
+                            )
+                            .await;
                         }
                         repl::SlashCommandAction::Timeout { duration, task_id } => {
                             match apply_task_timeout_command(
@@ -496,13 +514,29 @@ async fn main() {
                                 Ok(msg) => {
                                     renderer.section(&msg);
                                     eprintln!();
+                                    if let Err(err) = runtime
+                                        .send(RuntimeCommand::SetApprovalPolicy {
+                                            policy: to_runtime_approval_policy(approval_policy),
+                                        })
+                                        .await
+                                    {
+                                        renderer.warn(&format!(
+                                            "failed to update runtime approval policy: {err}"
+                                        ));
+                                    }
                                     if let Some(decision) =
                                         active_approval_decision(&mut approval_policy)
                                     {
-                                        mark_task_running(&mut background_tasks, approval.task_id);
-                                        match decision {
-                                            ApprovalDecision::Approve => approval.request.approve(),
-                                            ApprovalDecision::Deny => approval.request.deny(),
+                                        if let Err(err) =
+                                            send_approval_decision(&runtime, &approval, decision)
+                                                .await
+                                        {
+                                            renderer.warn(&err);
+                                        } else {
+                                            mark_task_running(
+                                                &mut background_tasks,
+                                                approval.task_id,
+                                            );
                                         }
                                         continue;
                                     }
@@ -516,19 +550,8 @@ async fn main() {
                         }
                         _ => renderer.warn(BACKGROUND_TASK_WARNING),
                     }
-
-                    if pending_approval.is_none()
-                        && task_is_waiting_for_approval(&background_tasks, approval.task_id)
-                    {
+                    if task_is_waiting_for_approval(&background_tasks, approval.task_id) {
                         pending_approval = Some(approval);
-                    }
-                    if pending_approval.is_none() {
-                        pending_approval = collect_approval_request(
-                            &renderer,
-                            &mut background_tasks,
-                            &mut shell_approval_rx,
-                            &mut approval_policy,
-                        );
                     }
                     continue;
                 }
@@ -547,6 +570,8 @@ async fn main() {
                 .and_then(|guard| context_used_percent(&guard))
             {
                 last_prompt_context_used_percent = Some(latest);
+            } else if runtime_context.context_limit > 0 {
+                last_prompt_context_used_percent = Some(runtime_context.used_percent.round() as u16);
             }
             let input = match repl::read_repl_line_with_interrupt(
                 config.display.color,
@@ -557,25 +582,22 @@ async fn main() {
                 None,
                 || {
                     let mut should_interrupt = false;
-                    if interrupted_approval.is_none() {
-                        interrupted_approval = collect_approval_request(
-                            &renderer,
-                            &mut background_tasks,
-                            &mut shell_approval_rx,
-                            &mut approval_policy,
-                        );
-                    }
-                    if interrupted_approval.is_some() {
+                    collect_runtime_events(&mut runtime_events, &mut pending_runtime_events);
+                    process_runtime_events(
+                        &renderer,
+                        &mut pending_runtime_events,
+                        &mut background_tasks,
+                        &mut completed_tasks,
+                        &mut pending_approval,
+                        &mut config,
+                        &mut active_session,
+                        &mut runtime_context,
+                    );
+                    if pending_approval.is_some() {
+                        interrupted_approval = pending_approval.take();
                         should_interrupt = true;
                     }
-
-                    let had_events =
-                        collect_agent_ui_events(&mut agent_ui_rx, &mut pending_ui_events);
-                    if had_events {
-                        should_interrupt = true;
-                    }
-
-                    if has_finished_background_tasks(&background_tasks) {
+                    if has_finished_background_tasks(&completed_tasks) {
                         should_interrupt = true;
                     }
                     if has_elapsed_timeouts(&background_tasks) {
@@ -606,11 +628,18 @@ async fn main() {
                 continue;
             }
 
-            // A task may complete while we are waiting for user input.
-            let completed_task = drain_finished_tasks(&renderer, &mut background_tasks).await;
-            if completed_task {
-                persist_active_session(&renderer, &session_store, &agent, &active_session).await;
-            }
+            collect_runtime_events(&mut runtime_events, &mut pending_runtime_events);
+            process_runtime_events(
+                &renderer,
+                &mut pending_runtime_events,
+                &mut background_tasks,
+                &mut completed_tasks,
+                &mut pending_approval,
+                &mut config,
+                &mut active_session,
+                &mut runtime_context,
+            );
+            let _ = drain_completed_tasks(&renderer, &mut completed_tasks);
 
             repl_state.push_history(input);
             let has_background_tasks = !background_tasks.is_empty();
@@ -630,6 +659,7 @@ async fn main() {
                             &renderer,
                             &config,
                             guard.as_deref(),
+                            runtime_context,
                             &background_tasks,
                             approval_policy,
                             capture_pane_enabled,
@@ -637,7 +667,12 @@ async fn main() {
                     }
                     repl::SlashCommandAction::Context => {
                         let guard = agent.try_lock().ok();
-                        render_context(&renderer, guard.as_deref(), &background_tasks);
+                        render_context(
+                            &renderer,
+                            guard.as_deref(),
+                            runtime_context,
+                            &background_tasks,
+                        );
                     }
                     repl::SlashCommandAction::Ps => {
                         render_background_tasks(&renderer, &background_tasks);
@@ -653,10 +688,12 @@ async fn main() {
                         };
                         kill_background_task(
                             &renderer,
+                            &runtime,
                             &mut background_tasks,
                             &mut pending_approval,
                             task_id,
-                        );
+                        )
+                        .await;
                     }
                     repl::SlashCommandAction::Timeout { duration, task_id } => {
                         match apply_task_timeout_command(
@@ -677,6 +714,16 @@ async fn main() {
                             Ok(msg) => {
                                 renderer.section(&msg);
                                 eprintln!();
+                                if let Err(err) = runtime
+                                    .send(RuntimeCommand::SetApprovalPolicy {
+                                        policy: to_runtime_approval_policy(approval_policy),
+                                    })
+                                    .await
+                                {
+                                    renderer.warn(&format!(
+                                        "failed to update runtime approval policy: {err}"
+                                    ));
+                                }
                             }
                             Err(msg) => renderer.warn(&msg),
                         }
@@ -688,7 +735,7 @@ async fn main() {
                             handle_session_command(
                                 &renderer,
                                 &session_store,
-                                &agent,
+                                &runtime,
                                 &mut active_session,
                                 verb.as_deref(),
                                 name.as_deref(),
@@ -703,7 +750,7 @@ async fn main() {
                             handle_model_command(
                                 &renderer,
                                 &mut config,
-                                &agent,
+                                &runtime,
                                 selector.as_deref(),
                             )
                             .await;
@@ -713,7 +760,8 @@ async fn main() {
                         if has_background_tasks {
                             renderer.warn(BACKGROUND_TASK_WARNING);
                         } else if let Err(msg) =
-                            run_login_flow(&renderer, &config, selector.as_deref()).await
+                            run_login_flow(&renderer, &config, selector.as_deref(), false, false)
+                                .await
                         {
                             renderer.warn(&msg);
                         }
@@ -741,36 +789,21 @@ async fn main() {
                 continue;
             }
 
-            let task_id = next_task_id;
-            next_task_id = next_task_id.saturating_add(1);
-            let prompt_text = input.to_string();
-            let prompt_preview = truncate_preview(input, 72);
-            let agent_ref = Arc::clone(&agent);
-            let agent_ui_tx = agent_ui_tx.clone();
-            let (cancel_tx, cancel_rx) = watch::channel(false);
             Renderer::set_progress_enabled(false);
-            let handle = tokio::spawn(async move {
-                let mut agent = agent_ref.lock().await;
-                agent.set_live_output_suppressed(true);
-                agent.set_live_output_sink(Some((task_id, agent_ui_tx)));
-                agent.set_cancellation_receiver(Some(cancel_rx));
-                let result = agent.send(&prompt_text).await;
-                agent.set_cancellation_receiver(None);
-                agent.set_live_output_sink(None);
-                agent.set_live_output_suppressed(false);
-                result
-            });
-            background_tasks.push(BackgroundTask {
-                id: task_id,
-                kind: "prompt".to_string(),
-                details: prompt_preview.clone(),
-                started_at: Instant::now(),
-                state: BackgroundTaskState::Running,
-                timeout_at: None,
-                cancel_tx,
-                handle,
-            });
+            if let Err(err) = runtime
+                .send(RuntimeCommand::SubmitPrompt {
+                    prompt: input.to_string(),
+                    metadata: PromptMetadata {
+                        source: Some("repl".to_string()),
+                        correlation_id: None,
+                    },
+                })
+                .await
+            {
+                renderer.error(&format!("failed to start background task: {err}"));
+            }
         }
+        let _ = runtime.send(RuntimeCommand::Shutdown).await;
     }
 }
 
@@ -806,26 +839,10 @@ fn run_init_flow(renderer: &Renderer, force: bool) -> Result<(), String> {
     }
 }
 
-async fn persist_active_session(
-    renderer: &Renderer,
-    session_store: &SessionStore,
-    agent: &Arc<Mutex<Agent>>,
-    active_session: &str,
-) {
-    let Ok(agent_guard) = agent.try_lock() else {
-        return;
-    };
-    let snapshot = agent_guard.snapshot_session();
-    drop(agent_guard);
-    if let Err(e) = session_store.save(active_session, &snapshot) {
-        renderer.warn(&format!("failed to persist session {active_session}: {e}"));
-    }
-}
-
 async fn handle_session_command(
     renderer: &Renderer,
     session_store: &SessionStore,
-    agent: &Arc<Mutex<Agent>>,
+    runtime: &BuddyRuntimeHandle,
     active_session: &mut String,
     verb: Option<&str>,
     name: Option<&str>,
@@ -864,36 +881,14 @@ async fn handle_session_command(
                 return;
             }
 
-            let current_snapshot = {
-                let guard = agent.lock().await;
-                guard.snapshot_session()
-            };
-            if let Err(e) = session_store.save(active_session, &current_snapshot) {
-                renderer.warn(&format!("failed to persist current session: {e}"));
-                return;
-            }
-
-            let snapshot = match session_store.load(&target_id) {
-                Ok(snapshot) => snapshot,
-                Err(e) => {
-                    renderer.warn(&format!("failed to load session {target_id}: {e}"));
-                    return;
-                }
-            };
-            let snapshot_copy = snapshot.clone();
+            if let Err(e) = runtime
+                .send(RuntimeCommand::SessionResume {
+                    session_id: target_id,
+                })
+                .await
             {
-                let mut guard = agent.lock().await;
-                guard.restore_session(snapshot);
+                renderer.warn(&format!("failed to submit session resume command: {e}"));
             }
-
-            *active_session = target_id.clone();
-            if let Err(e) = session_store.save(active_session, &snapshot_copy) {
-                renderer.warn(&format!(
-                    "failed to mark session {target_id} as active: {e}"
-                ));
-            }
-            renderer.section(&format!("resumed session: {target_id}"));
-            eprintln!();
         }
         "new" | "create" => {
             if name.is_some() {
@@ -901,31 +896,9 @@ async fn handle_session_command(
                 return;
             }
 
-            let current_snapshot = {
-                let guard = agent.lock().await;
-                guard.snapshot_session()
-            };
-            if let Err(e) = session_store.save(active_session, &current_snapshot) {
-                renderer.warn(&format!("failed to persist current session: {e}"));
-                return;
+            if let Err(e) = runtime.send(RuntimeCommand::SessionNew).await {
+                renderer.warn(&format!("failed to submit new session command: {e}"));
             }
-
-            let new_snapshot = {
-                let mut guard = agent.lock().await;
-                guard.reset_session();
-                guard.snapshot_session()
-            };
-            match session_store.create_new_session(&new_snapshot) {
-                Ok(new_id) => {
-                    *active_session = new_id.clone();
-                    renderer.section(&format!("created session: {new_id}"));
-                }
-                Err(e) => {
-                    renderer.warn(&format!("failed to create session: {e}"));
-                    return;
-                }
-            }
-            eprintln!();
         }
         _ => {
             renderer
@@ -937,7 +910,7 @@ async fn handle_session_command(
 async fn handle_model_command(
     renderer: &Renderer,
     config: &mut Config,
-    agent: &Arc<Mutex<Agent>>,
+    runtime: &BuddyRuntimeHandle,
     selector: Option<&str>,
 ) {
     if config.models.is_empty() {
@@ -991,38 +964,23 @@ async fn handle_model_command(
         return;
     }
 
-    let mut next_config = config.clone();
-    if let Err(e) = select_model_profile(&mut next_config, &profile_name) {
+    if let Err(e) = runtime
+        .send(RuntimeCommand::SwitchModel {
+            profile: profile_name.clone(),
+        })
+        .await
+    {
         renderer.warn(&format!(
-            "failed to select model profile `{profile_name}`: {e}"
+            "failed to submit model switch command for `{profile_name}`: {e}"
         ));
         return;
     }
 
-    if let Err(msg) = ensure_active_auth_ready(&next_config) {
-        renderer.warn(&msg);
-        return;
+    if let Err(e) = select_model_profile(config, &profile_name) {
+        renderer.warn(&format!(
+            "runtime accepted model switch for `{profile_name}`, but local config sync failed: {e}"
+        ));
     }
-
-    *config = next_config;
-
-    {
-        let mut guard = agent.lock().await;
-        guard.switch_api_config(config.api.clone());
-    }
-
-    renderer.section(&format!("switched model profile: {profile_name}"));
-    renderer.field("model", &config.api.model);
-    renderer.field("base_url", &config.api.base_url);
-    renderer.field(
-        "context_limit",
-        &config
-            .api
-            .context_limit
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "auto".to_string()),
-    );
-    eprintln!();
 }
 
 fn configured_model_profile_names(config: &Config) -> Vec<String> {
@@ -1156,6 +1114,8 @@ async fn run_login_flow(
     renderer: &Renderer,
     config: &Config,
     selector: Option<&str>,
+    reset: bool,
+    check: bool,
 ) -> Result<(), String> {
     if config.models.is_empty() {
         return Err(
@@ -1187,6 +1147,40 @@ async fn run_login_flow(
             profile.api_base_url
         ));
     };
+
+    let health = provider_login_health(provider)
+        .map_err(|err| format!("failed to check existing login health: {err}"))?;
+    renderer.section("login health");
+    renderer.field("provider", provider);
+    renderer.field("saved_credentials", if health.has_tokens { "yes" } else { "no" });
+    if let Some(expires_at_unix) = health.expires_at_unix {
+        renderer.field("expires_at_unix", &expires_at_unix.to_string());
+        renderer.field(
+            "expiring_soon",
+            if health.expiring_soon { "yes" } else { "no" },
+        );
+    }
+    eprintln!();
+
+    if check {
+        return Ok(());
+    }
+
+    if reset {
+        let removed = reset_provider_tokens(provider)
+            .map_err(|err| format!("failed to reset saved login credentials: {err}"))?;
+        if removed {
+            renderer.section("login reset");
+            renderer.field("provider", provider);
+            renderer.field("status", "removed saved credentials");
+            eprintln!();
+        } else {
+            renderer.section("login reset");
+            renderer.field("provider", provider);
+            renderer.field("status", "no saved credentials found");
+            eprintln!();
+        }
+    }
 
     let login = start_openai_device_login()
         .await
@@ -1267,6 +1261,7 @@ fn render_status(
     renderer: &Renderer,
     config: &Config,
     agent: Option<&Agent>,
+    runtime_context: RuntimeContextState,
     background_tasks: &[BackgroundTask],
     approval_policy: ApprovalPolicy,
     capture_pane_enabled: bool,
@@ -1290,15 +1285,25 @@ fn render_status(
             &agent.tracker().session_total().to_string(),
         );
     } else {
-        renderer.field("context_limit", "busy (task in progress)");
+        let context_limit = if runtime_context.context_limit == 0 {
+            "auto".to_string()
+        } else {
+            runtime_context.context_limit.to_string()
+        };
+        renderer.field("context_limit", &context_limit);
         renderer.field("messages", "busy (task in progress)");
-        renderer.field("session_tokens", "busy (task in progress)");
+        renderer.field("session_tokens", &runtime_context.session_total_tokens.to_string());
     }
 
     eprintln!();
 }
 
-fn render_context(renderer: &Renderer, agent: Option<&Agent>, background_tasks: &[BackgroundTask]) {
+fn render_context(
+    renderer: &Renderer,
+    agent: Option<&Agent>,
+    runtime_context: RuntimeContextState,
+    background_tasks: &[BackgroundTask],
+) {
     renderer.section("context");
     renderer.field("background_tasks", &background_tasks.len().to_string());
 
@@ -1328,9 +1333,30 @@ fn render_context(renderer: &Renderer, agent: Option<&Agent>, background_tasks: 
         renderer.field("session_total", &tracker.session_total().to_string());
         renderer.field("messages", &agent.messages().len().to_string());
     } else {
-        renderer.field("window_estimate", "busy (task in progress)");
-        renderer.field("last_call", "busy (task in progress)");
-        renderer.field("session_total", "busy (task in progress)");
+        if runtime_context.context_limit == 0 {
+            renderer.field("window_estimate", "unknown (context limit auto)");
+        } else {
+            renderer.field(
+                "window_estimate",
+                &format!(
+                    "{} / {} tokens ({:.1}%)",
+                    runtime_context.estimated_tokens,
+                    runtime_context.context_limit,
+                    runtime_context.used_percent
+                ),
+            );
+        }
+        renderer.field(
+            "last_call",
+            &format!(
+                "prompt:{} completion:{}",
+                runtime_context.last_prompt_tokens, runtime_context.last_completion_tokens
+            ),
+        );
+        renderer.field(
+            "session_total",
+            &runtime_context.session_total_tokens.to_string(),
+        );
         renderer.field("messages", "busy (task in progress)");
     }
 
@@ -1369,15 +1395,242 @@ fn enabled_tool_names(config: &Config, capture_pane_enabled: bool) -> Vec<&'stat
     tools
 }
 
-fn collect_agent_ui_events(
-    rx: &mut mpsc::UnboundedReceiver<AgentUiEvent>,
-    out: &mut Vec<AgentUiEvent>,
+fn collect_runtime_events(
+    rx: &mut mpsc::UnboundedReceiver<RuntimeEventEnvelope>,
+    out: &mut Vec<RuntimeEventEnvelope>,
 ) -> bool {
     let start_len = out.len();
-    while let Ok(event) = rx.try_recv() {
-        out.push(event);
+    while let Ok(envelope) = rx.try_recv() {
+        out.push(envelope);
     }
     out.len() > start_len
+}
+
+fn process_runtime_events(
+    renderer: &Renderer,
+    events: &mut Vec<RuntimeEventEnvelope>,
+    background_tasks: &mut Vec<BackgroundTask>,
+    completed_tasks: &mut Vec<CompletedBackgroundTask>,
+    pending_approval: &mut Option<PendingApproval>,
+    config: &mut Config,
+    active_session: &mut String,
+    runtime_context: &mut RuntimeContextState,
+) {
+    for envelope in events.drain(..) {
+        match envelope.event {
+            RuntimeEvent::Lifecycle(_) => {}
+            RuntimeEvent::Warning(event) => {
+                if let Some(task) = event.task {
+                    renderer.warn(&format!("[task #{}] {}", task.task_id, event.message));
+                } else {
+                    renderer.warn(&event.message);
+                }
+            }
+            RuntimeEvent::Error(event) => {
+                if let Some(task) = event.task {
+                    renderer.error(&format!("[task #{}] {}", task.task_id, event.message));
+                } else {
+                    renderer.error(&event.message);
+                }
+            }
+            RuntimeEvent::Session(event) => match event {
+                buddy::runtime::SessionEvent::Created { session_id } => {
+                    *active_session = session_id.clone();
+                    renderer.section(&format!("created session: {session_id}"));
+                    eprintln!();
+                }
+                buddy::runtime::SessionEvent::Resumed { session_id } => {
+                    *active_session = session_id.clone();
+                    renderer.section(&format!("resumed session: {session_id}"));
+                    eprintln!();
+                }
+                buddy::runtime::SessionEvent::Saved { .. }
+                | buddy::runtime::SessionEvent::Compacted { .. } => {}
+            },
+            RuntimeEvent::Task(event) => match event {
+                TaskEvent::Queued {
+                    task,
+                    kind,
+                    details,
+                } => {
+                    background_tasks.push(BackgroundTask {
+                        id: task.task_id,
+                        kind,
+                        details,
+                        started_at: Instant::now(),
+                        state: BackgroundTaskState::Running,
+                        timeout_at: None,
+                        final_response: None,
+                    });
+                    Renderer::set_progress_enabled(false);
+                }
+                TaskEvent::Started { task } => {
+                    mark_task_running(background_tasks, task.task_id);
+                }
+                TaskEvent::WaitingApproval {
+                    task,
+                    approval_id,
+                    command,
+                } => {
+                    if mark_task_waiting_for_approval(
+                        background_tasks,
+                        task.task_id,
+                        &command,
+                        &approval_id,
+                    ) {
+                        if pending_approval.is_none() {
+                            *pending_approval = Some(PendingApproval {
+                                task_id: task.task_id,
+                                approval_id,
+                                command,
+                            });
+                        }
+                    }
+                }
+                TaskEvent::Cancelling { task } => {
+                    if let Some(bg) = background_tasks.iter_mut().find(|bg| bg.id == task.task_id) {
+                        bg.state = BackgroundTaskState::Cancelling {
+                            since: Instant::now(),
+                        };
+                    }
+                }
+                TaskEvent::Completed { task } => {
+                    if pending_approval
+                        .as_ref()
+                        .is_some_and(|approval| approval.task_id == task.task_id)
+                    {
+                        *pending_approval = None;
+                    }
+                    if let Some(index) = background_tasks.iter().position(|bg| bg.id == task.task_id)
+                    {
+                        let task = background_tasks.swap_remove(index);
+                        completed_tasks.push(CompletedBackgroundTask {
+                            id: task.id,
+                            kind: task.kind,
+                            started_at: task.started_at,
+                            result: Ok(task.final_response.unwrap_or_default()),
+                        });
+                    }
+                }
+                TaskEvent::Failed { task, message } => {
+                    if pending_approval
+                        .as_ref()
+                        .is_some_and(|approval| approval.task_id == task.task_id)
+                    {
+                        *pending_approval = None;
+                    }
+                    if let Some(index) = background_tasks.iter().position(|bg| bg.id == task.task_id)
+                    {
+                        let task = background_tasks.swap_remove(index);
+                        completed_tasks.push(CompletedBackgroundTask {
+                            id: task.id,
+                            kind: task.kind,
+                            started_at: task.started_at,
+                            result: Err(message),
+                        });
+                    }
+                }
+            },
+            RuntimeEvent::Model(event) => match event {
+                ModelEvent::ReasoningDelta { task, field, delta } => {
+                    renderer.reasoning_trace(&format!("task #{} {field}", task.task_id), &delta);
+                }
+                ModelEvent::MessageFinal { task, content } => {
+                    if let Some(bg) = background_tasks.iter_mut().find(|bg| bg.id == task.task_id) {
+                        bg.final_response = Some(content);
+                    }
+                }
+                ModelEvent::ProfileSwitched {
+                    profile,
+                    model,
+                    base_url,
+                } => {
+                    if let Err(err) = select_model_profile(config, &profile) {
+                        renderer.warn(&format!(
+                            "runtime switched model profile `{profile}`, but local config sync failed: {err}"
+                        ));
+                    }
+                    renderer.section(&format!("switched model profile: {profile}"));
+                    renderer.field("model", &model);
+                    renderer.field("base_url", &base_url);
+                    renderer.field(
+                        "context_limit",
+                        &config
+                            .api
+                            .context_limit
+                            .map(|v| v.to_string())
+                            .unwrap_or_else(|| "auto".to_string()),
+                    );
+                    eprintln!();
+                }
+                ModelEvent::RequestStarted { .. } | ModelEvent::TextDelta { .. } => {}
+            },
+            RuntimeEvent::Tool(event) => match event {
+                ToolEvent::Result {
+                    task,
+                    name,
+                    arguments_json,
+                    result,
+                } => render_tool_result(renderer, task.task_id, &name, &arguments_json, &result),
+                ToolEvent::CallRequested { .. } => {}
+            },
+            RuntimeEvent::Metrics(event) => match event {
+                MetricsEvent::TokenUsage {
+                    task,
+                    prompt_tokens,
+                    completion_tokens,
+                    session_total_tokens,
+                } => {
+                    runtime_context.last_prompt_tokens = prompt_tokens;
+                    runtime_context.last_completion_tokens = completion_tokens;
+                    runtime_context.session_total_tokens = session_total_tokens;
+                    renderer.section("task");
+                    renderer.field(
+                        "tokens",
+                        &format!(
+                            "#{} prompt:{prompt_tokens} completion:{completion_tokens} session:{session_total_tokens}",
+                            task.task_id
+                        ),
+                    );
+                    eprintln!();
+                }
+                MetricsEvent::ContextUsage {
+                    estimated_tokens,
+                    context_limit,
+                    used_percent,
+                    ..
+                } => {
+                    runtime_context.estimated_tokens = estimated_tokens;
+                    runtime_context.context_limit = context_limit;
+                    runtime_context.used_percent = used_percent;
+                }
+                MetricsEvent::PhaseDuration { .. } => {}
+            },
+        }
+    }
+}
+
+fn drain_completed_tasks(renderer: &Renderer, completed: &mut Vec<CompletedBackgroundTask>) -> bool {
+    if completed.is_empty() {
+        return false;
+    }
+
+    for task in completed.drain(..) {
+        let elapsed = format_elapsed(task.started_at.elapsed());
+        match task.result {
+            Ok(response) => {
+                renderer.activity(&format!("prompt #{} processed in {elapsed}", task.id));
+                renderer.assistant_message(&response);
+            }
+            Err(message) => {
+                renderer.error(&format!(
+                    "Background task #{} ({}) failed after {elapsed}: {}",
+                    task.id, task.kind, message
+                ));
+            }
+        }
+    }
+    true
 }
 
 fn background_liveness_line(tasks: &[BackgroundTask]) -> Option<String> {
@@ -1454,55 +1707,6 @@ fn timeout_suffix_for_task(task: &BackgroundTask) -> String {
             " (timeout in {})",
             format_elapsed_coarse(timeout_at.duration_since(now))
         )
-    }
-}
-
-fn render_agent_ui_events(renderer: &Renderer, events: &mut Vec<AgentUiEvent>) {
-    if events.is_empty() {
-        return;
-    }
-
-    for event in events.drain(..) {
-        match event {
-            AgentUiEvent::Warning { task_id, message } => {
-                renderer.warn(&format!("[task #{task_id}] {message}"));
-            }
-            AgentUiEvent::TokenUsage {
-                task_id,
-                prompt_tokens,
-                completion_tokens,
-                session_total,
-            } => {
-                renderer.section("task");
-                renderer.field(
-                    "tokens",
-                    &format!(
-                        "#{task_id} prompt:{prompt_tokens} completion:{completion_tokens} session:{session_total}"
-                    ),
-                );
-                eprintln!();
-            }
-            AgentUiEvent::ReasoningTrace {
-                task_id,
-                field,
-                trace,
-            } => {
-                renderer.reasoning_trace(&format!("task #{task_id} {field}"), &trace);
-            }
-            AgentUiEvent::ToolCall {
-                task_id,
-                name,
-                args,
-            } => {
-                let _ = (task_id, name, args);
-            }
-            AgentUiEvent::ToolResult {
-                task_id,
-                name,
-                args,
-                result,
-            } => render_tool_result(renderer, task_id, &name, &args, &result),
-        }
     }
 }
 
@@ -1638,12 +1842,19 @@ struct BackgroundTask {
     started_at: Instant,
     state: BackgroundTaskState,
     timeout_at: Option<Instant>,
-    cancel_tx: watch::Sender<bool>,
-    handle: JoinHandle<Result<String, buddy::error::AgentError>>,
+    final_response: Option<String>,
 }
 
-fn has_finished_background_tasks(tasks: &[BackgroundTask]) -> bool {
-    tasks.iter().any(|task| task.handle.is_finished())
+#[derive(Debug, Clone)]
+struct CompletedBackgroundTask {
+    id: u64,
+    kind: String,
+    started_at: Instant,
+    result: Result<String, String>,
+}
+
+fn has_finished_background_tasks(completed: &[CompletedBackgroundTask]) -> bool {
+    !completed.is_empty()
 }
 
 enum BackgroundTaskState {
@@ -1662,8 +1873,31 @@ enum ApprovalPolicy {
 
 struct PendingApproval {
     task_id: u64,
+    approval_id: String,
     command: String,
-    request: ShellApprovalRequest,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RuntimeContextState {
+    estimated_tokens: u64,
+    context_limit: u64,
+    used_percent: f32,
+    last_prompt_tokens: u32,
+    last_completion_tokens: u32,
+    session_total_tokens: u32,
+}
+
+impl RuntimeContextState {
+    fn new(context_limit: Option<u64>) -> Self {
+        Self {
+            estimated_tokens: 0,
+            context_limit: context_limit.unwrap_or(0),
+            used_percent: 0.0,
+            last_prompt_tokens: 0,
+            last_completion_tokens: 0,
+            session_total_tokens: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1752,6 +1986,24 @@ fn update_approval_policy(input: &str, policy: &mut ApprovalPolicy) -> Result<St
                 "approval policy: auto-approve for {}",
                 format_elapsed(duration)
             ))
+        }
+    }
+}
+
+fn to_runtime_approval_policy(policy: ApprovalPolicy) -> RuntimeApprovalPolicy {
+    match policy {
+        ApprovalPolicy::Ask => RuntimeApprovalPolicy::Ask,
+        ApprovalPolicy::All => RuntimeApprovalPolicy::All,
+        ApprovalPolicy::None => RuntimeApprovalPolicy::None,
+        ApprovalPolicy::Until(until) => {
+            let remaining = until.saturating_duration_since(Instant::now());
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            RuntimeApprovalPolicy::Until {
+                expires_at_unix_ms: now.saturating_add(remaining.as_millis() as u64),
+            }
         }
     }
 }
@@ -2053,61 +2305,20 @@ fn context_used_percent(agent: &Agent) -> Option<u16> {
     Some(percent.clamp(0.0, 9_999.0) as u16)
 }
 
-fn collect_approval_request(
-    renderer: &Renderer,
+fn mark_task_waiting_for_approval(
     tasks: &mut [BackgroundTask],
-    approval_rx: &mut Option<mpsc::UnboundedReceiver<ShellApprovalRequest>>,
-    approval_policy: &mut ApprovalPolicy,
-) -> Option<PendingApproval> {
-    let rx = approval_rx.as_mut()?;
-    let request = match rx.try_recv() {
-        Ok(request) => request,
-        Err(mpsc::error::TryRecvError::Empty) => return None,
-        Err(mpsc::error::TryRecvError::Disconnected) => return None,
+    task_id: u64,
+    command: &str,
+    _approval_id: &str,
+) -> bool {
+    let Some(task) = tasks.iter_mut().find(|task| task.id == task_id) else {
+        return false;
     };
-
-    let Some(task_id) = mark_task_waiting_for_approval(tasks, request.command()) else {
-        renderer.warn("Approval request arrived with no running background task; denying it.");
-        request.deny();
-        return None;
-    };
-
-    let pending = PendingApproval {
-        task_id,
-        command: request.command().to_string(),
-        request,
-    };
-
-    if let Some(decision) = active_approval_decision(approval_policy) {
-        mark_task_running(tasks, task_id);
-        match decision {
-            ApprovalDecision::Approve => {
-                pending.request.approve();
-                renderer.section(&format!("task #{task_id} auto-approved"));
-                eprintln!();
-            }
-            ApprovalDecision::Deny => {
-                pending.request.deny();
-                renderer.section(&format!("task #{task_id} auto-denied"));
-                eprintln!();
-            }
-        }
-        None
-    } else {
-        Some(pending)
-    }
-}
-
-fn mark_task_waiting_for_approval(tasks: &mut [BackgroundTask], command: &str) -> Option<u64> {
-    let task = tasks
-        .iter_mut()
-        .filter(|task| matches!(task.state, BackgroundTaskState::Running))
-        .min_by_key(|task| task.started_at)?;
     task.state = BackgroundTaskState::WaitingApproval {
         command: truncate_preview(command, 96),
         since: Instant::now(),
     };
-    Some(task.id)
+    true
 }
 
 fn mark_task_running(tasks: &mut [BackgroundTask], task_id: u64) {
@@ -2123,12 +2334,38 @@ fn task_is_waiting_for_approval(tasks: &[BackgroundTask], task_id: u64) -> bool 
         .is_some_and(|task| matches!(task.state, BackgroundTaskState::WaitingApproval { .. }))
 }
 
-fn deny_pending_approval(tasks: &mut [BackgroundTask], approval: PendingApproval) {
-    mark_task_running(tasks, approval.task_id);
-    approval.request.deny();
+fn runtime_approval_decision(decision: ApprovalDecision) -> RuntimeApprovalDecision {
+    match decision {
+        ApprovalDecision::Approve => RuntimeApprovalDecision::Approve,
+        ApprovalDecision::Deny => RuntimeApprovalDecision::Deny,
+    }
 }
 
-fn request_task_cancellation(
+async fn send_approval_decision(
+    runtime: &BuddyRuntimeHandle,
+    approval: &PendingApproval,
+    decision: ApprovalDecision,
+) -> Result<(), String> {
+    runtime
+        .send(RuntimeCommand::Approve {
+            approval_id: approval.approval_id.clone(),
+            decision: runtime_approval_decision(decision),
+        })
+        .await
+        .map_err(|e| format!("failed to send approval decision: {e}"))
+}
+
+async fn deny_pending_approval(
+    runtime: &BuddyRuntimeHandle,
+    tasks: &mut [BackgroundTask],
+    approval: PendingApproval,
+) {
+    mark_task_running(tasks, approval.task_id);
+    let _ = send_approval_decision(runtime, &approval, ApprovalDecision::Deny).await;
+}
+
+async fn request_task_cancellation(
+    runtime: &BuddyRuntimeHandle,
     tasks: &mut [BackgroundTask],
     pending_approval: &mut Option<PendingApproval>,
     task_id: u64,
@@ -2142,12 +2379,15 @@ fn request_task_cancellation(
         .is_some_and(|approval| approval.task_id == task_id)
     {
         if let Some(approval) = pending_approval.take() {
-            approval.request.deny();
+            let _ = send_approval_decision(runtime, &approval, ApprovalDecision::Deny).await;
         }
     }
 
-    if !*task.cancel_tx.borrow() {
-        let _ = task.cancel_tx.send(true);
+    if let Err(err) = runtime.send(RuntimeCommand::CancelTask { task_id }).await {
+        return {
+            let _ = err;
+            false
+        };
     }
     task.state = BackgroundTaskState::Cancelling {
         since: Instant::now(),
@@ -2155,21 +2395,23 @@ fn request_task_cancellation(
     true
 }
 
-fn kill_background_task(
+async fn kill_background_task(
     renderer: &Renderer,
+    runtime: &BuddyRuntimeHandle,
     tasks: &mut [BackgroundTask],
     pending_approval: &mut Option<PendingApproval>,
     task_id: u64,
 ) {
-    if request_task_cancellation(tasks, pending_approval, task_id) {
+    if request_task_cancellation(runtime, tasks, pending_approval, task_id).await {
         renderer.warn(&format!("Cancelling task #{task_id}..."));
     } else {
         renderer.warn(&format!("No running background task with id #{task_id}."));
     }
 }
 
-fn enforce_task_timeouts(
+async fn enforce_task_timeouts(
     renderer: &Renderer,
+    runtime: &BuddyRuntimeHandle,
     tasks: &mut [BackgroundTask],
     pending_approval: &mut Option<PendingApproval>,
 ) {
@@ -2187,55 +2429,10 @@ fn enforce_task_timeouts(
         .collect::<Vec<_>>();
 
     for task_id in expired_ids {
-        if request_task_cancellation(tasks, pending_approval, task_id) {
+        if request_task_cancellation(runtime, tasks, pending_approval, task_id).await {
             renderer.warn(&format!("Task #{task_id} hit timeout; cancelling."));
         }
     }
-}
-
-async fn drain_finished_tasks(renderer: &Renderer, tasks: &mut Vec<BackgroundTask>) -> bool {
-    let mut completed_any = false;
-    let mut idx = 0usize;
-    while idx < tasks.len() {
-        if !tasks[idx].handle.is_finished() {
-            idx += 1;
-            continue;
-        }
-
-        completed_any = true;
-        let task = tasks.swap_remove(idx);
-        let elapsed = format_elapsed(task.started_at.elapsed());
-        match task.handle.await {
-            Ok(Ok(response)) => {
-                renderer.activity(&format!("prompt #{} processed in {elapsed}", task.id));
-                renderer.assistant_message(&response);
-            }
-            Ok(Err(err)) => {
-                renderer.error(&format!(
-                    "Background task #{} ({}) failed after {elapsed}: {}",
-                    task.id, task.kind, err
-                ));
-            }
-            Err(join_err) => {
-                if join_err.is_cancelled() {
-                    renderer.warn(&format!(
-                        "Background task #{} ({}) cancelled.",
-                        task.id, task.kind
-                    ));
-                } else {
-                    renderer.error(&format!(
-                        "Background task #{} ({}) terminated unexpectedly: {}",
-                        task.id, task.kind, join_err
-                    ));
-                }
-            }
-        }
-    }
-
-    if tasks.is_empty() {
-        Renderer::set_progress_enabled(true);
-    }
-    completed_any
 }
 
 fn render_background_tasks(renderer: &Renderer, tasks: &[BackgroundTask]) {
@@ -2302,10 +2499,6 @@ fn truncate_preview(text: &str, max_len: usize) -> String {
 mod tests {
     use super::*;
     use buddy::config::ApiProtocol;
-
-    fn dummy_handle() -> JoinHandle<Result<String, buddy::error::AgentError>> {
-        tokio::spawn(async { Ok::<String, buddy::error::AgentError>(String::new()) })
-    }
 
     #[test]
     fn ensure_active_auth_ready_skips_api_key_mode() {
@@ -2511,8 +2704,8 @@ mod tests {
         assert!(err.contains("Unknown model profile"));
     }
 
-    #[tokio::test]
-    async fn background_liveness_line_includes_running_task_state() {
+    #[test]
+    fn background_liveness_line_includes_running_task_state() {
         let task = BackgroundTask {
             id: 3,
             kind: "prompt".into(),
@@ -2520,96 +2713,14 @@ mod tests {
             started_at: Instant::now(),
             state: BackgroundTaskState::Running,
             timeout_at: None,
-            cancel_tx: watch::channel(false).0,
-            handle: dummy_handle(),
+            final_response: None,
         };
         let line = background_liveness_line(&[task]).expect("line expected");
         assert!(line.contains("task #3 running"), "line: {line}");
     }
 
-    #[tokio::test]
-    async fn collect_approval_request_marks_task_waiting() {
-        let (broker, rx) = ShellApprovalBroker::channel();
-        let waiter = tokio::spawn(async move { broker.request("ls -la".to_string()).await });
-        tokio::task::yield_now().await;
-
-        let mut tasks = vec![BackgroundTask {
-            id: 1,
-            kind: "prompt".into(),
-            details: "list files".into(),
-            started_at: Instant::now(),
-            state: BackgroundTaskState::Running,
-            timeout_at: None,
-            cancel_tx: watch::channel(false).0,
-            handle: dummy_handle(),
-        }];
-        let mut approval_rx = Some(rx);
-        let mut approval_policy = ApprovalPolicy::Ask;
-        let renderer = Renderer::new(false);
-
-        let pending = collect_approval_request(
-            &renderer,
-            &mut tasks,
-            &mut approval_rx,
-            &mut approval_policy,
-        )
-        .expect("approval request should be collected");
-        assert_eq!(pending.task_id, 1);
-        assert_eq!(pending.command, "ls -la");
-        assert!(task_is_waiting_for_approval(&tasks, 1));
-
-        pending.request.deny();
-        let approved = waiter.await.expect("join should succeed").unwrap();
-        assert!(!approved);
-    }
-
-    #[tokio::test]
-    async fn kill_background_task_denies_pending_approval() {
-        let (broker, mut rx) = ShellApprovalBroker::channel();
-        let waiter = tokio::spawn(async move { broker.request("echo hi".to_string()).await });
-        tokio::task::yield_now().await;
-        let request = rx.recv().await.expect("request expected");
-
-        let long_handle = tokio::spawn(async {
-            tokio::time::sleep(Duration::from_secs(30)).await;
-            Ok::<String, buddy::error::AgentError>(String::new())
-        });
-        let (cancel_tx, cancel_rx) = watch::channel(false);
-        let mut tasks = vec![BackgroundTask {
-            id: 7,
-            kind: "prompt".into(),
-            details: "test".into(),
-            started_at: Instant::now(),
-            state: BackgroundTaskState::WaitingApproval {
-                command: "echo hi".into(),
-                since: Instant::now(),
-            },
-            timeout_at: None,
-            cancel_tx,
-            handle: long_handle,
-        }];
-        let mut pending = Some(PendingApproval {
-            task_id: 7,
-            command: "echo hi".into(),
-            request,
-        });
-        let renderer = Renderer::new(false);
-
-        kill_background_task(&renderer, &mut tasks, &mut pending, 7);
-
-        assert_eq!(tasks.len(), 1);
-        assert!(matches!(
-            tasks[0].state,
-            BackgroundTaskState::Cancelling { .. }
-        ));
-        assert!(*cancel_rx.borrow());
-        assert!(pending.is_none());
-        let approved = waiter.await.expect("join should succeed").unwrap();
-        assert!(!approved);
-    }
-
-    #[tokio::test]
-    async fn mark_task_waiting_for_approval_skips_cancelling_tasks() {
+    #[test]
+    fn mark_task_waiting_for_approval_marks_selected_task() {
         let mut tasks = vec![
             BackgroundTask {
                 id: 1,
@@ -2620,8 +2731,7 @@ mod tests {
                     since: Instant::now(),
                 },
                 timeout_at: None,
-                cancel_tx: watch::channel(false).0,
-                handle: dummy_handle(),
+                final_response: None,
             },
             BackgroundTask {
                 id: 2,
@@ -2630,12 +2740,12 @@ mod tests {
                 started_at: Instant::now() - Duration::from_secs(1),
                 state: BackgroundTaskState::Running,
                 timeout_at: None,
-                cancel_tx: watch::channel(false).0,
-                handle: dummy_handle(),
+                final_response: None,
             },
         ];
-        let picked = mark_task_waiting_for_approval(&mut tasks, "ls").expect("task expected");
-        assert_eq!(picked, 2);
+        assert!(mark_task_waiting_for_approval(&mut tasks, 2, "ls", "appr-2"));
+        assert!(task_is_waiting_for_approval(&tasks, 2));
+        assert!(!task_is_waiting_for_approval(&tasks, 1));
     }
 
     #[test]
@@ -2663,8 +2773,8 @@ mod tests {
         assert!(matches!(policy, ApprovalPolicy::Until(_)));
     }
 
-    #[tokio::test]
-    async fn apply_task_timeout_requires_task_id_when_ambiguous() {
+    #[test]
+    fn apply_task_timeout_requires_task_id_when_ambiguous() {
         let mut tasks = vec![
             BackgroundTask {
                 id: 1,
@@ -2673,8 +2783,7 @@ mod tests {
                 started_at: Instant::now(),
                 state: BackgroundTaskState::Running,
                 timeout_at: None,
-                cancel_tx: watch::channel(false).0,
-                handle: dummy_handle(),
+                final_response: None,
             },
             BackgroundTask {
                 id: 2,
@@ -2683,8 +2792,7 @@ mod tests {
                 started_at: Instant::now(),
                 state: BackgroundTaskState::Running,
                 timeout_at: None,
-                cancel_tx: watch::channel(false).0,
-                handle: dummy_handle(),
+                final_response: None,
             },
         ];
         let err =
@@ -2692,8 +2800,8 @@ mod tests {
         assert!(err.contains("Task id required"));
     }
 
-    #[tokio::test]
-    async fn apply_task_timeout_sets_deadline_for_single_task_without_id() {
+    #[test]
+    fn apply_task_timeout_sets_deadline_for_single_task_without_id() {
         let mut tasks = vec![BackgroundTask {
             id: 9,
             kind: "prompt".into(),
@@ -2701,12 +2809,64 @@ mod tests {
             started_at: Instant::now(),
             state: BackgroundTaskState::Running,
             timeout_at: None,
-            cancel_tx: watch::channel(false).0,
-            handle: dummy_handle(),
+            final_response: None,
         }];
         let ok =
             apply_task_timeout_command(&mut tasks, Some("10m"), None).expect("timeout should set");
         assert!(ok.contains("#9"));
         assert!(tasks[0].timeout_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn handle_session_command_new_submits_runtime_command() {
+        let temp = std::env::temp_dir().join(format!(
+            "buddy-main-session-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let store = SessionStore::open(&temp).expect("open session store");
+        let (tx, mut rx) = mpsc::channel(4);
+        let runtime = BuddyRuntimeHandle { commands: tx };
+        let renderer = Renderer::new(false);
+        let mut active = "abcd-1234".to_string();
+
+        handle_session_command(
+            &renderer,
+            &store,
+            &runtime,
+            &mut active,
+            Some("new"),
+            None,
+        )
+        .await;
+
+        let command = rx.recv().await.expect("command expected");
+        assert!(matches!(command, RuntimeCommand::SessionNew));
+    }
+
+    #[tokio::test]
+    async fn handle_model_command_submits_switch_command() {
+        let (tx, mut rx) = mpsc::channel(4);
+        let runtime = BuddyRuntimeHandle { commands: tx };
+        let renderer = Renderer::new(false);
+        let mut config = Config::default();
+
+        handle_model_command(
+            &renderer,
+            &mut config,
+            &runtime,
+            Some("openrouter-deepseek"),
+        )
+        .await;
+
+        let command = rx.recv().await.expect("command expected");
+        match command {
+            RuntimeCommand::SwitchModel { profile } => {
+                assert_eq!(profile, "openrouter-deepseek");
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
     }
 }

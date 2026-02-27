@@ -52,11 +52,14 @@ $EDITOR ~/.config/buddy/buddy.toml
 
 ```bash
 # Optional: If you're not using API keys, e.g., OpenAI user login
+buddy login --check
 buddy login
+# If credentials are corrupted/stale:
+buddy login --reset
 
 # Interactive mode on local machine, this creates a tmux session named buddy-...
 buddy
-tmux attach -t buddy # if you want to watch or co-work with buddy
+tmux attach -t buddy-xxxx # if you want to watch or co-work with buddy
 
 # Operate a remote ssh host (in a tmux session on the host)
 buddy --ssh user@hostname
@@ -78,7 +81,7 @@ buddy resume --last
 |---------|-------------|
 | `/status` | Show current model, base URL, enabled tools, and session counters. |
 | `/model [name\|index]` | Switch the active configured model profile (`/model` opens arrow-key picker). |
-| `/login [name\|index]` | Start login flow for a configured profile. |
+| `/login [name\|index]` | Show login health and start login flow for a configured profile. |
 | `/context` | Show estimated context usage (`messages` estimate / context window) and token stats. |
 | `/ps` | Show running background tasks with IDs and elapsed time. |
 | `/kill <id>` | Cancel a running background task by task ID. |
@@ -270,7 +273,7 @@ buddy [OPTIONS] [COMMAND]
 Commands:
   exec <PROMPT>           Execute one prompt and exit
   resume [SESSION_ID]     Resume saved session by id (or use --last)
-  login [MODEL_PROFILE]   Login to provider for profile (defaults to [agent].model; shared per provider)
+  login [MODEL_PROFILE]   Login/check/reset provider auth for profile (defaults to [agent].model; shared per provider)
   help                    Print command help
 
 Options:
@@ -290,6 +293,8 @@ Options:
 At startup, the system prompt is rendered from one compiled template with runtime placeholders (enabled tools, execution target, and optional `[agent].system_prompt` operator instructions). When `--container` or `--ssh` is set, the rendered prompt includes explicit remote-target guidance.
 
 `buddy exec` is non-interactive. If `tools.shell_confirm=true`, exec fails closed unless you explicitly pass `--dangerously-auto-approve`.
+
+Login credentials are stored in `~/.config/buddy/auth.json` using machine-derived encryption-at-rest with per-record nonces. Use `buddy login --check` to inspect saved login health and `buddy login --reset` to clear saved provider credentials and re-authenticate.
 
 ### Built-in tools
 

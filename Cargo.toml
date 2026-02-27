@@ -12,13 +12,19 @@ name = "buddy"
 path = "src/lib.rs"
 
 [dependencies]
+aes-gcm-siv = "0.11"
 async-trait = "0.1"
+base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.28"
 dirs = "6"
+hostname = "0.4"
+rand = "0.8"
 reqwest = { version = "0.12", features = ["json"] }
+scrypt = "0.11"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 termimad = "0.34"
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 tokio = { version = "1", features = ["full"] }

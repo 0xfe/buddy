@@ -430,6 +430,19 @@ impl Agent {
                 top_p: self.config.agent.top_p,
             };
             if let Some(task) = self.current_task_ref() {
+                let context_limit = self.tracker.context_limit as u64;
+                let estimated_tokens = TokenTracker::estimate_messages(&self.messages) as u64;
+                let used_percent = if context_limit == 0 {
+                    0.0
+                } else {
+                    ((estimated_tokens as f64 / context_limit as f64) * 100.0) as f32
+                };
+                let _ = self.emit_runtime_event(RuntimeEvent::Metrics(MetricsEvent::ContextUsage {
+                    task: task.clone(),
+                    estimated_tokens,
+                    context_limit,
+                    used_percent,
+                }));
                 let _ = self.emit_runtime_event(RuntimeEvent::Model(ModelEvent::RequestStarted {
                     task,
                     model: request.model.clone(),
@@ -1106,6 +1119,7 @@ mod tests {
             let label = match envelope.event {
                 RuntimeEvent::Task(TaskEvent::Started { .. }) => "task_started",
                 RuntimeEvent::Model(ModelEvent::RequestStarted { .. }) => "model_request_started",
+                RuntimeEvent::Metrics(MetricsEvent::ContextUsage { .. }) => "context_usage",
                 RuntimeEvent::Metrics(MetricsEvent::TokenUsage { .. }) => "token_usage",
                 RuntimeEvent::Tool(ToolEvent::CallRequested { .. }) => "tool_call",
                 RuntimeEvent::Tool(ToolEvent::Result { .. }) => "tool_result",
@@ -1118,10 +1132,12 @@ mod tests {
 
         let expected = vec![
             "task_started",
+            "context_usage",
             "model_request_started",
             "token_usage",
             "tool_call",
             "tool_result",
+            "context_usage",
             "model_request_started",
             "token_usage",
             "message_final",

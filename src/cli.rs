@@ -74,6 +74,12 @@ pub enum Command {
     Login {
         /// Model profile name. Uses [agent].model when omitted.
         model: Option<String>,
+        /// Remove stored credentials for this provider before starting login.
+        #[arg(long = "reset", default_value_t = false)]
+        reset: bool,
+        /// Print credential health for this provider and exit.
+        #[arg(long = "check", default_value_t = false)]
+        check: bool,
     },
 }
 
@@ -111,7 +117,18 @@ mod tests {
         let args = Args::parse_from(["buddy", "login", "gpt-codex"]);
         assert!(matches!(
             args.command,
-            Some(Command::Login { model }) if model.as_deref() == Some("gpt-codex")
+            Some(Command::Login { model, reset, check })
+                if model.as_deref() == Some("gpt-codex") && !reset && !check
+        ));
+    }
+
+    #[test]
+    fn login_subcommand_accepts_reset_and_check_flags() {
+        let args = Args::parse_from(["buddy", "login", "gpt-codex", "--reset", "--check"]);
+        assert!(matches!(
+            args.command,
+            Some(Command::Login { model, reset, check })
+                if model.as_deref() == Some("gpt-codex") && reset && check
         ));
     }
 

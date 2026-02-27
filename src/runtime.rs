@@ -10,8 +10,10 @@ use crate::agent::AgentUiEvent;
 use crate::auth::{load_provider_tokens, login_provider_key_for_base_url, supports_openai_login};
 use crate::config::{select_model_profile, Config};
 use crate::session::SessionStore;
+use crate::tools::shell::ShellApprovalRequest;
 use crate::textutil::truncate_with_suffix_by_chars;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, watch, Mutex};
@@ -350,6 +352,7 @@ pub struct RuntimeSpawnConfig {
     pub tools: crate::tools::ToolRegistry,
     pub session_store: Option<SessionStore>,
     pub active_session: Option<String>,
+    pub approval_rx: Option<mpsc::UnboundedReceiver<ShellApprovalRequest>>,
 }
 
 /// Spawn a runtime actor from config + tool registry.
@@ -360,6 +363,7 @@ pub fn spawn_runtime(config: RuntimeSpawnConfig) -> (BuddyRuntimeHandle, Runtime
         config.config,
         config.session_store,
         config.active_session,
+        config.approval_rx,
     )
 }
 
@@ -372,19 +376,43 @@ pub fn spawn_runtime_with_agent(
     config: Config,
     session_store: Option<SessionStore>,
     active_session: Option<String>,
+    approval_rx: Option<mpsc::UnboundedReceiver<ShellApprovalRequest>>,
+) -> (BuddyRuntimeHandle, RuntimeEventStream) {
+    let shared_agent = Arc::new(Mutex::new(agent));
+    spawn_runtime_with_shared_agent(
+        shared_agent,
+        config,
+        session_store,
+        active_session,
+        approval_rx,
+    )
+}
+
+/// Spawn a runtime actor from a shared agent handle.
+///
+/// This lets the caller keep read-only snapshot access for status rendering
+/// while the runtime owns execution orchestration.
+pub fn spawn_runtime_with_shared_agent(
+    agent: Arc<Mutex<Agent>>,
+    config: Config,
+    session_store: Option<SessionStore>,
+    active_session: Option<String>,
+    approval_rx: Option<mpsc::UnboundedReceiver<ShellApprovalRequest>>,
 ) -> (BuddyRuntimeHandle, RuntimeEventStream) {
     let (command_tx, mut command_rx) = mpsc::channel::<RuntimeCommand>(64);
     let (event_tx, event_rx) = mpsc::unbounded_channel::<RuntimeEventEnvelope>();
 
     tokio::spawn(async move {
-        let agent = Arc::new(Mutex::new(agent));
         let (agent_event_tx, mut agent_event_rx) =
             mpsc::unbounded_channel::<RuntimeEventEnvelope>();
         let (task_done_tx, mut task_done_rx) = mpsc::unbounded_channel::<TaskDone>();
+        let mut approval_rx = approval_rx;
 
         let mut seq: u64 = 0;
         let mut next_task_id: u64 = 1;
         let mut active_task: Option<ActiveTask> = None;
+        let mut pending_approvals = HashMap::<String, PendingRuntimeApproval>::new();
+        let mut next_approval_nonce: u64 = 1;
         let mut state = RuntimeActorState {
             config,
             session_store,
@@ -412,6 +440,7 @@ pub fn spawn_runtime_with_agent(
                         &mut state,
                         &mut active_task,
                         &mut next_task_id,
+                        &mut pending_approvals,
                         &event_tx,
                         &mut seq,
                         &agent_event_tx,
@@ -433,6 +462,7 @@ pub fn spawn_runtime_with_agent(
                     if active_task.as_ref().is_some_and(|active| active.task_id == done.task_id) {
                         active_task = None;
                     }
+                    deny_pending_approvals_for_task(done.task_id, &mut pending_approvals);
 
                     persist_active_session_snapshot(&agent, &state, &event_tx, &mut seq).await;
 
@@ -446,6 +476,22 @@ pub fn spawn_runtime_with_agent(
                             }),
                         );
                     }
+                }
+                Some(request) = async {
+                    match approval_rx.as_mut() {
+                        Some(rx) => rx.recv().await,
+                        None => None,
+                    }
+                } => {
+                    handle_approval_request(
+                        request,
+                        &mut state,
+                        active_task.as_ref(),
+                        &mut pending_approvals,
+                        &mut next_approval_nonce,
+                        &event_tx,
+                        &mut seq,
+                    );
                 }
                 else => break,
             }
@@ -477,6 +523,11 @@ struct TaskDone {
     result: Result<String, crate::error::AgentError>,
 }
 
+struct PendingRuntimeApproval {
+    task_id: u64,
+    request: ShellApprovalRequest,
+}
+
 fn emit_event(
     tx: &mpsc::UnboundedSender<RuntimeEventEnvelope>,
     seq: &mut u64,
@@ -492,6 +543,7 @@ async fn handle_runtime_command(
     state: &mut RuntimeActorState,
     active_task: &mut Option<ActiveTask>,
     next_task_id: &mut u64,
+    pending_approvals: &mut HashMap<String, PendingRuntimeApproval>,
     event_tx: &mpsc::UnboundedSender<RuntimeEventEnvelope>,
     seq: &mut u64,
     agent_event_tx: &mpsc::UnboundedSender<RuntimeEventEnvelope>,
@@ -557,6 +609,7 @@ async fn handle_runtime_command(
                 );
                 return false;
             }
+            deny_pending_approvals_for_task(task_id, pending_approvals);
             let _ = active.cancel_tx.send(true);
             emit_event(
                 event_tx,
@@ -568,6 +621,11 @@ async fn handle_runtime_command(
         }
         RuntimeCommand::SetApprovalPolicy { policy } => {
             state.approval_policy = policy;
+            if let Some(decision) = active_approval_decision(&mut state.approval_policy) {
+                for pending in pending_approvals.drain().map(|(_, pending)| pending) {
+                    resolve_pending_approval(pending, decision, event_tx, seq);
+                }
+            }
             emit_event(
                 event_tx,
                 seq,
@@ -700,18 +758,27 @@ async fn handle_runtime_command(
                 ),
             }
         }
-        RuntimeCommand::Approve { .. } => {
-            emit_event(
-                event_tx,
-                seq,
-                RuntimeEvent::Warning(WarningEvent {
-                    task: None,
-                    message: "explicit approval commands are not wired in runtime actor yet"
-                        .to_string(),
-                }),
-            );
+        RuntimeCommand::Approve {
+            approval_id,
+            decision,
+        } => {
+            let Some(pending) = pending_approvals.remove(&approval_id) else {
+                emit_event(
+                    event_tx,
+                    seq,
+                    RuntimeEvent::Error(ErrorEvent {
+                        task: None,
+                        message: format!("unknown approval id `{approval_id}`"),
+                    }),
+                );
+                return false;
+            };
+            resolve_pending_approval(pending, decision, event_tx, seq);
         }
         RuntimeCommand::Shutdown => {
+            for pending in pending_approvals.drain().map(|(_, pending)| pending) {
+                pending.request.deny();
+            }
             if let Some(active) = active_task.as_ref() {
                 let _ = active.cancel_tx.send(true);
             }
@@ -719,6 +786,126 @@ async fn handle_runtime_command(
         }
     }
     false
+}
+
+fn handle_approval_request(
+    request: ShellApprovalRequest,
+    state: &mut RuntimeActorState,
+    active_task: Option<&ActiveTask>,
+    pending_approvals: &mut HashMap<String, PendingRuntimeApproval>,
+    next_approval_nonce: &mut u64,
+    event_tx: &mpsc::UnboundedSender<RuntimeEventEnvelope>,
+    seq: &mut u64,
+) {
+    let Some(active_task) = active_task else {
+        request.deny();
+        emit_event(
+            event_tx,
+            seq,
+            RuntimeEvent::Warning(WarningEvent {
+                task: None,
+                message: "approval request arrived without an active task; denied".to_string(),
+            }),
+        );
+        return;
+    };
+
+    if let Some(decision) = active_approval_decision(&mut state.approval_policy) {
+        resolve_pending_approval(
+            PendingRuntimeApproval {
+                task_id: active_task.task_id,
+                request,
+            },
+            decision,
+            event_tx,
+            seq,
+        );
+        return;
+    }
+
+    let approval_id = format!("appr-{}-{:04x}", active_task.task_id, *next_approval_nonce);
+    *next_approval_nonce = next_approval_nonce.saturating_add(1);
+    emit_event(
+        event_tx,
+        seq,
+        RuntimeEvent::Task(TaskEvent::WaitingApproval {
+            task: TaskRef::from_task_id(active_task.task_id),
+            approval_id: approval_id.clone(),
+            command: truncate_preview(request.command(), 140),
+        }),
+    );
+    pending_approvals.insert(
+        approval_id,
+        PendingRuntimeApproval {
+            task_id: active_task.task_id,
+            request,
+        },
+    );
+}
+
+fn active_approval_decision(policy: &mut RuntimeApprovalPolicy) -> Option<ApprovalDecision> {
+    match policy {
+        RuntimeApprovalPolicy::Ask => None,
+        RuntimeApprovalPolicy::All => Some(ApprovalDecision::Approve),
+        RuntimeApprovalPolicy::None => Some(ApprovalDecision::Deny),
+        RuntimeApprovalPolicy::Until { expires_at_unix_ms } => {
+            if now_unix_millis() < *expires_at_unix_ms {
+                Some(ApprovalDecision::Approve)
+            } else {
+                *policy = RuntimeApprovalPolicy::Ask;
+                None
+            }
+        }
+    }
+}
+
+fn resolve_pending_approval(
+    pending: PendingRuntimeApproval,
+    decision: ApprovalDecision,
+    event_tx: &mpsc::UnboundedSender<RuntimeEventEnvelope>,
+    seq: &mut u64,
+) {
+    let task = TaskRef::from_task_id(pending.task_id);
+    match decision {
+        ApprovalDecision::Approve => {
+            pending.request.approve();
+            emit_event(
+                event_tx,
+                seq,
+                RuntimeEvent::Warning(WarningEvent {
+                    task: Some(task.clone()),
+                    message: "approval granted".to_string(),
+                }),
+            );
+        }
+        ApprovalDecision::Deny => {
+            pending.request.deny();
+            emit_event(
+                event_tx,
+                seq,
+                RuntimeEvent::Warning(WarningEvent {
+                    task: Some(task.clone()),
+                    message: "approval denied".to_string(),
+                }),
+            );
+        }
+    }
+    emit_event(event_tx, seq, RuntimeEvent::Task(TaskEvent::Started { task }));
+}
+
+fn deny_pending_approvals_for_task(
+    task_id: u64,
+    pending_approvals: &mut HashMap<String, PendingRuntimeApproval>,
+) {
+    let approval_ids = pending_approvals
+        .iter()
+        .filter_map(|(id, pending)| (pending.task_id == task_id).then_some(id.clone()))
+        .collect::<Vec<_>>();
+    for approval_id in approval_ids {
+        if let Some(pending) = pending_approvals.remove(&approval_id) {
+            pending.request.deny();
+        }
+    }
 }
 
 fn spawn_prompt_task(
@@ -894,6 +1081,7 @@ mod tests {
     use crate::api::ModelClient;
     use crate::config::Config;
     use crate::error::ApiError;
+    use crate::tools::shell::ShellApprovalBroker;
     use crate::types::{ChatRequest, ChatResponse, Choice, Message, Role, Usage};
     use async_trait::async_trait;
     use serde_json::{json, Value};
@@ -1120,7 +1308,8 @@ mod tests {
             crate::tools::ToolRegistry::new(),
             Box::new(MockClient::new(vec![chat_response_text("r1", "ok")])),
         );
-        let (handle, mut events) = spawn_runtime_with_agent(agent, Config::default(), None, None);
+        let (handle, mut events) =
+            spawn_runtime_with_agent(agent, Config::default(), None, None, None);
 
         // startup lifecycle events
         assert!(matches!(
@@ -1141,11 +1330,12 @@ mod tests {
             .expect("send");
 
         let mut labels = Vec::new();
-        for _ in 0..8 {
+        for _ in 0..9 {
             let event = recv_event(&mut events).await;
             let label = match event {
                 RuntimeEvent::Task(TaskEvent::Queued { .. }) => "queued",
                 RuntimeEvent::Task(TaskEvent::Started { .. }) => "started",
+                RuntimeEvent::Metrics(MetricsEvent::ContextUsage { .. }) => "context",
                 RuntimeEvent::Model(ModelEvent::RequestStarted { .. }) => "request",
                 RuntimeEvent::Metrics(MetricsEvent::TokenUsage { .. }) => "tokens",
                 RuntimeEvent::Model(ModelEvent::MessageFinal { .. }) => "final",
@@ -1163,6 +1353,7 @@ mod tests {
             vec![
                 "queued",
                 "started",
+                "context",
                 "request",
                 "tokens",
                 "final",
@@ -1181,7 +1372,8 @@ mod tests {
                 Duration::from_millis(300),
             )),
         );
-        let (handle, mut events) = spawn_runtime_with_agent(agent, Config::default(), None, None);
+        let (handle, mut events) =
+            spawn_runtime_with_agent(agent, Config::default(), None, None, None);
         let _ = recv_event(&mut events).await;
         let _ = recv_event(&mut events).await;
 
@@ -1219,6 +1411,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn runtime_actor_handles_approval_command_flow() {
+        let agent = Agent::with_client(
+            Config::default(),
+            crate::tools::ToolRegistry::new(),
+            Box::new(MockClient::with_delay(
+                vec![chat_response_text("r1", "ok")],
+                Duration::from_millis(250),
+            )),
+        );
+        let (broker, approval_rx) = ShellApprovalBroker::channel();
+        let (handle, mut events) =
+            spawn_runtime_with_agent(agent, Config::default(), None, None, Some(approval_rx));
+        let _ = recv_event(&mut events).await;
+        let _ = recv_event(&mut events).await;
+
+        handle
+            .send(RuntimeCommand::SubmitPrompt {
+                prompt: "slow".to_string(),
+                metadata: PromptMetadata::default(),
+            })
+            .await
+            .expect("send submit");
+
+        let waiter = tokio::spawn(async move { broker.request("echo hi".to_string()).await });
+
+        let mut approval_id = String::new();
+        for _ in 0..10 {
+            match recv_event(&mut events).await {
+                RuntimeEvent::Task(TaskEvent::WaitingApproval {
+                    task,
+                    approval_id: id,
+                    ..
+                }) => {
+                    assert_eq!(task.task_id, 1);
+                    approval_id = id;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        assert!(
+            !approval_id.is_empty(),
+            "runtime did not emit waiting-approval event"
+        );
+
+        handle
+            .send(RuntimeCommand::Approve {
+                approval_id,
+                decision: ApprovalDecision::Approve,
+            })
+            .await
+            .expect("send approve");
+
+        let approved = waiter.await.expect("join should succeed").expect("decision");
+        assert!(approved);
+    }
+
+    #[tokio::test]
     async fn runtime_actor_switch_model_emits_profile_switched() {
         let mut cfg = Config::default();
         cfg.display.show_tokens = false;
@@ -1227,7 +1477,7 @@ mod tests {
             crate::tools::ToolRegistry::new(),
             Box::new(MockClient::new(vec![chat_response_text("r1", "ok")])),
         );
-        let (handle, mut events) = spawn_runtime_with_agent(agent, cfg, None, None);
+        let (handle, mut events) = spawn_runtime_with_agent(agent, cfg, None, None, None);
         let _ = recv_event(&mut events).await;
         let _ = recv_event(&mut events).await;
 
