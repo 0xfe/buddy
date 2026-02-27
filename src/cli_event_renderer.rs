@@ -215,6 +215,12 @@ pub(crate) fn process_runtime_events(
             RuntimeEvent::Tool(event) => match event {
                 ToolEvent::CallRequested { .. } => {}
                 ToolEvent::CallStarted { task, name, detail } => {
+                    if name == "run_shell" {
+                        // Shell commands already get explicit approval/request rendering (when
+                        // enabled) and a structured final result block. Suppress duplicate
+                        // "running run_shell" lifecycle chatter.
+                        continue;
+                    }
                     ctx.renderer.activity(&format!(
                         "task #{} running {name}: {}",
                         task.task_id,
@@ -223,7 +229,9 @@ pub(crate) fn process_runtime_events(
                 }
                 ToolEvent::StdoutChunk { task, name, chunk } => {
                     if name == "run_shell" {
-                        ctx.renderer.command_output_block(&chunk);
+                        // For run_shell we render stdout/stderr from the final ToolEvent::Result
+                        // payload so output only appears once.
+                        continue;
                     } else {
                         ctx.renderer.activity(&format!(
                             "task #{} {name} output: {}",
@@ -233,6 +241,9 @@ pub(crate) fn process_runtime_events(
                     }
                 }
                 ToolEvent::StderrChunk { task, name, chunk } => {
+                    if name == "run_shell" {
+                        continue;
+                    }
                     ctx.renderer
                         .activity(&format!("task #{} {name} stderr:", task.task_id));
                     ctx.renderer.command_output_block(&chunk);
@@ -242,6 +253,9 @@ pub(crate) fn process_runtime_events(
                     name,
                     message,
                 } => {
+                    if name == "run_shell" {
+                        continue;
+                    }
                     ctx.renderer.activity(&format!(
                         "task #{} {name}: {}",
                         task.task_id,
@@ -249,6 +263,9 @@ pub(crate) fn process_runtime_events(
                     ));
                 }
                 ToolEvent::Completed { task, name, detail } => {
+                    if name == "run_shell" {
+                        continue;
+                    }
                     ctx.renderer.activity(&format!(
                         "task #{} {name}: {}",
                         task.task_id,

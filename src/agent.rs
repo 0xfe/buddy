@@ -359,13 +359,13 @@ impl Agent {
                 self.renderer.warn(msg);
                 return;
             };
-            let sent = self.emit_ui_event(AgentUiEvent::Warning {
+            let _ = self.emit_ui_event(AgentUiEvent::Warning {
                 task_id,
                 message: msg.to_string(),
             });
-            if sent {
-                return;
-            }
+            // In runtime/background mode the CLI consumes RuntimeEvent stream, so avoid
+            // duplicate direct stderr rendering from the embedded renderer.
+            return;
         }
         self.renderer.warn(msg);
     }
@@ -376,15 +376,13 @@ impl Agent {
                 self.renderer.token_usage(prompt, completion, session_total);
                 return;
             };
-            let sent = self.emit_ui_event(AgentUiEvent::TokenUsage {
+            let _ = self.emit_ui_event(AgentUiEvent::TokenUsage {
                 task_id,
                 prompt_tokens: prompt,
                 completion_tokens: completion,
                 session_total,
             });
-            if sent {
-                return;
-            }
+            return;
         }
         self.renderer.token_usage(prompt, completion, session_total);
     }
@@ -403,14 +401,12 @@ impl Agent {
                 self.renderer.reasoning_trace(field, trace);
                 return;
             };
-            let sent = self.emit_ui_event(AgentUiEvent::ReasoningTrace {
+            let _ = self.emit_ui_event(AgentUiEvent::ReasoningTrace {
                 task_id,
                 field: field.to_string(),
                 trace: trace.to_string(),
             });
-            if sent {
-                return;
-            }
+            return;
         }
         self.renderer.reasoning_trace(field, trace);
     }
@@ -421,14 +417,12 @@ impl Agent {
                 self.renderer.tool_call(name, args);
                 return;
             };
-            let sent = self.emit_ui_event(AgentUiEvent::ToolCall {
+            let _ = self.emit_ui_event(AgentUiEvent::ToolCall {
                 task_id,
                 name: name.to_string(),
                 args: args.to_string(),
             });
-            if sent {
-                return;
-            }
+            return;
         }
         self.renderer.tool_call(name, args);
     }
@@ -439,15 +433,13 @@ impl Agent {
                 self.renderer.tool_result(result);
                 return;
             };
-            let sent = self.emit_ui_event(AgentUiEvent::ToolResult {
+            let _ = self.emit_ui_event(AgentUiEvent::ToolResult {
                 task_id,
                 name: name.to_string(),
                 args: args.to_string(),
                 result: result.to_string(),
             });
-            if sent {
-                return;
-            }
+            return;
         }
         self.renderer.tool_result(result);
     }
