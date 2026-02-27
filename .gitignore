@@ -4,7 +4,7 @@
 # Local runtime/session state
 /.buddyx/
 /.agentx/
-old/
+tmp/
 
 # Environment/local secrets
 .env
