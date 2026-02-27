@@ -357,11 +357,122 @@ pub fn load_config(path_override: Option<&str>) -> Result<Config, ConfigError> {
 
 /// Load configuration and return compatibility diagnostics.
 pub fn load_config_with_diagnostics(path_override: Option<&str>) -> Result<LoadedConfig, ConfigError> {
-    let (config_text, source) = read_config_text(path_override)?;
+    load_config_with_diagnostics_from_sources(
+        path_override,
+        |path| std::fs::read_to_string(path),
+        |name| std::env::var(name).ok(),
+        config_root_dir,
+    )
+}
+
+fn load_config_with_diagnostics_from_sources<FRead, FEnv, FRoot>(
+    path_override: Option<&str>,
+    read_file: FRead,
+    env_lookup: FEnv,
+    config_root: FRoot,
+) -> Result<LoadedConfig, ConfigError>
+where
+    FRead: Fn(&Path) -> Result<String, std::io::Error>,
+    FEnv: Fn(&str) -> Option<String>,
+    FRoot: Fn() -> Option<PathBuf>,
+{
+    let (config_text, source) = read_config_text_with_sources(path_override, &read_file, &config_root)?;
     let mut diagnostics = ConfigDiagnostics::default();
     collect_legacy_source_warnings(&source, &mut diagnostics);
-    let mut parsed: FileConfig = toml::from_str(&config_text)?;
+    let parsed: FileConfig = toml::from_str(&config_text)?;
+    let mut config = resolve_config_from_file_config(
+        parsed,
+        api_key_override_with(&env_lookup),
+        &env_lookup,
+        |path| {
+            read_file(Path::new(path)).map_err(|e| {
+                ConfigError::Invalid(format!(
+                    "failed to read model profile api_key_file `{path}`: {e}"
+                ))
+            })
+        },
+        &mut diagnostics,
+    )?;
+    apply_runtime_env_overrides(&mut config, &env_lookup)?;
+    collect_legacy_env_warnings(&mut diagnostics, &env_lookup);
+    dedupe_diagnostics(&mut diagnostics);
 
+    Ok(LoadedConfig {
+        config,
+        diagnostics,
+    })
+}
+
+fn read_config_text_with_sources<FRead, FRoot>(
+    path_override: Option<&str>,
+    read_file: &FRead,
+    config_root: &FRoot,
+) -> Result<(String, ConfigSource), ConfigError>
+where
+    FRead: Fn(&Path) -> Result<String, std::io::Error>,
+    FRoot: Fn() -> Option<PathBuf>,
+{
+    if let Some(p) = path_override {
+        let path = PathBuf::from(p);
+        let text = read_file(&path)?;
+        return Ok((text, ConfigSource::Explicit(path)));
+    }
+
+    if let Ok(text) = read_file(Path::new("buddy.toml")) {
+        return Ok((text, ConfigSource::LocalBuddy));
+    }
+    if let Ok(text) = read_file(Path::new("agent.toml")) {
+        return Ok((text, ConfigSource::LocalLegacyAgent));
+    }
+    if let Some(dir) = config_root() {
+        let buddy_global = dir.join("buddy").join("buddy.toml");
+        if let Ok(text) = read_file(&buddy_global) {
+            return Ok((text, ConfigSource::GlobalBuddy));
+        }
+        let legacy_global = dir.join("agent").join("agent.toml");
+        if let Ok(text) = read_file(&legacy_global) {
+            return Ok((text, ConfigSource::GlobalLegacyAgent(legacy_global)));
+        }
+    }
+
+    Ok((String::new(), ConfigSource::BuiltInDefaults))
+}
+
+fn collect_legacy_source_warnings(source: &ConfigSource, diagnostics: &mut ConfigDiagnostics) {
+    match source {
+        ConfigSource::Explicit(path) => {
+            if path.file_name().is_some_and(|name| name == "agent.toml") {
+                diagnostics.deprecations.push(format!(
+                    "Config file `{}` uses deprecated `agent.toml` naming; rename to `buddy.toml` (legacy support will be removed after v0.4).",
+                    path.display()
+                ));
+            }
+        }
+        ConfigSource::LocalLegacyAgent => diagnostics.deprecations.push(
+            "Using local `./agent.toml`; rename to `./buddy.toml` (legacy support will be removed after v0.4)."
+                .to_string(),
+        ),
+        ConfigSource::GlobalLegacyAgent(path) => diagnostics.deprecations.push(format!(
+            "Using deprecated global config `{}`; move it to `~/.config/buddy/buddy.toml` (legacy support will be removed after v0.4).",
+            path.display()
+        )),
+        ConfigSource::LocalBuddy
+        | ConfigSource::GlobalBuddy
+        | ConfigSource::BuiltInDefaults => {}
+    }
+}
+
+fn resolve_config_from_file_config<FEnv, FRead>(
+    mut parsed: FileConfig,
+    key_override: Option<String>,
+    env_lookup: FEnv,
+    read_file: FRead,
+    diagnostics: &mut ConfigDiagnostics,
+) -> Result<Config, ConfigError>
+where
+    FEnv: Fn(&str) -> Option<String>,
+    FRead: Fn(&str) -> Result<String, ConfigError>,
+{
     if parsed.models.is_empty() {
         if let Some(legacy_api) = parsed.api.take() {
             diagnostics.deprecations.push(
@@ -401,26 +512,29 @@ pub fn load_config_with_diagnostics(path_override: Option<&str>) -> Result<Loade
     config.api = resolve_active_api_with(
         &config.models,
         &config.agent.model,
-        api_key_override_env(),
-        |name| std::env::var(name).ok(),
-        |path| {
-            std::fs::read_to_string(path).map_err(|e| {
-                ConfigError::Invalid(format!(
-                    "failed to read model profile api_key_file `{path}`: {e}"
-                ))
-            })
-        },
+        key_override,
+        env_lookup,
+        read_file,
     )?;
 
-    // Environment variable overrides for active runtime settings.
-    if let Ok(url) = std::env::var("BUDDY_BASE_URL").or_else(|_| std::env::var("AGENT_BASE_URL")) {
+    Ok(config)
+}
+
+fn apply_runtime_env_overrides<FEnv>(
+    config: &mut Config,
+    env_lookup: &FEnv,
+) -> Result<(), ConfigError>
+where
+    FEnv: Fn(&str) -> Option<String>,
+{
+    if let Some(url) = env_with_legacy(env_lookup, "BUDDY_BASE_URL", "AGENT_BASE_URL") {
         config.api.base_url = url;
     }
-    if let Ok(model) = std::env::var("BUDDY_MODEL").or_else(|_| std::env::var("AGENT_MODEL")) {
+    if let Some(model) = env_with_legacy(env_lookup, "BUDDY_MODEL", "AGENT_MODEL") {
         config.api.model = model;
     }
-    if let Ok(timeout) =
-        std::env::var("BUDDY_API_TIMEOUT_SECS").or_else(|_| std::env::var("AGENT_API_TIMEOUT_SECS"))
+    if let Some(timeout) =
+        env_with_legacy(env_lookup, "BUDDY_API_TIMEOUT_SECS", "AGENT_API_TIMEOUT_SECS")
     {
         let parsed = timeout.parse::<u64>().map_err(|_| {
             ConfigError::Invalid(format!(
@@ -429,8 +543,8 @@ pub fn load_config_with_diagnostics(path_override: Option<&str>) -> Result<Loade
         })?;
         config.network.api_timeout_secs = parsed.max(1);
     }
-    if let Ok(timeout) = std::env::var("BUDDY_FETCH_TIMEOUT_SECS")
-        .or_else(|_| std::env::var("AGENT_FETCH_TIMEOUT_SECS"))
+    if let Some(timeout) =
+        env_with_legacy(env_lookup, "BUDDY_FETCH_TIMEOUT_SECS", "AGENT_FETCH_TIMEOUT_SECS")
     {
         let parsed = timeout.parse::<u64>().map_err(|_| {
             ConfigError::Invalid(format!(
@@ -439,107 +553,74 @@ pub fn load_config_with_diagnostics(path_override: Option<&str>) -> Result<Loade
         })?;
         config.network.fetch_timeout_secs = parsed.max(1);
     }
-
-    collect_legacy_env_warnings(&mut diagnostics);
-    dedupe_diagnostics(&mut diagnostics);
-
-    Ok(LoadedConfig {
-        config,
-        diagnostics,
-    })
+    Ok(())
 }
 
-fn read_config_text(path_override: Option<&str>) -> Result<(String, ConfigSource), ConfigError> {
-    if let Some(p) = path_override {
-        let path = PathBuf::from(p);
-        let text = std::fs::read_to_string(&path)?;
-        return Ok((text, ConfigSource::Explicit(path)));
-    }
-
-    if let Ok(text) = std::fs::read_to_string("buddy.toml") {
-        return Ok((text, ConfigSource::LocalBuddy));
-    }
-    if let Ok(text) = std::fs::read_to_string("agent.toml") {
-        return Ok((text, ConfigSource::LocalLegacyAgent));
-    }
-    if let Some(dir) = config_root_dir() {
-        let buddy_global = dir.join("buddy").join("buddy.toml");
-        if let Ok(text) = std::fs::read_to_string(&buddy_global) {
-            return Ok((text, ConfigSource::GlobalBuddy));
-        }
-        let legacy_global = dir.join("agent").join("agent.toml");
-        if let Ok(text) = std::fs::read_to_string(&legacy_global) {
-            return Ok((text, ConfigSource::GlobalLegacyAgent(legacy_global)));
-        }
-    }
-
-    Ok((String::new(), ConfigSource::BuiltInDefaults))
+fn env_with_legacy<FEnv>(env_lookup: &FEnv, canonical: &str, legacy: &str) -> Option<String>
+where
+    FEnv: Fn(&str) -> Option<String>,
+{
+    env_lookup(canonical).or_else(|| env_lookup(legacy))
 }
 
-fn collect_legacy_source_warnings(source: &ConfigSource, diagnostics: &mut ConfigDiagnostics) {
-    match source {
-        ConfigSource::Explicit(path) => {
-            if path.file_name().is_some_and(|name| name == "agent.toml") {
-                diagnostics.deprecations.push(format!(
-                    "Config file `{}` uses deprecated `agent.toml` naming; rename to `buddy.toml` (legacy support will be removed after v0.4).",
-                    path.display()
-                ));
-            }
-        }
-        ConfigSource::LocalLegacyAgent => diagnostics.deprecations.push(
-            "Using local `./agent.toml`; rename to `./buddy.toml` (legacy support will be removed after v0.4)."
-                .to_string(),
-        ),
-        ConfigSource::GlobalLegacyAgent(path) => diagnostics.deprecations.push(format!(
-            "Using deprecated global config `{}`; move it to `~/.config/buddy/buddy.toml` (legacy support will be removed after v0.4).",
-            path.display()
-        )),
-        ConfigSource::LocalBuddy
-        | ConfigSource::GlobalBuddy
-        | ConfigSource::BuiltInDefaults => {}
-    }
+fn api_key_override_with<FEnv>(env_lookup: &FEnv) -> Option<String>
+where
+    FEnv: Fn(&str) -> Option<String>,
+{
+    env_with_legacy(env_lookup, "BUDDY_API_KEY", "AGENT_API_KEY")
 }
 
-fn collect_legacy_env_warnings(diagnostics: &mut ConfigDiagnostics) {
+fn collect_legacy_env_warnings<FEnv>(diagnostics: &mut ConfigDiagnostics, env_lookup: &FEnv)
+where
+    FEnv: Fn(&str) -> Option<String>,
+{
     add_legacy_env_warning(
         diagnostics,
+        env_lookup,
         "BUDDY_API_KEY",
         "AGENT_API_KEY",
         "Use BUDDY_API_KEY instead (legacy support removed after v0.4).",
     );
     add_legacy_env_warning(
         diagnostics,
+        env_lookup,
         "BUDDY_BASE_URL",
         "AGENT_BASE_URL",
         "Use BUDDY_BASE_URL instead (legacy support removed after v0.4).",
     );
     add_legacy_env_warning(
         diagnostics,
+        env_lookup,
         "BUDDY_MODEL",
         "AGENT_MODEL",
         "Use BUDDY_MODEL instead (legacy support removed after v0.4).",
     );
     add_legacy_env_warning(
         diagnostics,
+        env_lookup,
         "BUDDY_API_TIMEOUT_SECS",
         "AGENT_API_TIMEOUT_SECS",
         "Use BUDDY_API_TIMEOUT_SECS instead (legacy support removed after v0.4).",
     );
     add_legacy_env_warning(
         diagnostics,
+        env_lookup,
         "BUDDY_FETCH_TIMEOUT_SECS",
         "AGENT_FETCH_TIMEOUT_SECS",
         "Use BUDDY_FETCH_TIMEOUT_SECS instead (legacy support removed after v0.4).",
     );
 }
 
-fn add_legacy_env_warning(
+fn add_legacy_env_warning<FEnv>(
     diagnostics: &mut ConfigDiagnostics,
+    env_lookup: &FEnv,
     canonical: &str,
     legacy: &str,
     guidance: &str,
-) {
-    if std::env::var_os(canonical).is_none() && std::env::var_os(legacy).is_some() {
+) where
+    FEnv: Fn(&str) -> Option<String>,
+{
+    if env_lookup(canonical).is_none() && env_lookup(legacy).is_some() {
         diagnostics
             .deprecations
             .push(format!("Detected deprecated env var `{legacy}`. {guidance}"));
@@ -712,9 +793,7 @@ fn timestamped_backup_path(path: &Path) -> PathBuf {
 }
 
 fn api_key_override_env() -> Option<String> {
-    std::env::var("BUDDY_API_KEY")
-        .or_else(|_| std::env::var("AGENT_API_KEY"))
-        .ok()
+    api_key_override_with(&|name| std::env::var(name).ok())
 }
 
 fn default_models_map() -> BTreeMap<String, ModelConfig> {
@@ -897,6 +976,7 @@ pub fn config_root_dir() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn defaults_are_sensible() {
@@ -1310,42 +1390,139 @@ mod tests {
         std::fs::remove_dir_all(&tmp_root).unwrap();
     }
 
-    fn parse_file_config_for_test(toml_text: &str) -> Result<Config, ConfigError> {
-        let mut parsed: FileConfig = toml::from_str(toml_text)?;
-        if parsed.models.is_empty() {
-            if let Some(legacy_api) = parsed.api.take() {
-                parsed.models.insert(
-                    DEFAULT_MODEL_PROFILE_NAME.to_string(),
-                    legacy_api.into_model_config(),
-                );
-            } else {
-                parsed.models = default_models_map();
-            }
-        }
-        if normalized_string(&parsed.agent.model).is_none() {
-            parsed.agent.model = parsed
-                .models
-                .keys()
-                .next()
-                .cloned()
-                .unwrap_or_else(|| DEFAULT_MODEL_PROFILE_NAME.to_string());
-        }
+    #[test]
+    fn injected_sources_prefer_local_buddy_toml_over_global() {
+        let mut files = BTreeMap::<String, String>::new();
+        files.insert(
+            "buddy.toml".to_string(),
+            r#"
+            [models.local]
+            model = "local-model"
+            api_base_url = "https://local.example/v1"
 
-        let api = resolve_active_api_with(
-            &parsed.models,
-            &parsed.agent.model,
+            [agent]
+            model = "local"
+            "#
+            .to_string(),
+        );
+        files.insert(
+            "/cfg/buddy/buddy.toml".to_string(),
+            r#"
+            [models.global]
+            model = "global-model"
+
+            [agent]
+            model = "global"
+            "#
+            .to_string(),
+        );
+
+        let loaded = load_config_with_sources_for_test(
+            None,
+            files,
+            BTreeMap::new(),
+            Some(PathBuf::from("/cfg")),
+        )
+        .unwrap();
+
+        assert_eq!(loaded.config.agent.model, "local");
+        assert_eq!(loaded.config.api.model, "local-model");
+        assert_eq!(loaded.config.api.base_url, "https://local.example/v1");
+    }
+
+    #[test]
+    fn injected_sources_apply_env_overrides() {
+        let mut files = BTreeMap::<String, String>::new();
+        files.insert(
+            "buddy.toml".to_string(),
+            r#"
+            [models.gpt-codex]
+            api_base_url = "https://api.openai.com/v1"
+            model = "gpt-5.3-codex"
+
+            [agent]
+            model = "gpt-codex"
+            "#
+            .to_string(),
+        );
+
+        let mut env = BTreeMap::<String, String>::new();
+        env.insert(
+            "BUDDY_BASE_URL".to_string(),
+            "https://override.example/v1".to_string(),
+        );
+        env.insert("BUDDY_MODEL".to_string(), "override-model".to_string());
+        env.insert("BUDDY_API_TIMEOUT_SECS".to_string(), "9".to_string());
+        env.insert("BUDDY_FETCH_TIMEOUT_SECS".to_string(), "3".to_string());
+
+        let loaded =
+            load_config_with_sources_for_test(None, files, env, Some(PathBuf::from("/cfg")))
+                .unwrap();
+
+        assert_eq!(loaded.config.api.base_url, "https://override.example/v1");
+        assert_eq!(loaded.config.api.model, "override-model");
+        assert_eq!(loaded.config.network.api_timeout_secs, 9);
+        assert_eq!(loaded.config.network.fetch_timeout_secs, 3);
+    }
+
+    #[test]
+    fn injected_sources_warn_for_legacy_env_aliases() {
+        let mut files = BTreeMap::<String, String>::new();
+        files.insert(
+            "buddy.toml".to_string(),
+            r#"
+            [models.gpt-codex]
+            model = "gpt-5.3-codex"
+
+            [agent]
+            model = "gpt-codex"
+            "#
+            .to_string(),
+        );
+        let mut env = BTreeMap::<String, String>::new();
+        env.insert("AGENT_MODEL".to_string(), "legacy-model".to_string());
+
+        let loaded =
+            load_config_with_sources_for_test(None, files, env, Some(PathBuf::from("/cfg")))
+                .unwrap();
+
+        assert_eq!(loaded.config.api.model, "legacy-model");
+        assert!(loaded
+            .diagnostics
+            .deprecations
+            .iter()
+            .any(|msg| msg.contains("AGENT_MODEL")));
+    }
+
+    fn load_config_with_sources_for_test(
+        path_override: Option<&str>,
+        files: BTreeMap<String, String>,
+        env: BTreeMap<String, String>,
+        config_root: Option<PathBuf>,
+    ) -> Result<LoadedConfig, ConfigError> {
+        load_config_with_diagnostics_from_sources(
+            path_override,
+            move |path| {
+                let key = path.to_string_lossy().into_owned();
+                files
+                    .get(&key)
+                    .cloned()
+                    .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, key))
+            },
+            move |name| env.get(name).cloned(),
+            move || config_root.clone(),
+        )
+    }
+
+    fn parse_file_config_for_test(toml_text: &str) -> Result<Config, ConfigError> {
+        let parsed: FileConfig = toml::from_str(toml_text)?;
+        let mut diagnostics = ConfigDiagnostics::default();
+        resolve_config_from_file_config(
+            parsed,
             None,
             |_| None,
             |_| Ok(String::new()),
-        )?;
-
-        Ok(Config {
-            api,
-            models: parsed.models,
-            agent: parsed.agent,
-            tools: parsed.tools,
-            network: parsed.network,
-            display: parsed.display,
-        })
+            &mut diagnostics,
+        )
     }
 }
