@@ -16,6 +16,16 @@ Usable as both a standalone CLI binary and a Rust library crate.
   - [OpenRouter](https://openrouter.ai/) — multi-model gateway
   - [LM Studio](https://lmstudio.ai/), [vLLM](https://vllm.ai/), or any server implementing OpenAI-compatible `/v1/chat/completions` or `/v1/responses`
 
+## Models
+
+Buddy supports most models that implement the OpenAI completions or responses APIs, and provides a broad set of common tools. We've explicitly tested with the models listed in `src/templates/buddy.toml`.
+
+- `gpt-5.3-codex` on [OpenAI](https://platform.openai.com/)
+- `gpt-5.3-codex-spark` on [OpenAI](https://platform.openai.com/)
+- `kimi-k2.5` on [Moonshot AI](https://www.moonshot.ai/)
+- `deepseek-v3.2` on [OpenRouter](https://openrouter.ai/)
+- `glm-5` on [OpenRouter](https://openrouter.ai/)
+
 ## Quickstart
 
 **1. Build**
@@ -41,7 +51,7 @@ $EDITOR ~/.config/buddy/buddy.toml
 **3. Run**
 
 ```bash
-# Optiona: If you're not using API keys, e.g., OpenAI user login
+# Optional: If you're not using API keys, e.g., OpenAI user login
 buddy login
 
 # Interactive mode on local machine, this creates a tmux session named buddy-...
