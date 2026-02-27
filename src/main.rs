@@ -5,14 +5,14 @@ mod cli_event_renderer;
 
 use buddy::agent::Agent;
 use buddy::auth::{
-    complete_openai_device_login, login_provider_key_for_base_url, provider_login_health,
-    reset_provider_tokens, save_provider_tokens, start_openai_device_login, supports_openai_login,
-    try_open_browser,
+    complete_openai_device_login, has_legacy_profile_token_records,
+    login_provider_key_for_base_url, provider_login_health, reset_provider_tokens,
+    save_provider_tokens, start_openai_device_login, supports_openai_login, try_open_browser,
 };
 use buddy::config::default_history_path;
 use buddy::config::ensure_default_global_config;
 use buddy::config::initialize_default_global_config;
-use buddy::config::load_config;
+use buddy::config::load_config_with_diagnostics;
 use buddy::config::select_model_profile;
 use buddy::config::{AuthMode, Config, GlobalConfigInitResult, ToolsConfig};
 use buddy::preflight::validate_active_profile_ready;
@@ -23,7 +23,7 @@ use buddy::runtime::{
     ApprovalDecision as RuntimeApprovalDecision, BuddyRuntimeHandle, ModelEvent, PromptMetadata,
     RuntimeApprovalPolicy, RuntimeCommand, RuntimeEvent, RuntimeEventEnvelope, TaskEvent,
 };
-use buddy::session::{SessionStore, SessionSummary};
+use buddy::session::{default_uses_legacy_root, SessionStore, SessionSummary};
 use buddy::textutil::truncate_with_suffix_by_chars;
 use buddy::tokens::TokenTracker;
 use buddy::tools::capture_pane::CapturePaneTool;
@@ -85,14 +85,16 @@ async fn main() {
         eprintln!("warning: failed to initialize ~/.config/buddy/buddy.toml: {e}");
     }
 
-    // Load config.
-    let mut config = match load_config(args.config.as_deref()) {
+    // Load config + compatibility diagnostics.
+    let loaded_config = match load_config_with_diagnostics(args.config.as_deref()) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("error: {e}");
             std::process::exit(1);
         }
     };
+    let mut config = loaded_config.config;
+    let mut compatibility_warnings = loaded_config.diagnostics.deprecations;
 
     // Apply CLI overrides.
     if let Some(model) = &args.model {
@@ -115,6 +117,18 @@ async fn main() {
     }
 
     let renderer = Renderer::new(config.display.color);
+    for warning in compatibility_warnings.drain(..) {
+        renderer.warn(&warning);
+    }
+    match has_legacy_profile_token_records() {
+        Ok(true) => renderer.warn(
+            "Auth store uses deprecated profile-scoped login records; run `buddy login` to migrate to provider-scoped records before v0.4.",
+        ),
+        Ok(false) => {}
+        Err(err) => renderer.warn(&format!(
+            "failed to inspect auth store for legacy credentials: {err}"
+        )),
+    }
 
     let resume_request = match resume_request_from_command(args.command.as_ref()) {
         Ok(request) => request,
@@ -329,6 +343,11 @@ async fn main() {
         }
     } else {
         // Interactive REPL.
+        if default_uses_legacy_root() {
+            renderer.warn(
+                "Using deprecated `.agentx/` session root; migrate to `.buddyx/` before legacy support is removed after v0.4.",
+            );
+        }
         let session_store = match SessionStore::open_default() {
             Ok(store) => store,
             Err(e) => {

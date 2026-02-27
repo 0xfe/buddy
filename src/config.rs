@@ -324,33 +324,50 @@ impl LegacyApiConfig {
 // Loading
 // ---------------------------------------------------------------------------
 
+/// Diagnostics captured while resolving runtime configuration.
+#[derive(Debug, Clone, Default)]
+pub struct ConfigDiagnostics {
+    /// Legacy compatibility paths currently in use.
+    pub deprecations: Vec<String>,
+}
+
+/// Configuration payload plus load-time diagnostics.
+#[derive(Debug, Clone)]
+pub struct LoadedConfig {
+    pub config: Config,
+    pub diagnostics: ConfigDiagnostics,
+}
+
+#[derive(Debug, Clone)]
+enum ConfigSource {
+    Explicit(PathBuf),
+    LocalBuddy,
+    LocalLegacyAgent,
+    GlobalBuddy,
+    GlobalLegacyAgent(PathBuf),
+    BuiltInDefaults,
+}
+
 /// Load configuration from disk and environment.
 ///
 /// `path_override` is an explicit config file path (from --config flag).
 pub fn load_config(path_override: Option<&str>) -> Result<Config, ConfigError> {
-    let config_text = if let Some(p) = path_override {
-        // Explicit path — fail if it doesn't exist.
-        std::fs::read_to_string(p)?
-    } else if let Ok(text) = std::fs::read_to_string("buddy.toml") {
-        text
-    } else if let Ok(text) = std::fs::read_to_string("agent.toml") {
-        text
-    } else if let Some(dir) = config_root_dir() {
-        let buddy_global = dir.join("buddy").join("buddy.toml");
-        if let Ok(text) = std::fs::read_to_string(&buddy_global) {
-            text
-        } else {
-            let legacy_global = dir.join("agent").join("agent.toml");
-            std::fs::read_to_string(legacy_global).unwrap_or_default()
-        }
-    } else {
-        String::new()
-    };
+    Ok(load_config_with_diagnostics(path_override)?.config)
+}
 
+/// Load configuration and return compatibility diagnostics.
+pub fn load_config_with_diagnostics(path_override: Option<&str>) -> Result<LoadedConfig, ConfigError> {
+    let (config_text, source) = read_config_text(path_override)?;
+    let mut diagnostics = ConfigDiagnostics::default();
+    collect_legacy_source_warnings(&source, &mut diagnostics);
     let mut parsed: FileConfig = toml::from_str(&config_text)?;
 
     if parsed.models.is_empty() {
         if let Some(legacy_api) = parsed.api.take() {
+            diagnostics.deprecations.push(
+                "Config uses deprecated `[api]`; migrate to `[models.<name>]` + `agent.model` (legacy support will be removed after v0.4)."
+                    .to_string(),
+            );
             parsed.models.insert(
                 DEFAULT_MODEL_PROFILE_NAME.to_string(),
                 legacy_api.into_model_config(),
@@ -423,7 +440,115 @@ pub fn load_config(path_override: Option<&str>) -> Result<Config, ConfigError> {
         config.network.fetch_timeout_secs = parsed.max(1);
     }
 
-    Ok(config)
+    collect_legacy_env_warnings(&mut diagnostics);
+    dedupe_diagnostics(&mut diagnostics);
+
+    Ok(LoadedConfig {
+        config,
+        diagnostics,
+    })
+}
+
+fn read_config_text(path_override: Option<&str>) -> Result<(String, ConfigSource), ConfigError> {
+    if let Some(p) = path_override {
+        let path = PathBuf::from(p);
+        let text = std::fs::read_to_string(&path)?;
+        return Ok((text, ConfigSource::Explicit(path)));
+    }
+
+    if let Ok(text) = std::fs::read_to_string("buddy.toml") {
+        return Ok((text, ConfigSource::LocalBuddy));
+    }
+    if let Ok(text) = std::fs::read_to_string("agent.toml") {
+        return Ok((text, ConfigSource::LocalLegacyAgent));
+    }
+    if let Some(dir) = config_root_dir() {
+        let buddy_global = dir.join("buddy").join("buddy.toml");
+        if let Ok(text) = std::fs::read_to_string(&buddy_global) {
+            return Ok((text, ConfigSource::GlobalBuddy));
+        }
+        let legacy_global = dir.join("agent").join("agent.toml");
+        if let Ok(text) = std::fs::read_to_string(&legacy_global) {
+            return Ok((text, ConfigSource::GlobalLegacyAgent(legacy_global)));
+        }
+    }
+
+    Ok((String::new(), ConfigSource::BuiltInDefaults))
+}
+
+fn collect_legacy_source_warnings(source: &ConfigSource, diagnostics: &mut ConfigDiagnostics) {
+    match source {
+        ConfigSource::Explicit(path) => {
+            if path.file_name().is_some_and(|name| name == "agent.toml") {
+                diagnostics.deprecations.push(format!(
+                    "Config file `{}` uses deprecated `agent.toml` naming; rename to `buddy.toml` (legacy support will be removed after v0.4).",
+                    path.display()
+                ));
+            }
+        }
+        ConfigSource::LocalLegacyAgent => diagnostics.deprecations.push(
+            "Using local `./agent.toml`; rename to `./buddy.toml` (legacy support will be removed after v0.4)."
+                .to_string(),
+        ),
+        ConfigSource::GlobalLegacyAgent(path) => diagnostics.deprecations.push(format!(
+            "Using deprecated global config `{}`; move it to `~/.config/buddy/buddy.toml` (legacy support will be removed after v0.4).",
+            path.display()
+        )),
+        ConfigSource::LocalBuddy
+        | ConfigSource::GlobalBuddy
+        | ConfigSource::BuiltInDefaults => {}
+    }
+}
+
+fn collect_legacy_env_warnings(diagnostics: &mut ConfigDiagnostics) {
+    add_legacy_env_warning(
+        diagnostics,
+        "BUDDY_API_KEY",
+        "AGENT_API_KEY",
+        "Use BUDDY_API_KEY instead (legacy support removed after v0.4).",
+    );
+    add_legacy_env_warning(
+        diagnostics,
+        "BUDDY_BASE_URL",
+        "AGENT_BASE_URL",
+        "Use BUDDY_BASE_URL instead (legacy support removed after v0.4).",
+    );
+    add_legacy_env_warning(
+        diagnostics,
+        "BUDDY_MODEL",
+        "AGENT_MODEL",
+        "Use BUDDY_MODEL instead (legacy support removed after v0.4).",
+    );
+    add_legacy_env_warning(
+        diagnostics,
+        "BUDDY_API_TIMEOUT_SECS",
+        "AGENT_API_TIMEOUT_SECS",
+        "Use BUDDY_API_TIMEOUT_SECS instead (legacy support removed after v0.4).",
+    );
+    add_legacy_env_warning(
+        diagnostics,
+        "BUDDY_FETCH_TIMEOUT_SECS",
+        "AGENT_FETCH_TIMEOUT_SECS",
+        "Use BUDDY_FETCH_TIMEOUT_SECS instead (legacy support removed after v0.4).",
+    );
+}
+
+fn add_legacy_env_warning(
+    diagnostics: &mut ConfigDiagnostics,
+    canonical: &str,
+    legacy: &str,
+    guidance: &str,
+) {
+    if std::env::var_os(canonical).is_none() && std::env::var_os(legacy).is_some() {
+        diagnostics
+            .deprecations
+            .push(format!("Detected deprecated env var `{legacy}`. {guidance}"));
+    }
+}
+
+fn dedupe_diagnostics(diagnostics: &mut ConfigDiagnostics) {
+    diagnostics.deprecations.sort();
+    diagnostics.deprecations.dedup();
 }
 
 /// Return the default per-user config path (`~/.config/buddy/buddy.toml`).
@@ -1111,6 +1236,77 @@ mod tests {
 
         std::fs::remove_file(&path).unwrap();
         std::fs::remove_file(&backup_path).unwrap();
+        std::fs::remove_dir_all(&tmp_root).unwrap();
+    }
+
+    #[test]
+    fn diagnostics_warn_for_explicit_legacy_agent_toml_path() {
+        let tmp_root = std::env::temp_dir().join(format!(
+            "buddy-config-diag-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp_root).unwrap();
+        let path = tmp_root.join("agent.toml");
+        std::fs::write(
+            &path,
+            r#"
+            [models.gpt-codex]
+            model = "gpt-5.3-codex"
+
+            [agent]
+            model = "gpt-codex"
+            "#,
+        )
+        .unwrap();
+
+        let loaded = load_config_with_diagnostics(Some(path.to_string_lossy().as_ref())).unwrap();
+        assert!(loaded
+            .diagnostics
+            .deprecations
+            .iter()
+            .any(|msg| msg.contains("agent.toml")));
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir_all(&tmp_root).unwrap();
+    }
+
+    #[test]
+    fn diagnostics_warn_when_legacy_api_section_is_used() {
+        let tmp_root = std::env::temp_dir().join(format!(
+            "buddy-config-diag-api-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp_root).unwrap();
+        let path = tmp_root.join("buddy.toml");
+        std::fs::write(
+            &path,
+            r#"
+            [api]
+            base_url = "https://api.openai.com/v1"
+            model = "gpt-5.3-codex"
+
+            [agent]
+            model = "gpt-codex"
+            "#,
+        )
+        .unwrap();
+
+        let loaded = load_config_with_diagnostics(Some(path.to_string_lossy().as_ref())).unwrap();
+        assert!(loaded
+            .diagnostics
+            .deprecations
+            .iter()
+            .any(|msg| msg.contains("deprecated `[api]`")));
+
+        std::fs::remove_file(&path).unwrap();
         std::fs::remove_dir_all(&tmp_root).unwrap();
     }
 

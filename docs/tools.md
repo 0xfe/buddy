@@ -343,15 +343,23 @@ single abstraction supports multiple execution backends transparently.
 
 ### Backends
 
+`ExecutionContext` now stores an internal trait object:
+
 ```rust
-enum ExecutionBackend {
-    Local,
-    LocalTmux(LocalTmuxContext),
-    Container(ContainerContext),  // docker/podman exec
-    ContainerTmux(ContainerTmuxContext), // docker/podman exec + tmux
-    Ssh(SshContext),              // SSH ControlMaster + tmux
-}
+Arc<dyn ExecutionBackendOps>
 ```
+
+Concrete backend implementations currently include:
+
+- `LocalBackend`
+- `LocalTmuxContext`
+- `ContainerContext` (docker/podman exec)
+- `ContainerTmuxContext` (container exec + tmux)
+- `SshContext` (SSH ControlMaster + tmux)
+
+Shared command-oriented behavior is factored through a `CommandBackend` trait so
+`read_file`/`write_file` and shell command execution paths are not duplicated
+per backend.
 
 All tools accept an `ExecutionContext` at construction time. The REPL
 constructs the context based on CLI flags (`--container`, `--ssh`, `--tmux`) and passes

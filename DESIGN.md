@@ -67,6 +67,7 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
     - `api_timeout_secs` for model API requests.
     - `fetch_timeout_secs` for `fetch_url` requests.
   - Primary naming uses `BUDDY_*` env vars + `buddy.toml`, with legacy `AGENT_*` and `agent.toml` compatibility fallbacks.
+  - Startup emits one-time deprecation warnings when legacy config/env paths are used (`AGENT_*`, `agent.toml`, `[api]`, `.agentx`, legacy auth profile keys), with removal target after `v0.4`.
 - Built-in tool-calling agent loop:
   - Sends tool definitions to the model.
   - Executes returned tool calls.

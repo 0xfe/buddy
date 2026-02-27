@@ -108,6 +108,12 @@ cargo test
 
 Tests cover config parsing, API type serialization/deserialization, token estimation, and message constructors. All tests run offline (no network).
 
+Optional parser property tests (feature-gated):
+
+```bash
+cargo test --features fuzz-tests
+```
+
 Live provider/model regressions are in an explicit ignored suite:
 
 ```bash
@@ -211,6 +217,8 @@ Legacy compatibility:
 - `AGENT_API_KEY`, `AGENT_BASE_URL`, and `AGENT_MODEL` are still accepted.
 - `AGENT_API_TIMEOUT_SECS` and `AGENT_FETCH_TIMEOUT_SECS` are also accepted.
 - If `buddy.toml` is not present, `agent.toml` is still loaded.
+- Buddy prints one-time startup deprecation warnings when legacy paths are used (`AGENT_*`, `agent.toml`, `.agentx`, legacy auth profile records).
+- Legacy compatibility is scheduled for removal after `v0.4` (see [`docs/deprecations.md`](docs/deprecations.md)).
 
 ### Full config reference
 

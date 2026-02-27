@@ -17,6 +17,14 @@ const SESSION_FILE_VERSION: u32 = 1;
 const DEFAULT_SESSION_ROOT: &str = ".buddyx";
 const LEGACY_SESSION_ROOT: &str = ".agentx";
 
+/// True when default-open logic will resolve to the legacy `.agentx` root.
+///
+/// This is used to surface a one-time migration warning in the CLI startup
+/// path without changing storage behavior.
+pub fn default_uses_legacy_root() -> bool {
+    !Path::new(DEFAULT_SESSION_ROOT).exists() && Path::new(LEGACY_SESSION_ROOT).exists()
+}
+
 /// Lightweight listing metadata shown by `/session`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionSummary {
@@ -48,7 +56,7 @@ impl SessionStore {
         if Path::new(DEFAULT_SESSION_ROOT).exists() {
             return Self::open(DEFAULT_SESSION_ROOT);
         }
-        if Path::new(LEGACY_SESSION_ROOT).exists() {
+        if default_uses_legacy_root() {
             return Self::open(LEGACY_SESSION_ROOT);
         }
         Self::open(DEFAULT_SESSION_ROOT)

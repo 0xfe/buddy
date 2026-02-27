@@ -209,6 +209,19 @@ pub fn load_provider_tokens(provider: &str) -> Result<Option<OAuthTokens>, AuthE
     Ok(resolve_provider_tokens(&store, provider))
 }
 
+/// True when the auth store still contains legacy profile-scoped records.
+///
+/// Buddy now stores login credentials under `providers.<name>`. Legacy
+/// `profiles.<name>` entries still work for compatibility, but should be
+/// migrated by re-running `buddy login`.
+pub fn has_legacy_profile_token_records() -> Result<bool, AuthError> {
+    let Some(path) = default_auth_store_path() else {
+        return Ok(false);
+    };
+    let store = load_store(&path)?;
+    Ok(!store.profiles.is_empty())
+}
+
 /// Save tokens for a provider.
 pub fn save_provider_tokens(provider: &str, tokens: OAuthTokens) -> Result<(), AuthError> {
     let Some(path) = default_auth_store_path() else {
