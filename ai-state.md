@@ -300,7 +300,8 @@
 - Reasoning trace display added:
   - `src/agent.rs` now detects provider fields containing `reasoning` / `thinking` / `thought` in assistant message `extra`.
   - Matching fields are rendered to stderr via `Renderer::reasoning_trace(...)`.
-  - Works for string and JSON reasoning payloads (JSON shown pretty-printed).
+  - Rendering now extracts text-only reasoning content; null and metadata-only JSON payloads are suppressed.
+  - Empty assistant turns are sanitized before request dispatch to avoid strict-provider follow-up failures.
 
 - REPL wrapping fix:
   - `src/tui/input.rs` + `src/tui/input_layout.rs` track visual rows (soft wraps + explicit newlines), not just newline count.
@@ -331,3 +332,4 @@
 
 - `cargo fmt`
 - `cargo test` (currently passing all unit + doc tests)
+- `cargo test --test model_regression -- --ignored --nocapture` (explicit live-network regression suite; not run by default)

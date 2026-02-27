@@ -102,7 +102,7 @@ Type `/` to open slash-command autocomplete.
 Use `↑`/`↓` for history, and `Alt+Enter` to insert a newline without submitting.
 Common editing shortcuts are supported (`Ctrl-A`, `Ctrl-E`, `Ctrl-B`, `Ctrl-F`, `Ctrl-K`, `Ctrl-U`, `Ctrl-W`).
 In interactive mode, prompts run as background tasks so the REPL remains available; use `/ps` and `/kill <id>` to inspect/cancel active tasks.
-If a background task reaches a shell confirmation point, input is interrupted and the confirmation is brought to the foreground as a one-line inline approval prompt (`user@host$ <command> -- approve?`).
+If a background task reaches a shell confirmation point, input is interrupted and the confirmation is brought to the foreground as a stable multi-line approval block (command preview + `approve? [y/n]` prompt).
 Background task activity (reasoning traces and tool results) is forwarded to the foreground loop and rendered cleanly without breaking keyboard input.
 A live liveness line (task state) is rendered above the prompt while background tasks are active.
 When running in a tmux-backed execution target, use `run_shell` with `wait: false` to dispatch long-running/interactive commands, then poll with `capture-pane`. Use `send-keys` for control input (for example Ctrl-C, Ctrl-Z, Enter, arrows) when interacting with full-screen TUIs or stuck jobs.
@@ -141,6 +141,14 @@ cargo test
 ```
 
 Tests cover config parsing, API type serialization/deserialization, token estimation, and message constructors. All tests run offline (no network).
+
+Live provider/model regressions are in an explicit ignored suite:
+
+```bash
+cargo test --test model_regression -- --ignored --nocapture
+```
+
+See [`docs/model-regression-tests.md`](docs/model-regression-tests.md) for setup and auth requirements.
 
 **Run from source**
 

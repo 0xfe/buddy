@@ -84,7 +84,7 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
   - Background prompt execution with task IDs, `/ps` listing, cooperative `/kill <id>` cancellation, per-task `/timeout <duration> [id]`, and command gating while tasks are active.
   - Session approval policy control via `/approve ask|all|none|<duration>`, including expiring auto-approve windows.
   - Background shell-confirmation handoff: when `run_shell` needs approval, the REPL input is interrupted and approval is rendered in the foreground.
-  - One-line approval prompt format (`user@host$ <command> -- approve?`) with colorized actor/command/action segments.
+  - Approval UX renders as a stable multi-line block: execution target line, tinted command block, then a compact `approve? [y/n]` prompt.
   - Inline liveness line while background tasks run (task runtime/state), rendered above the input prompt.
   - Persistent session IDs under `.buddyx/sessions` with `/session` list + resume/create flows (`/session resume <session-id|last>`, `/session new`) and CLI resume (`buddy resume <session-id>`, `buddy resume --last`), ordered by last use, with legacy `.agentx` auto-reuse when present.
 - Terminal UX and observability:
@@ -101,6 +101,8 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
 - Provider compatibility hardening:
   - Unknown message fields are preserved and round-tripped for providers that require extra metadata during tool-use turns.
   - Assistant messages with tool calls preserve compatible null content behavior.
+  - Empty/null assistant turns are sanitized out of request history before dispatch so strict providers (for example Moonshot/Kimi) do not reject follow-up turns.
+  - Reasoning traces only render textual reasoning content; null/metadata-only reasoning payloads are suppressed.
 
 ## Module details
 
