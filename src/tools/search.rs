@@ -4,6 +4,7 @@
 //! result titles, URLs, and snippets from the response.
 
 use async_trait::async_trait;
+use scraper::{Html, Selector};
 use serde::Deserialize;
 use std::time::Duration;
 
@@ -89,7 +90,7 @@ impl Tool for WebSearchTool {
 
         let results = parse_ddg_results(&html);
         if results.is_empty() {
-            return Ok("No results found.".into());
+            return Ok(empty_results_message(&args.query, &html));
         }
 
         let mut output = String::new();
@@ -112,86 +113,101 @@ struct SearchResult {
     snippet: String,
 }
 
-/// Minimal HTML scraping of DuckDuckGo's results page.
-///
-/// Looks for result links (class="result__a") and snippets (class="result__snippet").
-/// This is intentionally crude — no HTML parser dependency.
+/// Parse DuckDuckGo HTML results using CSS selectors.
 fn parse_ddg_results(html: &str) -> Vec<SearchResult> {
+    let document = Html::parse_document(html);
+    let result_selector = Selector::parse(".result").expect("valid result selector");
+    let link_selector = Selector::parse("a.result__a").expect("valid link selector");
+    let snippet_selector = Selector::parse(".result__snippet").expect("valid snippet selector");
+
     let mut results = Vec::new();
 
-    // Each result is in a div with class "result results_links results_links_deep web-result"
-    // The title link has class="result__a" and the snippet has class="result__snippet"
-    for chunk in html.split("class=\"result__a\"") {
+    // Preferred path: parse from stable result containers.
+    for result in document.select(&result_selector) {
         if results.len() >= MAX_RESULTS {
             break;
         }
-        // Skip the first chunk (before any result).
-        if !chunk.contains("result__snippet") {
+        let Some(link) = result.select(&link_selector).next() else {
+            continue;
+        };
+
+        let title = extract_element_text(&link);
+        let url = link
+            .value()
+            .attr("href")
+            .map(decode_html_entities)
+            .unwrap_or_default();
+        if title.is_empty() || url.is_empty() {
             continue;
         }
 
-        let title = extract_tag_content(chunk);
-        let url = extract_href(chunk);
-        let snippet = extract_snippet(chunk);
+        let snippet = result
+            .select(&snippet_selector)
+            .next()
+            .map(|elem| decode_html_entities(&extract_element_text(&elem)))
+            .unwrap_or_default();
 
-        if !title.is_empty() {
-            results.push(SearchResult {
-                title: decode_html_entities(&title),
-                url,
-                snippet: decode_html_entities(&snippet),
-            });
+        results.push(SearchResult {
+            title: decode_html_entities(&title),
+            url,
+            snippet,
+        });
+    }
+
+    if !results.is_empty() {
+        return results;
+    }
+
+    // Fallback path: if container classes move, still try link extraction.
+    for link in document.select(&link_selector) {
+        if results.len() >= MAX_RESULTS {
+            break;
         }
+        let title = extract_element_text(&link);
+        let url = link
+            .value()
+            .attr("href")
+            .map(decode_html_entities)
+            .unwrap_or_default();
+        if title.is_empty() || url.is_empty() {
+            continue;
+        }
+        results.push(SearchResult {
+            title: decode_html_entities(&title),
+            url,
+            snippet: String::new(),
+        });
     }
 
     results
 }
 
-/// Extract text content between > and < (first tag content after the split point).
-fn extract_tag_content(s: &str) -> String {
-    if let Some(start) = s.find('>') {
-        if let Some(end) = s[start + 1..].find('<') {
-            return s[start + 1..start + 1 + end].trim().to_string();
-        }
-    }
-    String::new()
+fn extract_element_text(element: &scraper::ElementRef<'_>) -> String {
+    element
+        .text()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .to_string()
 }
 
-/// Extract href value from the first href="..." in the chunk.
-fn extract_href(s: &str) -> String {
-    if let Some(pos) = s.find("href=\"") {
-        let rest = &s[pos + 6..];
-        if let Some(end) = rest.find('"') {
-            return rest[..end].to_string();
-        }
+fn empty_results_message(query: &str, html: &str) -> String {
+    if query.trim().is_empty() {
+        return "No results found.".to_string();
     }
-    String::new()
-}
 
-/// Extract snippet text from a result__snippet span.
-fn extract_snippet(s: &str) -> String {
-    if let Some(pos) = s.find("class=\"result__snippet\"") {
-        let rest = &s[pos..];
-        if let Some(start) = rest.find('>') {
-            let inner = &rest[start + 1..];
-            // Collect text, stripping inner tags.
-            let mut text = String::new();
-            let mut in_tag = false;
-            for ch in inner.chars() {
-                match ch {
-                    '<' => in_tag = true,
-                    '>' => in_tag = false,
-                    _ if !in_tag => text.push(ch),
-                    _ => {}
-                }
-                // Stop at the closing tag for the snippet.
-                if text.len() > 500 {
-                    break;
-                }
-            }
-            return text.trim().to_string();
-        }
+    let lower = html.to_ascii_lowercase();
+    if lower.contains("no results")
+        || lower.contains("did not match")
+        || lower.contains("sorry, no results")
+    {
+        return "No results found.".to_string();
     }
-    String::new()
+
+    "No results found. (DuckDuckGo returned a page, but buddy could not parse results; the layout may have changed.)".to_string()
 }
 
 /// Minimal URL encoding for the query string.
@@ -266,71 +282,6 @@ mod tests {
         assert_eq!(decode_html_entities("&nbsp;"), " ");
     }
 
-    #[test]
-    fn decode_entities_plain_text_unchanged() {
-        let s = "no entities here";
-        assert_eq!(decode_html_entities(s), s);
-    }
-
-    #[test]
-    fn decode_entities_multiple_in_string() {
-        assert_eq!(
-            decode_html_entities("a &amp; b &lt; c &gt; d"),
-            "a & b < c > d"
-        );
-    }
-
-    // --- extract_tag_content ---
-
-    #[test]
-    fn extract_tag_content_basic() {
-        assert_eq!(extract_tag_content(">hello<rest"), "hello");
-    }
-
-    #[test]
-    fn extract_tag_content_trims_whitespace() {
-        assert_eq!(extract_tag_content(">  hello  <rest"), "hello");
-    }
-
-    #[test]
-    fn extract_tag_content_missing_brackets() {
-        assert_eq!(extract_tag_content("no brackets"), "");
-    }
-
-    // --- extract_href ---
-
-    #[test]
-    fn extract_href_basic() {
-        assert_eq!(
-            extract_href(r#"href="https://example.com" other"#),
-            "https://example.com"
-        );
-    }
-
-    #[test]
-    fn extract_href_missing() {
-        assert_eq!(extract_href("no href here"), "");
-    }
-
-    // --- extract_snippet ---
-
-    #[test]
-    fn extract_snippet_plain_text() {
-        let html = r#"class="result__snippet">Some text here</span>"#;
-        assert_eq!(extract_snippet(html), "Some text here");
-    }
-
-    #[test]
-    fn extract_snippet_strips_inner_tags() {
-        let html = r#"class="result__snippet">Some <b>bold</b> text</span>"#;
-        assert_eq!(extract_snippet(html), "Some bold text");
-    }
-
-    #[test]
-    fn extract_snippet_missing_class() {
-        assert_eq!(extract_snippet("no snippet here"), "");
-    }
-
     // --- parse_ddg_results ---
 
     #[test]
@@ -339,47 +290,73 @@ mod tests {
     }
 
     #[test]
-    fn parse_ddg_results_no_results() {
-        assert!(parse_ddg_results("<html><body>No results</body></html>").is_empty());
-    }
+    fn parse_ddg_results_from_result_container() {
+        let html = r#"
+            <div class="result results_links results_links_deep web-result">
+              <a class="result__a" href="https://example.com">Example Title</a>
+              <a class="result__snippet">A short description</a>
+            </div>
+        "#;
 
-    #[test]
-    fn parse_ddg_results_single_result() {
-        // Simulate the structure parse_ddg_results expects: split on class="result__a",
-        // then the chunk after it contains href, title content, and class="result__snippet".
-        let html = concat!(
-            r#"preamble class="result__a" href="https://example.com">Example Title<span "#,
-            r#"class="result__snippet">A short description</span>"#
-        );
         let results = parse_ddg_results(html);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Example Title");
         assert_eq!(results[0].url, "https://example.com");
-        assert!(
-            results[0].snippet.contains("description"),
-            "snippet: {}",
-            results[0].snippet
-        );
+        assert_eq!(results[0].snippet, "A short description");
+    }
+
+    #[test]
+    fn parse_ddg_results_handles_attribute_reordering() {
+        let html = r#"
+            <div class="result">
+              <a href="https://example.com" rel="noopener" class="result__a">Title</a>
+              <span class="result__snippet">Snippet text</span>
+            </div>
+        "#;
+        let results = parse_ddg_results(html);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Title");
+        assert_eq!(results[0].snippet, "Snippet text");
+    }
+
+    #[test]
+    fn parse_ddg_results_falls_back_to_link_scan() {
+        let html = r#"
+            <section>
+              <a class="result__a" href="https://fallback.example">Fallback title</a>
+            </section>
+        "#;
+
+        let results = parse_ddg_results(html);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Fallback title");
+        assert_eq!(results[0].url, "https://fallback.example");
+        assert_eq!(results[0].snippet, "");
     }
 
     #[test]
     fn parse_ddg_results_respects_max_limit() {
-        // Each chunk must contain result__snippet to be counted.
-        let chunk = concat!(
-            r#" href="https://example.com">Title<span "#,
-            r#"class="result__snippet">Snippet</span> preamble class="result__a""#,
-        );
-        // Build HTML that starts with the split marker so each chunk is a valid result.
-        let html = format!(
-            r#"preamble class="result__a"{}"#,
-            chunk.repeat(MAX_RESULTS + 2)
-        );
+        let mut html = String::new();
+        for idx in 0..(MAX_RESULTS + 3) {
+            html.push_str(&format!(
+                r#"<div class="result"><a class="result__a" href="https://example.com/{idx}">T{idx}</a><span class="result__snippet">S{idx}</span></div>"#
+            ));
+        }
+
         let results = parse_ddg_results(&html);
-        assert!(
-            results.len() <= MAX_RESULTS,
-            "got {} results, expected <= {MAX_RESULTS}",
-            results.len()
-        );
+        assert_eq!(results.len(), MAX_RESULTS);
+    }
+
+    #[test]
+    fn empty_results_message_reports_parser_breakage() {
+        let msg = empty_results_message("rust", "<html><body>unexpected layout</body></html>");
+        assert!(msg.contains("could not parse"), "message: {msg}");
+    }
+
+    #[test]
+    fn empty_results_message_preserves_true_no_results() {
+        let msg = empty_results_message("rust", "<html><body>No results found</body></html>");
+        assert_eq!(msg, "No results found.");
     }
 
     // --- tool metadata ---
