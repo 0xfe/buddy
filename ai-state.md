@@ -16,12 +16,15 @@
     - `S1` done: shell guardrails phase 1 landed (`tools.shell_denylist`, denylist enforcement in `run_shell`, and fail-closed `buddy exec` behavior when approvals are required).
     - `S2` done: `fetch_url` now blocks localhost/private/link-local targets by default and supports `tools.fetch_allowed_domains` / `tools.fetch_blocked_domains` overrides plus optional `tools.fetch_confirm`.
     - `S3` done: `write_file` now enforces sensitive-path blocking and optional `tools.files_allowed_paths` allowlist.
+    - `B2` done: token accounting promoted to `u64` with saturating arithmetic across tracker/runtime/API usage structures.
+    - `B3` done: generated session IDs now use OS-backed CSPRNG bytes.
     - `B5` done: responses SSE parser now handles event blocks, multiline `data:` payloads, and comment lines.
+    - `R2` done: context budget hard-limit enforcement and history compaction landed, including `/compact`.
     - `R3` done: API client now retries transient failures (429/5xx/timeouts/connectivity) with capped backoff and `Retry-After` support.
+    - `R4` done: SSH control-master drop path has explicit cleanup verification coverage.
     - `R5` done: web search/auth flows now reuse shared HTTP clients instead of per-call client construction.
   - Not done yet (active backlog):
-    - `B2`, `B3`, `B4`, `B5`
-    - `R2`, `R3`, `R4`, `R5`
+    - `B4`
     - `T2`, `T3`, `T4`
     - `D1`, `D2`, `D3`, `D4`
     - `U2`, `U3`, `U4`, `U5`
@@ -133,11 +136,21 @@
 
 - Session lifecycle changes:
   - Sessions are now ID-based (`xxxx-xxxx-xxxx-xxxx`) instead of a fixed `default` name.
+  - Session IDs are generated from OS-backed CSPRNG bytes (instead of hash-derived IDs).
   - Plain `buddy` startup creates a fresh session ID each run.
   - Resume flows:
     - CLI: `buddy resume <session-id>` / `buddy resume --last`
     - REPL: `/session resume <session-id|last>`
   - REPL creation flow: `/session new` now creates a generated ID (no name argument).
+
+- Context-budget hardening:
+  - Agent now enforces a hard context ceiling and returns a clear `ContextLimitExceeded` error when history stays oversized.
+  - Before hard failure, it attempts to compact older turns while preserving system prompt + recent turns.
+  - Manual compaction is exposed through `/compact` (runtime command/event path), and compacted sessions are persisted.
+  - Token counters across tracker/runtime/API usage were widened to `u64` with saturating arithmetic.
+
+- SSH control-master cleanup coverage:
+  - `SshContext` drop path now has explicit cleanup verification (`ssh_context_drop_triggers_control_cleanup`), ensuring control socket shutdown logic remains exercised in tests.
 
 - Input/render stability fixes:
   - REPL editor now memoizes render frames and skips redundant full-surface redraws when nothing visible changed.

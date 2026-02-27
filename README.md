@@ -83,6 +83,7 @@ buddy resume --last
 | `/model [name\|index]` | Switch the active configured model profile (`/model` opens arrow-key picker). |
 | `/login [name\|index]` | Show login health and start login flow for a configured profile. |
 | `/context` | Show estimated context usage (`messages` estimate / context window) and token stats. |
+| `/compact` | Summarize and trim older turns to reclaim context budget. |
 | `/ps` | Show running background tasks with IDs and elapsed time. |
 | `/kill <id>` | Cancel a running background task by task ID. |
 | `/timeout <duration> [id]` | Set timeout for a background task (`id` optional only when one task exists). |
@@ -92,6 +93,8 @@ buddy resume --last
 | `/session new` | Create and switch to a fresh generated session ID. |
 | `/help` | Show slash command help (only when no background tasks are running). |
 | `/quit` `/exit` `/q` | Exit interactive mode (only when no background tasks are running). |
+
+Buddy tracks context usage continuously. It warns as usage rises, attempts automatic compaction before hard-limit failures, and if still over budget it refuses the send with guidance to run `/compact` or `/session new`.
 
 
 ## Developers

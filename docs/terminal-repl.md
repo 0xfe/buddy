@@ -183,6 +183,7 @@ are processed by the REPL loop before being sent to the agent.
 | `/model [name\|index]` | Switch active configured model profile (`/model` with no args opens arrow-key picker) |
 | `/login [name\|index]` | Start login flow for a profile (opens browser when available) |
 | `/context` | Show estimated context window fill % and message counts |
+| `/compact` | Compact older turns to reclaim context budget |
 | `/ps` | List all running background tasks with IDs and elapsed time |
 | `/kill <id>` | Cooperatively cancel a background task |
 | `/timeout <dur> [id]` | Set a deadline for one or all tasks (`30s`, `10m`, `1h`, `2d`) |
@@ -193,8 +194,10 @@ are processed by the REPL loop before being sent to the agent.
 | `/help` | Print all slash commands with descriptions |
 | `/quit`, `/exit`, `/q` | Exit interactive mode |
 
-Commands blocked while tasks are running: `/help`, `/quit`, `/exit`, `/q`, `/model`, `/login`, `/session`.
+Commands blocked while tasks are running: `/help`, `/quit`, `/exit`, `/q`, `/model`, `/login`, `/session`, `/compact`.
 The REPL prints a message asking the user to `/kill` tasks first.
+
+Buddy continuously tracks context usage. As the history grows, it warns before the hard limit, attempts automatic compaction, and if still over budget fails the prompt with guidance to run `/compact` or `/session new`.
 
 ### Approval Policy
 

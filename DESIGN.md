@@ -96,7 +96,7 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
   - Prompt format:
     - local: `> `
     - ssh target: `(ssh user@host)> `
-  - Slash-command autocomplete and built-in slash commands (`/status`, `/context`, `/ps`, `/kill`, `/timeout`, `/approve`, `/session`, `/model`, `/login`, `/help`, `/quit`, `/exit`, `/q`).
+  - Slash-command autocomplete and built-in slash commands (`/status`, `/context`, `/compact`, `/ps`, `/kill`, `/timeout`, `/approve`, `/session`, `/model`, `/login`, `/help`, `/quit`, `/exit`, `/q`).
   - Command history navigation (`Up/Down`, `Ctrl-P/N`).
   - Multiline editing with `Alt+Enter`.
   - Common cursor/edit shortcuts (`Ctrl-A/E/B/F/K/U/W`, arrows, home/end, delete/backspace).
@@ -115,8 +115,11 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
   - Reasoning/thinking trace rendering when providers return reasoning fields, including foreground-rendered forwarding from background tasks.
 - Context and token awareness:
   - Usage accounting from API responses when available.
-  - Pre-flight token estimation with context-limit warning.
+  - `u64` token counters with saturating updates (prompt/completion/session totals).
+  - Pre-flight token estimation with context-limit warning and hard-limit refusal guidance.
+  - History compaction support via `/compact` and automatic compaction attempt before hard-limit failure.
   - Model context-window lookup from shipped `src/templates/models.toml` rules (with fallback heuristic).
+  - Session IDs are generated from OS-backed CSPRNG bytes (`xxxx-xxxx-xxxx-xxxx` format).
 - Provider compatibility hardening:
   - Unknown message fields are preserved and round-tripped for providers that require extra metadata during tool-use turns.
   - Assistant messages with tool calls preserve compatible null content behavior.
@@ -242,7 +245,10 @@ This is the central module. The `Agent` struct owns everything:
 
 ```
 1. Push user message to history
-2. Check if approaching context limit (warn at 80%)
+2. Check context budget:
+   - warn when crossing the soft threshold
+   - attempt history compaction under pressure
+   - fail with actionable guidance if still above the hard threshold
 3. Loop:
    a. Build ChatRequest with full message history + tool definitions
    b. POST to the API
@@ -343,11 +349,13 @@ The interactive REPL reads input via `tui/input.rs`, which runs in raw mode and 
 - foreground shell approval when background tasks hit a `run_shell` confirmation point (`y/yes` approve; `n/no` deny), rendered as an inline one-line approval prompt
 - approval policy controls for shell confirmations (`/approve ask|all|none|<duration>`)
 - persistent ID-based sessions stored locally under `.buddyx/` (`/session`, `/session resume <session-id|last>`, `/session new`, and CLI `buddy resume <session-id>|--last`)
+- manual context-history compaction via `/compact` (when no background tasks are active)
 - model-profile switching from config via `/model [name|index]` (no-arg opens arrow-key picker)
 
 Supported slash commands:
 - `/status` — current model, endpoint, enabled tools, and session counters
 - `/model [name|index]` — switch the active configured model profile (`/model` opens picker)
+- `/compact` — compact older turns to reclaim context budget
 - `/context` — estimated context window usage + token stats
 - `/ps` — list running background tasks
 - `/kill <id>` — cancel a running background task by task ID

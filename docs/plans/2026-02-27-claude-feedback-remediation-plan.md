@@ -3,7 +3,7 @@
 ## Status
 
 - Program status: Active (integrated with `docs/plans/2026-02-27-streaming-runtime-architecture.md`)
-- Current focus: close Milestone 6 UX follow-up checkpoints now that streaming/runtime `S0`-`S5` is complete.
+- Current focus: close Milestone 6 UX follow-up checkpoints now that streaming/runtime `S0`-`S5` and remediation Milestone 4 are complete.
 - Completed so far:
   1. Streaming/runtime `S0` complete (typed runtime command/event schema).
   2. Streaming/runtime `S1` complete (agent emits runtime events with mockable model client interface).
@@ -19,10 +19,11 @@
   12. Streaming/runtime `S3` landed (`ToolContext` + tool stream events with `run_shell` first).
   13. Streaming/runtime `S4` landed (CLI event-renderer adapter + alternate frontend example parity path).
   14. Streaming/runtime `S5` landed (runtime docs/stabilization updates across README/DESIGN/ai-state + plan sync).
+  15. Remediation Milestone 4 landed (context budget hard-stop + compaction path, `/compact`, `u64` token accounting, CSPRNG session IDs, SSH control cleanup verification).
 - Next steps:
   1. Continue Milestone 6 UX follow-up work on top of the new runtime event boundaries.
   2. Re-run model regression gate once provider credentials are available for all default profiles.
-  3. Start Milestone 4 backlog slices (context budgeting/session robustness) when UX follow-up scope is settled.
+  3. Start Milestone 7 deferred architecture slices once Milestone 6 gates are closed.
 
 ## Integrated Program Board
 
@@ -30,7 +31,7 @@
 - [x] Milestone 1: Immediate Security + Crash/Hang Fixes (P1)
 - [x] Milestone 2: Auth and Credential Hardening (P1/P2)
 - [x] Milestone 3: API Correctness and Robustness (P2)
-- [ ] Milestone 4: Conversation Safety and Session Robustness (P2)
+- [x] Milestone 4: Conversation Safety and Session Robustness (P2)
 - [x] Milestone 5: Testability and Modularization (P2/P3)
 - [ ] Milestone 6: UX Improvements (P3) - in progress via streaming runtime milestones
 - [ ] Milestone 7: Deferred Design Extensions (P4)
@@ -236,13 +237,13 @@ Address `R2`, `B2`, `B3`, `R4`.
 
 ### Tasks
 
-1. Add history budget enforcement:
+1. [x] Add history budget enforcement:
    - refuse send above hard threshold (for example 95%).
    - pruning strategy preserving system/tool coherence.
    - optional `/compact` command for summarizing older turns.
-2. Promote token counters to `u64` with saturating updates.
-3. Replace session ID generator with CSPRNG bytes (`getrandom`).
-4. Ensure SSH control connection cleanup on normal exit (`Drop`/shutdown hook).
+2. [x] Promote token counters to `u64` with saturating updates.
+3. [x] Replace session ID generator with CSPRNG bytes (`getrandom`).
+4. [x] Ensure SSH control connection cleanup on normal exit (`Drop`/shutdown hook).
 
 ### Acceptance Gate
 
@@ -265,9 +266,8 @@ Address `R2`, `B2`, `B3`, `R4`.
 
 ### Commits
 
-1. `feat(agent): enforce context budget with pruning and compact command`
-2. `fix(core): widen token counters and secure session id generation`
-3. `fix(exec): clean up ssh control master on normal shutdown`
+1. `571b124` - `feat(core): complete milestone 4 context safety and session robustness`
+2. `2fc542d` - `chore(fmt): apply rustfmt cleanup in api/auth/tool modules` (follow-up formatting pass)
 
 ## Milestone 5: Testability and Modularization (P2/P3)
 
@@ -487,3 +487,10 @@ Address lower-priority architecture items after stabilization (`D1`, `D2`, `D3`,
   - Updated integrated remediation/streaming plan statuses for completed `S0`-`S5` runtime track.
   - Validation: `cargo test -q` passed.
   - commit: `6858f9c`
+- 2026-02-27: Completed remediation Milestone 4 (conversation safety/session robustness):
+  - Added hard context budgeting with warning + refusal path, auto-compaction under pressure, and explicit `/compact` runtime command flow.
+  - Promoted token accounting (`usage`, tracker totals, runtime metrics) to `u64` with saturating updates.
+  - Switched generated session IDs to OS-backed CSPRNG bytes (`xxxx-xxxx-xxxx-xxxx`) and added coverage for format/distinctness.
+  - Added SSH control-master cleanup verification hook test to ensure shutdown cleanup is exercised on drop.
+  - Validation: `cargo test -q` passed.
+  - commits: `571b124`, `2fc542d`

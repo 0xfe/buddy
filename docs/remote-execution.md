@@ -69,6 +69,8 @@ ssh -S <control_path> -O exit <host>
 
 This cleanly closes the ControlMaster and removes the socket file. File
 removal is attempted even if the control command fails.
+This lifecycle is regression-tested (`ssh_context_drop_triggers_control_cleanup`)
+so shutdown cleanup remains covered even if the SSH execution path is refactored.
 
 ---
 
