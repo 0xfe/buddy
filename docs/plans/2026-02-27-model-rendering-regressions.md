@@ -41,7 +41,7 @@ Fix the currently reported regressions:
 - [x] Implement ignored model regression integration suite.
 - [x] Add docs for regression suite design/usage.
 - [x] Run `cargo fmt` + `cargo test` and targeted regression checks.
-- [ ] Commit with detailed message.
+- [x] Commit with detailed message.
 
 ## Execution Notes
 
@@ -61,6 +61,9 @@ Fix the currently reported regressions:
 - Explicit regression run in this environment:
   - passed: `gpt-codex`, `gpt-spark`, `openrouter-deepseek`, `openrouter-glm`
   - failed preflight: `kimi` (missing `MOONSHOT_API_KEY`).
+- Commits:
+  - `3a64534` runtime/test fixes
+  - `5f44127` docs + plan updates
 
 ## Notes
 
