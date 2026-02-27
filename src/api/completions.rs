@@ -1,0 +1,27 @@
+use crate::error::ApiError;
+use crate::types::{ChatRequest, ChatResponse};
+
+pub(crate) async fn request(
+    http: &reqwest::Client,
+    base_url: &str,
+    request: &ChatRequest,
+    bearer: Option<&str>,
+) -> Result<ChatResponse, ApiError> {
+    let url = format!("{base_url}/chat/completions");
+    let mut req = http.post(&url).json(request);
+    if let Some(token) = bearer.filter(|value| !value.trim().is_empty()) {
+        req = req.header("Authorization", format!("Bearer {token}"));
+    }
+
+    let response = req.send().await?;
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        let body = response.text().await.unwrap_or_default();
+        return Err(ApiError::Status(status, body));
+    }
+
+    response
+        .json::<ChatResponse>()
+        .await
+        .map_err(ApiError::from)
+}
