@@ -15,13 +15,13 @@ pub struct TokenTracker {
     /// Model's context window size in tokens.
     pub context_limit: usize,
     /// Running total of prompt tokens sent.
-    pub total_prompt_tokens: u32,
+    pub total_prompt_tokens: u64,
     /// Running total of completion tokens received.
-    pub total_completion_tokens: u32,
+    pub total_completion_tokens: u64,
     /// Prompt tokens in the most recent request.
-    pub last_prompt_tokens: u32,
+    pub last_prompt_tokens: u64,
     /// Completion tokens in the most recent response.
-    pub last_completion_tokens: u32,
+    pub last_completion_tokens: u64,
 }
 
 impl TokenTracker {
@@ -36,11 +36,13 @@ impl TokenTracker {
     }
 
     /// Record token counts from an API response's `usage` field.
-    pub fn record(&mut self, prompt_tokens: u32, completion_tokens: u32) {
+    pub fn record(&mut self, prompt_tokens: u64, completion_tokens: u64) {
         self.last_prompt_tokens = prompt_tokens;
         self.last_completion_tokens = completion_tokens;
-        self.total_prompt_tokens += prompt_tokens;
-        self.total_completion_tokens += completion_tokens;
+        self.total_prompt_tokens = self.total_prompt_tokens.saturating_add(prompt_tokens);
+        self.total_completion_tokens = self
+            .total_completion_tokens
+            .saturating_add(completion_tokens);
     }
 
     /// Estimate how many tokens a set of messages would consume.
@@ -81,8 +83,9 @@ impl TokenTracker {
     }
 
     /// Total tokens consumed across the entire session.
-    pub fn session_total(&self) -> u32 {
-        self.total_prompt_tokens + self.total_completion_tokens
+    pub fn session_total(&self) -> u64 {
+        self.total_prompt_tokens
+            .saturating_add(self.total_completion_tokens)
     }
 }
 
@@ -314,6 +317,17 @@ mod tests {
         assert_eq!(t.session_total(), 200);
         assert_eq!(t.last_prompt_tokens, 100);
         assert_eq!(t.last_completion_tokens, 30);
+    }
+
+    #[test]
+    fn tracker_record_saturates_totals() {
+        let mut t = TokenTracker::new(1000);
+        t.total_prompt_tokens = u64::MAX - 3;
+        t.total_completion_tokens = u64::MAX - 2;
+        t.record(10, 10);
+        assert_eq!(t.total_prompt_tokens, u64::MAX);
+        assert_eq!(t.total_completion_tokens, u64::MAX);
+        assert_eq!(t.session_total(), u64::MAX);
     }
 
     #[test]

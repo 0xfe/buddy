@@ -1,10 +1,10 @@
+use crate::api::parse_retry_after_secs;
 use crate::error::ApiError;
 use crate::types::{
     ChatRequest, ChatResponse, Choice, FunctionCall, Message, Role, ToolCall, Usage,
 };
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
-use crate::api::parse_retry_after_secs;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct ResponsesRequestOptions {
@@ -504,10 +504,10 @@ fn parse_output_function_call(item: &Value, index: usize) -> Option<ToolCall> {
 }
 
 fn parse_usage(usage: &Value) -> Option<Usage> {
-    let prompt_tokens = read_u32(usage, &["prompt_tokens", "input_tokens"])?;
-    let completion_tokens = read_u32(usage, &["completion_tokens", "output_tokens"])?;
+    let prompt_tokens = read_u64(usage, &["prompt_tokens", "input_tokens"])?;
+    let completion_tokens = read_u64(usage, &["completion_tokens", "output_tokens"])?;
     let total_tokens =
-        read_u32(usage, &["total_tokens"]).unwrap_or(prompt_tokens + completion_tokens);
+        read_u64(usage, &["total_tokens"]).unwrap_or(prompt_tokens + completion_tokens);
     Some(Usage {
         prompt_tokens,
         completion_tokens,
@@ -515,11 +515,11 @@ fn parse_usage(usage: &Value) -> Option<Usage> {
     })
 }
 
-fn read_u32(value: &Value, keys: &[&str]) -> Option<u32> {
+fn read_u64(value: &Value, keys: &[&str]) -> Option<u64> {
     keys.iter().find_map(|key| {
         value.get(*key).and_then(|v| match v {
-            Value::Number(num) => num.as_u64().and_then(|n| u32::try_from(n).ok()),
-            Value::String(text) => text.trim().parse::<u32>().ok(),
+            Value::Number(num) => num.as_u64(),
+            Value::String(text) => text.trim().parse::<u64>().ok(),
             _ => None,
         })
     })

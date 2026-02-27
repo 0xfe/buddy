@@ -12,6 +12,8 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
+#[cfg(test)]
+use std::sync::{Mutex as StdMutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -820,7 +822,33 @@ impl Drop for SshContext {
     }
 }
 
+#[cfg(test)]
+type SshCloseHook = Box<dyn Fn(&str, &Path) + Send + Sync + 'static>;
+
+#[cfg(test)]
+fn ssh_close_hook_slot() -> &'static StdMutex<Option<SshCloseHook>> {
+    static SLOT: OnceLock<StdMutex<Option<SshCloseHook>>> = OnceLock::new();
+    SLOT.get_or_init(|| StdMutex::new(None))
+}
+
+#[cfg(test)]
+fn set_ssh_close_hook_for_tests(hook: Option<SshCloseHook>) {
+    *ssh_close_hook_slot().lock().expect("ssh close hook lock") = hook;
+}
+
 fn close_ssh_control_connection(target: &str, control_path: &Path) {
+    #[cfg(test)]
+    {
+        if let Some(hook) = ssh_close_hook_slot()
+            .lock()
+            .expect("ssh close hook lock")
+            .as_ref()
+        {
+            hook(target, control_path);
+            return;
+        }
+    }
+
     let _ = std::process::Command::new("ssh")
         .arg("-S")
         .arg(control_path)
@@ -2397,5 +2425,36 @@ hi\n\
                 .to_string()
                 .contains("is no longer visible in capture history")),
         }
+    }
+
+    #[test]
+    fn ssh_context_drop_triggers_control_cleanup() {
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        let observed = Arc::new(StdMutex::new(None::<(String, PathBuf)>));
+        let observed_clone = Arc::clone(&observed);
+        set_ssh_close_hook_for_tests(Some(Box::new(move |target, path| {
+            *observed_clone.lock().expect("observed lock") =
+                Some((target.to_string(), path.to_path_buf()));
+        })));
+
+        let control_path = PathBuf::from("/tmp/buddy-test-drop.sock");
+        let ctx = SshContext {
+            target: "dev@example.com".to_string(),
+            control_path: control_path.clone(),
+            tmux_session: None,
+            configured_tmux_pane: Mutex::new(None),
+        };
+        drop(ctx);
+        set_ssh_close_hook_for_tests(None);
+
+        let captured = observed
+            .lock()
+            .expect("observed lock")
+            .clone()
+            .expect("drop should trigger cleanup");
+        assert_eq!(captured.0, "dev@example.com");
+        assert_eq!(captured.1, control_path);
     }
 }

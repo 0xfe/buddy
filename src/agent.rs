@@ -22,6 +22,13 @@ use tokio::sync::{mpsc, watch};
 
 const CANCELLED_BY_USER_TOOL_RESULT: &str = "operation cancelled by user";
 const CANCELLED_BY_USER_PROMPT_RESPONSE: &str = "operation cancelled by user";
+const CONTEXT_WARNING_FRACTION: f64 = 0.80;
+const CONTEXT_HARD_LIMIT_FRACTION: f64 = 0.95;
+const CONTEXT_AUTO_COMPACT_TARGET_FRACTION: f64 = 0.82;
+const CONTEXT_MANUAL_COMPACT_TARGET_FRACTION: f64 = 0.60;
+const CONTEXT_COMPACT_KEEP_RECENT_TURNS: usize = 3;
+const MAX_COMPACT_SUMMARY_LINES: usize = 24;
+const COMPACT_SUMMARY_PREFIX: &str = "[buddy compact summary]";
 
 /// Persistable conversation + token state for session save/resume.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,10 +41,10 @@ pub struct AgentSessionSnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenTrackerSnapshot {
     pub context_limit: usize,
-    pub total_prompt_tokens: u32,
-    pub total_completion_tokens: u32,
-    pub last_prompt_tokens: u32,
-    pub last_completion_tokens: u32,
+    pub total_prompt_tokens: u64,
+    pub total_completion_tokens: u64,
+    pub last_prompt_tokens: u64,
+    pub last_completion_tokens: u64,
 }
 
 impl TokenTrackerSnapshot {
@@ -62,6 +69,15 @@ impl TokenTrackerSnapshot {
     }
 }
 
+/// Details about one history-compaction operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryCompactionReport {
+    pub estimated_before: u64,
+    pub estimated_after: u64,
+    pub removed_messages: usize,
+    pub removed_turns: usize,
+}
+
 /// Background UI events emitted by an agent running in background mode.
 #[derive(Debug, Clone)]
 pub enum AgentUiEvent {
@@ -71,9 +87,9 @@ pub enum AgentUiEvent {
     },
     TokenUsage {
         task_id: u64,
-        prompt_tokens: u32,
-        completion_tokens: u32,
-        session_total: u32,
+        prompt_tokens: u64,
+        completion_tokens: u64,
+        session_total: u64,
     },
     ReasoningTrace {
         task_id: u64,
@@ -205,6 +221,65 @@ impl Agent {
         self.tracker = TokenTracker::new(context_limit);
     }
 
+    /// Compact older conversation turns into a synthesized summary message.
+    ///
+    /// This is used by `/compact` and can also be triggered automatically
+    /// before request submission when context pressure is high.
+    pub fn compact_history(&mut self) -> Option<HistoryCompactionReport> {
+        compact_history_with_budget(
+            &mut self.messages,
+            self.tracker.context_limit,
+            CONTEXT_MANUAL_COMPACT_TARGET_FRACTION,
+            true,
+        )
+    }
+
+    fn enforce_context_budget(&mut self) -> Result<(), AgentError> {
+        let context_limit = self.tracker.context_limit;
+        if context_limit == 0 {
+            return Ok(());
+        }
+
+        let hard_limit_tokens = ((context_limit as f64) * CONTEXT_HARD_LIMIT_FRACTION)
+            .floor()
+            .max(1.0) as usize;
+        let warning_tokens = ((context_limit as f64) * CONTEXT_WARNING_FRACTION)
+            .floor()
+            .max(1.0) as usize;
+
+        let mut estimated_tokens = TokenTracker::estimate_messages(&self.messages);
+        if estimated_tokens >= warning_tokens {
+            let percent = ((estimated_tokens as f64 / context_limit as f64) * 100.0) as f32;
+            self.warn_live(&format!(
+                "Context usage is {percent:.1}% ({estimated_tokens}/{context_limit}). Use `/compact` or `/session new` if needed."
+            ));
+        }
+
+        if estimated_tokens >= hard_limit_tokens {
+            if let Some(report) = compact_history_with_budget(
+                &mut self.messages,
+                context_limit,
+                CONTEXT_AUTO_COMPACT_TARGET_FRACTION,
+                false,
+            ) {
+                estimated_tokens = report.estimated_after as usize;
+                self.warn_live(&format!(
+                    "Compacted history (removed {} turns / {} messages) to reduce context usage.",
+                    report.removed_turns, report.removed_messages
+                ));
+            }
+        }
+
+        if estimated_tokens >= hard_limit_tokens {
+            return Err(AgentError::ContextLimitExceeded {
+                estimated_tokens: estimated_tokens as u64,
+                context_limit: context_limit as u64,
+            });
+        }
+
+        Ok(())
+    }
+
     /// Suppress live stderr traces while the agent runs in a background task.
     pub fn set_live_output_suppressed(&mut self, suppressed: bool) {
         self.suppress_live_output = suppressed;
@@ -295,7 +370,7 @@ impl Agent {
         self.renderer.warn(msg);
     }
 
-    fn token_usage_live(&mut self, prompt: u32, completion: u32, session_total: u32) {
+    fn token_usage_live(&mut self, prompt: u64, completion: u64, session_total: u64) {
         if self.suppress_live_output {
             let Some(task_id) = self.current_task_id() else {
                 self.renderer.token_usage(prompt, completion, session_total);
@@ -429,10 +504,14 @@ impl Agent {
             }
             return Ok(CANCELLED_BY_USER_PROMPT_RESPONSE.to_string());
         }
-
-        // Pre-flight context check.
-        if self.tracker.is_approaching_limit(&self.messages) {
-            self.warn_live("Approaching context window limit — responses may be truncated.");
+        if let Err(err) = self.enforce_context_budget() {
+            if let Some(task) = self.current_task_ref() {
+                let _ = self.emit_runtime_event(RuntimeEvent::Task(TaskEvent::Failed {
+                    task,
+                    message: err.to_string(),
+                }));
+            }
+            return Err(err);
         }
 
         let mut iterations = 0;
@@ -447,6 +526,16 @@ impl Agent {
                     }));
                 }
                 return Err(AgentError::MaxIterationsReached);
+            }
+
+            if let Err(err) = self.enforce_context_budget() {
+                if let Some(task) = self.current_task_ref() {
+                    let _ = self.emit_runtime_event(RuntimeEvent::Task(TaskEvent::Failed {
+                        task,
+                        message: err.to_string(),
+                    }));
+                }
+                return Err(err);
             }
 
             // Build the request.
@@ -471,12 +560,13 @@ impl Agent {
                 } else {
                     ((estimated_tokens as f64 / context_limit as f64) * 100.0) as f32
                 };
-                let _ = self.emit_runtime_event(RuntimeEvent::Metrics(MetricsEvent::ContextUsage {
-                    task: task.clone(),
-                    estimated_tokens,
-                    context_limit,
-                    used_percent,
-                }));
+                let _ =
+                    self.emit_runtime_event(RuntimeEvent::Metrics(MetricsEvent::ContextUsage {
+                        task: task.clone(),
+                        estimated_tokens,
+                        context_limit,
+                        used_percent,
+                    }));
                 let _ = self.emit_runtime_event(RuntimeEvent::Model(ModelEvent::RequestStarted {
                     task,
                     model: request.model.clone(),
@@ -691,6 +781,233 @@ async fn wait_for_cancellation(cancel_rx: &mut watch::Receiver<bool>) {
     let _ = cancel_rx.changed().await;
 }
 
+fn compact_history_with_budget(
+    messages: &mut Vec<Message>,
+    context_limit: usize,
+    target_fraction: f64,
+    force: bool,
+) -> Option<HistoryCompactionReport> {
+    if context_limit == 0 || messages.is_empty() {
+        return None;
+    }
+
+    let estimated_before = TokenTracker::estimate_messages(messages);
+    let target_tokens = ((context_limit as f64) * target_fraction).floor().max(1.0) as usize;
+    if !force && estimated_before <= target_tokens {
+        return None;
+    }
+
+    let mut insertion_index = leading_system_count(messages);
+    let mut previous_summary = None;
+    if insertion_index > 0
+        && messages
+            .get(insertion_index - 1)
+            .is_some_and(is_compact_summary_message)
+    {
+        if let Some(removed) = messages.get(insertion_index - 1).cloned() {
+            previous_summary = removed.content;
+        }
+        messages.remove(insertion_index - 1);
+        insertion_index -= 1;
+    }
+
+    let mut removed_messages = Vec::new();
+    let mut removed_turns = 0usize;
+
+    loop {
+        let estimated_now = TokenTracker::estimate_messages(messages);
+        let turns = collect_turn_ranges(messages, insertion_index);
+        if turns.len() <= CONTEXT_COMPACT_KEEP_RECENT_TURNS {
+            break;
+        }
+
+        let should_remove = if force {
+            estimated_now > target_tokens || turns.len() > CONTEXT_COMPACT_KEEP_RECENT_TURNS + 1
+        } else {
+            estimated_now > target_tokens
+        };
+        if !should_remove {
+            break;
+        }
+
+        let turn = turns[0];
+        removed_messages.extend(messages.drain(turn.start..turn.end));
+        removed_turns = removed_turns.saturating_add(1);
+    }
+
+    if removed_messages.is_empty() && previous_summary.is_none() {
+        return None;
+    }
+
+    let summary = build_compact_summary(previous_summary.as_deref(), &removed_messages);
+    messages.insert(insertion_index, Message::system(summary));
+
+    let mut estimated_after = TokenTracker::estimate_messages(messages);
+    if estimated_after >= estimated_before {
+        messages[insertion_index] = Message::system(format!(
+            "{COMPACT_SUMMARY_PREFIX}\nOlder turns were compacted."
+        ));
+        estimated_after = TokenTracker::estimate_messages(messages);
+        if estimated_after >= estimated_before {
+            messages.remove(insertion_index);
+            estimated_after = TokenTracker::estimate_messages(messages);
+        }
+    }
+
+    Some(HistoryCompactionReport {
+        estimated_before: estimated_before as u64,
+        estimated_after: estimated_after as u64,
+        removed_messages: removed_messages.len(),
+        removed_turns,
+    })
+}
+
+#[derive(Clone, Copy)]
+struct TurnRange {
+    start: usize,
+    end: usize,
+}
+
+fn leading_system_count(messages: &[Message]) -> usize {
+    messages
+        .iter()
+        .take_while(|message| message.role == Role::System)
+        .count()
+}
+
+fn collect_turn_ranges(messages: &[Message], start_index: usize) -> Vec<TurnRange> {
+    let mut turns = Vec::new();
+    let mut current_start: Option<usize> = None;
+
+    for idx in start_index..messages.len() {
+        let message = &messages[idx];
+        if message.role == Role::User {
+            if let Some(start) = current_start {
+                turns.push(TurnRange { start, end: idx });
+            }
+            current_start = Some(idx);
+        } else if current_start.is_none() {
+            current_start = Some(idx);
+        }
+    }
+
+    if let Some(start) = current_start {
+        turns.push(TurnRange {
+            start,
+            end: messages.len(),
+        });
+    }
+
+    turns
+}
+
+fn is_compact_summary_message(message: &Message) -> bool {
+    message.role == Role::System
+        && message
+            .content
+            .as_deref()
+            .is_some_and(|text| text.starts_with(COMPACT_SUMMARY_PREFIX))
+}
+
+fn build_compact_summary(previous_summary: Option<&str>, removed_messages: &[Message]) -> String {
+    let mut lines = Vec::new();
+    lines.push(COMPACT_SUMMARY_PREFIX.to_string());
+    lines.push("Older turns were compacted to preserve room for newer context.".to_string());
+
+    if let Some(previous) = previous_summary.and_then(compact_summary_body) {
+        if !previous.is_empty() {
+            lines.push(format!("Previously compacted summary: {previous}"));
+        }
+    }
+
+    let mut added = 0usize;
+    for message in removed_messages {
+        if added >= MAX_COMPACT_SUMMARY_LINES {
+            break;
+        }
+        if let Some(line) = compact_message_line(message) {
+            lines.push(line);
+            added += 1;
+        }
+    }
+
+    if removed_messages.len() > added {
+        lines.push(format!(
+            "... {} additional compacted message(s) omitted",
+            removed_messages.len() - added
+        ));
+    }
+
+    lines.join("\n")
+}
+
+fn compact_summary_body(summary: &str) -> Option<String> {
+    let mut lines = summary.lines();
+    let first = lines.next()?.trim();
+    if first != COMPACT_SUMMARY_PREFIX {
+        return None;
+    }
+    let body = lines.collect::<Vec<_>>().join(" ");
+    let body = body.trim();
+    if body.is_empty() {
+        None
+    } else {
+        Some(truncate_summary_preview(body))
+    }
+}
+
+fn compact_message_line(message: &Message) -> Option<String> {
+    match message.role {
+        Role::System => None,
+        Role::User => message
+            .content
+            .as_deref()
+            .map(|text| format!("user: {}", truncate_summary_preview(text))),
+        Role::Assistant => {
+            let mut parts = Vec::new();
+            if let Some(content) = message.content.as_deref().map(str::trim) {
+                if !content.is_empty() {
+                    parts.push(format!("assistant: {}", truncate_summary_preview(content)));
+                }
+            }
+            if let Some(tool_calls) = &message.tool_calls {
+                let names = tool_calls
+                    .iter()
+                    .map(|call| call.function.name.as_str())
+                    .collect::<Vec<_>>();
+                if !names.is_empty() {
+                    parts.push(format!(
+                        "assistant tools: {}",
+                        truncate_summary_preview(&names.join(", "))
+                    ));
+                }
+            }
+            (!parts.is_empty()).then(|| parts.join(" | "))
+        }
+        Role::Tool => {
+            let id = message.tool_call_id.as_deref().unwrap_or("<unknown>");
+            let content = message.content.as_deref().unwrap_or("");
+            Some(format!(
+                "tool ({id}): {}",
+                truncate_summary_preview(content)
+            ))
+        }
+    }
+}
+
+fn truncate_summary_preview(text: &str) -> String {
+    const MAX_PREVIEW_CHARS: usize = 180;
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= MAX_PREVIEW_CHARS {
+        return trimmed.to_string();
+    }
+    let prefix = trimmed
+        .chars()
+        .take(MAX_PREVIEW_CHARS.saturating_sub(3))
+        .collect::<String>();
+    format!("{prefix}...")
+}
+
 fn reasoning_traces(message: &Message) -> Vec<(String, String)> {
     message
         .extra
@@ -850,7 +1167,7 @@ mod tests {
     use super::*;
     use crate::api::ModelClient;
     use crate::config::Config;
-    use crate::error::{ApiError, ToolError};
+    use crate::error::{AgentError, ApiError, ToolError};
     use crate::runtime::{
         MetricsEvent, ModelEvent, RuntimeEvent, TaskEvent, ToolEvent, WarningEvent,
     };
@@ -1038,6 +1355,73 @@ mod tests {
         assert_eq!(agent.config.api.base_url, "https://example.com/v1");
         assert_eq!(agent.config.api.model, "moonshot-v1");
         assert_eq!(agent.tracker.context_limit, 42_000);
+    }
+
+    #[test]
+    fn compact_history_replaces_old_turns_with_summary() {
+        let mut agent = Agent::new(Config::default(), ToolRegistry::new());
+        agent.messages = vec![Message::system("system prompt")];
+        for idx in 0..8 {
+            agent
+                .messages
+                .push(Message::user(format!("user turn {idx}")));
+            agent
+                .messages
+                .push(assistant_message(&format!("assistant turn {idx}")));
+        }
+        let recent_user = "keep this newest user turn";
+        agent.messages.push(Message::user(recent_user));
+        agent
+            .messages
+            .push(assistant_message("keep this newest assistant turn"));
+
+        agent.tracker.context_limit = 220;
+        let report = agent.compact_history().expect("history should compact");
+
+        assert!(report.removed_turns > 0);
+        assert!(report.removed_messages > 0);
+        assert!(report.estimated_after < report.estimated_before);
+        assert_eq!(agent.messages[0].content.as_deref(), Some("system prompt"));
+        assert!(agent.messages[1]
+            .content
+            .as_deref()
+            .is_some_and(|text| text.starts_with(COMPACT_SUMMARY_PREFIX)));
+        assert!(agent.messages.iter().any(|message| {
+            message
+                .content
+                .as_deref()
+                .is_some_and(|content| content == recent_user)
+        }));
+    }
+
+    #[tokio::test]
+    async fn send_returns_context_limit_error_when_single_turn_is_too_large() {
+        let mock = Box::new(MockClient::new(Vec::new()));
+        let mut agent = Agent::with_client(Config::default(), ToolRegistry::new(), mock);
+        agent.tracker.context_limit = 64;
+
+        let err = agent
+            .send(&"x".repeat(1_200))
+            .await
+            .expect_err("prompt should exceed hard context limit");
+        assert!(matches!(
+            err,
+            AgentError::ContextLimitExceeded {
+                estimated_tokens: _,
+                context_limit: 64
+            }
+        ));
+    }
+
+    fn assistant_message(content: &str) -> Message {
+        Message {
+            role: Role::Assistant,
+            content: Some(content.to_string()),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+            extra: BTreeMap::new(),
+        }
     }
 
     struct MockClient {

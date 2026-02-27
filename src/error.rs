@@ -145,6 +145,11 @@ pub enum AgentError {
     EmptyResponse,
     /// The agentic loop exceeded the configured iteration cap.
     MaxIterationsReached,
+    /// Estimated context usage exceeded the hard limit even after compaction.
+    ContextLimitExceeded {
+        estimated_tokens: u64,
+        context_limit: u64,
+    },
 }
 
 impl fmt::Display for AgentError {
@@ -155,6 +160,13 @@ impl fmt::Display for AgentError {
             Self::Tool(e) => write!(f, "tool: {e}"),
             Self::EmptyResponse => write!(f, "model returned empty response"),
             Self::MaxIterationsReached => write!(f, "max agentic loop iterations reached"),
+            Self::ContextLimitExceeded {
+                estimated_tokens,
+                context_limit,
+            } => write!(
+                f,
+                "context limit exceeded ({estimated_tokens}/{context_limit} estimated tokens). Run `/compact` or `/session new` and retry"
+            ),
         }
     }
 }
@@ -226,6 +238,14 @@ mod tests {
         assert_eq!(
             AgentError::MaxIterationsReached.to_string(),
             "max agentic loop iterations reached"
+        );
+        assert_eq!(
+            AgentError::ContextLimitExceeded {
+                estimated_tokens: 970,
+                context_limit: 1000
+            }
+            .to_string(),
+            "context limit exceeded (970/1000 estimated tokens). Run `/compact` or `/session new` and retry"
         );
     }
 

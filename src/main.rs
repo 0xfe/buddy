@@ -17,9 +17,9 @@ use buddy::config::{AuthMode, Config, GlobalConfigInitResult, ToolsConfig};
 use buddy::prompt::{render_system_prompt, ExecutionTarget, SystemPromptParams};
 use buddy::render::Renderer;
 use buddy::runtime::{
-    spawn_runtime_with_agent, spawn_runtime_with_shared_agent, ApprovalDecision as RuntimeApprovalDecision,
-    BuddyRuntimeHandle, ModelEvent, PromptMetadata, RuntimeApprovalPolicy, RuntimeCommand,
-    RuntimeEvent, RuntimeEventEnvelope, TaskEvent,
+    spawn_runtime_with_agent, spawn_runtime_with_shared_agent,
+    ApprovalDecision as RuntimeApprovalDecision, BuddyRuntimeHandle, ModelEvent, PromptMetadata,
+    RuntimeApprovalPolicy, RuntimeCommand, RuntimeEvent, RuntimeEventEnvelope, TaskEvent,
 };
 use buddy::session::{SessionStore, SessionSummary};
 use buddy::textutil::truncate_with_suffix_by_chars;
@@ -39,8 +39,8 @@ use crossterm::style::{Color, Stylize};
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::sync::Mutex;
 use tokio::sync::mpsc;
+use tokio::sync::Mutex;
 
 const BACKGROUND_TASK_WARNING: &str =
     "Background tasks are in progress. Allowed commands now: /ps, /kill <id>, /timeout <dur> [id], /approve <mode>, /status, /context.";
@@ -378,8 +378,13 @@ async fn main() {
         let mut last_prompt_context_used_percent: Option<u16> = None;
 
         loop {
-            enforce_task_timeouts(&renderer, &runtime, &mut background_tasks, &mut pending_approval)
-                .await;
+            enforce_task_timeouts(
+                &renderer,
+                &runtime,
+                &mut background_tasks,
+                &mut pending_approval,
+            )
+            .await;
             collect_runtime_events(&mut runtime_events, &mut pending_runtime_events);
             process_runtime_events(
                 &renderer,
@@ -560,7 +565,7 @@ async fn main() {
                 }
 
                 renderer.warn(
-                    "Approval required. Reply with y/yes or n/no. You can also use /ps, /kill <id>, /timeout <dur> [id], /approve <mode>, /status, /context.",
+                    "Approval required. Reply with y/yes or n/no. You can also use /ps, /kill <id>, /timeout <dur> [id], /approve <mode>, /status, /context, /compact.",
                 );
                 pending_approval = Some(approval);
                 continue;
@@ -574,7 +579,8 @@ async fn main() {
             {
                 last_prompt_context_used_percent = Some(latest);
             } else if runtime_context.context_limit > 0 {
-                last_prompt_context_used_percent = Some(runtime_context.used_percent.round() as u16);
+                last_prompt_context_used_percent =
+                    Some(runtime_context.used_percent.round() as u16);
             }
             let input = match repl::read_repl_line_with_interrupt(
                 config.display.color,
@@ -744,6 +750,14 @@ async fn main() {
                                 name.as_deref(),
                             )
                             .await;
+                        }
+                    }
+                    repl::SlashCommandAction::Compact => {
+                        if has_background_tasks {
+                            renderer.warn(BACKGROUND_TASK_WARNING);
+                        } else if let Err(e) = runtime.send(RuntimeCommand::SessionCompact).await {
+                            renderer
+                                .warn(&format!("failed to submit session compact command: {e}"));
                         }
                     }
                     repl::SlashCommandAction::Model(selector) => {
@@ -1155,7 +1169,10 @@ async fn run_login_flow(
         .map_err(|err| format!("failed to check existing login health: {err}"))?;
     renderer.section("login health");
     renderer.field("provider", provider);
-    renderer.field("saved_credentials", if health.has_tokens { "yes" } else { "no" });
+    renderer.field(
+        "saved_credentials",
+        if health.has_tokens { "yes" } else { "no" },
+    );
     if let Some(expires_at_unix) = health.expires_at_unix {
         renderer.field("expires_at_unix", &expires_at_unix.to_string());
         renderer.field(
@@ -1295,7 +1312,10 @@ fn render_status(
         };
         renderer.field("context_limit", &context_limit);
         renderer.field("messages", "busy (task in progress)");
-        renderer.field("session_tokens", &runtime_context.session_total_tokens.to_string());
+        renderer.field(
+            "session_tokens",
+            &runtime_context.session_total_tokens.to_string(),
+        );
     }
 
     eprintln!();
@@ -1431,7 +1451,10 @@ fn process_runtime_events(
     cli_event_renderer::process_runtime_events(events, &mut context);
 }
 
-fn drain_completed_tasks(renderer: &Renderer, completed: &mut Vec<CompletedBackgroundTask>) -> bool {
+fn drain_completed_tasks(
+    renderer: &Renderer,
+    completed: &mut Vec<CompletedBackgroundTask>,
+) -> bool {
     if completed.is_empty() {
         return false;
     }
@@ -1612,9 +1635,9 @@ struct RuntimeContextState {
     estimated_tokens: u64,
     context_limit: u64,
     used_percent: f32,
-    last_prompt_tokens: u32,
-    last_completion_tokens: u32,
-    session_total_tokens: u32,
+    last_prompt_tokens: u64,
+    last_completion_tokens: u64,
+    session_total_tokens: u64,
 }
 
 impl RuntimeContextState {
@@ -2473,7 +2496,9 @@ mod tests {
                 final_response: None,
             },
         ];
-        assert!(mark_task_waiting_for_approval(&mut tasks, 2, "ls", "appr-2"));
+        assert!(mark_task_waiting_for_approval(
+            &mut tasks, 2, "ls", "appr-2"
+        ));
         assert!(task_is_waiting_for_approval(&tasks, 2));
         assert!(!task_is_waiting_for_approval(&tasks, 1));
     }
@@ -2562,15 +2587,7 @@ mod tests {
         let renderer = Renderer::new(false);
         let mut active = "abcd-1234".to_string();
 
-        handle_session_command(
-            &renderer,
-            &store,
-            &runtime,
-            &mut active,
-            Some("new"),
-            None,
-        )
-        .await;
+        handle_session_command(&renderer, &store, &runtime, &mut active, Some("new"), None).await;
 
         let command = rx.recv().await.expect("command expected");
         assert!(matches!(command, RuntimeCommand::SessionNew));

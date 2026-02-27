@@ -264,7 +264,7 @@ impl Renderer {
     }
 
     /// Print token usage for the current request (to stderr).
-    pub fn token_usage(&self, prompt: u32, completion: u32, session_total: u32) {
+    pub fn token_usage(&self, prompt: u64, completion: u64, session_total: u64) {
         if self.color {
             eprintln!(
                 "{}{} prompt:{} completion:{} session:{}",

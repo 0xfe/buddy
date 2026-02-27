@@ -10,7 +10,7 @@ pub struct SlashCommand {
 }
 
 /// Built-in slash commands for interactive mode.
-pub const SLASH_COMMANDS: [SlashCommand; 13] = [
+pub const SLASH_COMMANDS: [SlashCommand; 14] = [
     SlashCommand {
         name: "/status",
         description: "Show model, endpoint, tools, and session details.",
@@ -38,6 +38,10 @@ pub const SLASH_COMMANDS: [SlashCommand; 13] = [
     SlashCommand {
         name: "/session",
         description: "Session ops: list, resume, create.",
+    },
+    SlashCommand {
+        name: "/compact",
+        description: "Compact older turns to reclaim context space.",
     },
     SlashCommand {
         name: "/model",
@@ -82,6 +86,7 @@ pub enum SlashCommandAction {
         verb: Option<String>,
         name: Option<String>,
     },
+    Compact,
     Model(Option<String>),
     Login(Option<String>),
     Help,
@@ -121,6 +126,7 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommandAction> {
             verb: trimmed.split_whitespace().nth(1).map(str::to_string),
             name: trimmed.split_whitespace().nth(2).map(str::to_string),
         },
+        "/compact" => SlashCommandAction::Compact,
         "/model" => {
             SlashCommandAction::Model(trimmed.split_whitespace().nth(1).map(str::to_string))
         }
@@ -200,6 +206,10 @@ mod tests {
                 verb: Some("resume".to_string()),
                 name: Some("last".to_string())
             })
+        );
+        assert_eq!(
+            parse_slash_command("/compact"),
+            Some(SlashCommandAction::Compact)
         );
         assert_eq!(
             parse_slash_command("/model kimi"),

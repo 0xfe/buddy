@@ -10,8 +10,8 @@ use crate::agent::AgentUiEvent;
 use crate::auth::{load_provider_tokens, login_provider_key_for_base_url, supports_openai_login};
 use crate::config::{select_model_profile, Config};
 use crate::session::SessionStore;
-use crate::tools::shell::ShellApprovalRequest;
 use crate::textutil::truncate_with_suffix_by_chars;
+use crate::tools::shell::ShellApprovalRequest;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -71,6 +71,7 @@ pub enum RuntimeCommand {
         session_id: String,
     },
     SessionResumeLast,
+    SessionCompact,
     Shutdown,
 }
 
@@ -264,9 +265,9 @@ pub enum ToolEvent {
 pub enum MetricsEvent {
     TokenUsage {
         task: TaskRef,
-        prompt_tokens: u32,
-        completion_tokens: u32,
-        session_total_tokens: u32,
+        prompt_tokens: u64,
+        completion_tokens: u64,
+        session_total_tokens: u64,
     },
     ContextUsage {
         task: TaskRef,
@@ -783,6 +784,18 @@ async fn handle_runtime_command(
                 ),
             }
         }
+        RuntimeCommand::SessionCompact => {
+            if let Err(err) = runtime_session_compact(agent, state, event_tx, seq).await {
+                emit_event(
+                    event_tx,
+                    seq,
+                    RuntimeEvent::Error(ErrorEvent {
+                        task: None,
+                        message: err,
+                    }),
+                );
+            }
+        }
         RuntimeCommand::Approve {
             approval_id,
             decision,
@@ -915,7 +928,11 @@ fn resolve_pending_approval(
             );
         }
     }
-    emit_event(event_tx, seq, RuntimeEvent::Task(TaskEvent::Started { task }));
+    emit_event(
+        event_tx,
+        seq,
+        RuntimeEvent::Task(TaskEvent::Started { task }),
+    );
 }
 
 fn deny_pending_approvals_for_task(
@@ -1026,6 +1043,69 @@ async fn runtime_session_resume(
             session_id: session_id.to_string(),
         }),
     );
+    Ok(())
+}
+
+async fn runtime_session_compact(
+    agent: &Arc<Mutex<Agent>>,
+    state: &mut RuntimeActorState,
+    event_tx: &mpsc::UnboundedSender<RuntimeEventEnvelope>,
+    seq: &mut u64,
+) -> Result<(), String> {
+    let report = {
+        let mut guard = agent.lock().await;
+        guard.compact_history()
+    };
+
+    let Some(report) = report else {
+        emit_event(
+            event_tx,
+            seq,
+            RuntimeEvent::Warning(WarningEvent {
+                task: None,
+                message: "nothing to compact; history is already focused on recent turns"
+                    .to_string(),
+            }),
+        );
+        return Ok(());
+    };
+
+    if let (Some(store), Some(active_id)) = (
+        state.session_store.as_ref(),
+        state.active_session.as_deref(),
+    ) {
+        let snapshot = agent.lock().await.snapshot_session();
+        store
+            .save(active_id, &snapshot)
+            .map_err(|err| format!("failed to persist compacted session {active_id}: {err}"))?;
+    }
+
+    let session_id = state
+        .active_session
+        .clone()
+        .unwrap_or_else(|| "default".to_string());
+    emit_event(
+        event_tx,
+        seq,
+        RuntimeEvent::Session(SessionEvent::Compacted {
+            session_id: session_id.clone(),
+        }),
+    );
+    emit_event(
+        event_tx,
+        seq,
+        RuntimeEvent::Warning(WarningEvent {
+            task: None,
+            message: format!(
+                "compacted session {session_id}: removed {} turn(s), {} message(s) (estimated {} -> {})",
+                report.removed_turns,
+                report.removed_messages,
+                report.estimated_before,
+                report.estimated_after
+            ),
+        }),
+    );
+
     Ok(())
 }
 
@@ -1489,7 +1569,10 @@ mod tests {
             .await
             .expect("send approve");
 
-        let approved = waiter.await.expect("join should succeed").expect("decision");
+        let approved = waiter
+            .await
+            .expect("join should succeed")
+            .expect("decision");
         assert!(approved);
     }
 
@@ -1520,5 +1603,63 @@ mod tests {
             }
             other => panic!("unexpected event: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn runtime_actor_session_compact_emits_compacted_event() {
+        let mut cfg = Config::default();
+        cfg.api.context_limit = Some(220);
+        let mut agent = Agent::with_client(
+            cfg.clone(),
+            crate::tools::ToolRegistry::new(),
+            Box::new(MockClient::new(vec![chat_response_text("r1", "ok")])),
+        );
+
+        let mut snapshot = agent.snapshot_session();
+        snapshot.messages = vec![Message::system("system prompt")];
+        for idx in 0..7 {
+            snapshot.messages.push(Message::user(format!(
+                "user turn {idx}: {}",
+                "x".repeat(140)
+            )));
+            snapshot.messages.push(Message {
+                role: Role::Assistant,
+                content: Some(format!("assistant turn {idx}: {}", "y".repeat(120))),
+                tool_calls: None,
+                tool_call_id: None,
+                name: None,
+                extra: BTreeMap::new(),
+            });
+        }
+        agent.restore_session(snapshot);
+
+        let (handle, mut events) =
+            spawn_runtime_with_agent(agent, cfg, None, Some("demo-session".to_string()), None);
+        let _ = recv_event(&mut events).await;
+        let _ = recv_event(&mut events).await;
+
+        handle
+            .send(RuntimeCommand::SessionCompact)
+            .await
+            .expect("send compact");
+
+        let mut saw_compacted = false;
+        let mut saw_warning = false;
+        for _ in 0..2 {
+            match recv_event(&mut events).await {
+                RuntimeEvent::Session(SessionEvent::Compacted { session_id }) => {
+                    saw_compacted = session_id == "demo-session";
+                }
+                RuntimeEvent::Warning(WarningEvent { message, .. }) => {
+                    if message.contains("compacted session demo-session") {
+                        saw_warning = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        assert!(saw_compacted, "missing compacted session event");
+        assert!(saw_warning, "missing compaction summary warning");
     }
 }

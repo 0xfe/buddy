@@ -4,12 +4,11 @@
 //! can resume context without rehydrating from the provider.
 
 use crate::agent::AgentSessionSnapshot;
+use rand::rngs::OsRng;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use std::collections::hash_map::DefaultHasher;
 use std::fs;
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const SESSIONS_DIR: &str = "sessions";
@@ -39,8 +38,6 @@ struct PersistedSession {
     updated_at_millis: u64,
     state: AgentSessionSnapshot,
 }
-
-static NEXT_SESSION_NONCE: AtomicU64 = AtomicU64::new(1);
 
 impl SessionStore {
     /// Open/create the default local session directory (`.buddyx/sessions`).
@@ -206,27 +203,9 @@ fn now_unix_millis() -> u64 {
 
 /// Generate a unique-ish hex session id (`xxxx-xxxx-xxxx-xxxx`).
 pub fn generate_session_id() -> String {
-    let nonce = NEXT_SESSION_NONCE.fetch_add(1, Ordering::Relaxed);
-    let now_ns = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let pid = std::process::id();
-
-    let mut h1 = DefaultHasher::new();
-    now_ns.hash(&mut h1);
-    nonce.hash(&mut h1);
-    pid.hash(&mut h1);
-    let left = h1.finish();
-
-    let mut h2 = DefaultHasher::new();
-    nonce.rotate_left(17).hash(&mut h2);
-    now_ns.rotate_left(29).hash(&mut h2);
-    (pid as u64).rotate_left(9).hash(&mut h2);
-    let right = h2.finish();
-
-    let mixed = left ^ right.rotate_left(13);
-    let hex = format!("{mixed:016x}");
+    let mut bytes = [0u8; 8];
+    OsRng.fill_bytes(&mut bytes);
+    let hex = format!("{:016x}", u64::from_be_bytes(bytes));
     format!(
         "{}-{}-{}-{}",
         &hex[0..4],

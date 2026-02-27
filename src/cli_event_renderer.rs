@@ -6,7 +6,9 @@
 
 use buddy::config::{select_model_profile, Config};
 use buddy::render::Renderer;
-use buddy::runtime::{MetricsEvent, ModelEvent, RuntimeEvent, RuntimeEventEnvelope, TaskEvent, ToolEvent};
+use buddy::runtime::{
+    MetricsEvent, ModelEvent, RuntimeEvent, RuntimeEventEnvelope, TaskEvent, ToolEvent,
+};
 
 use crate::{
     mark_task_running, mark_task_waiting_for_approval, parse_shell_tool_result, parse_tool_arg,
@@ -52,16 +54,22 @@ pub(crate) fn process_runtime_events(
             RuntimeEvent::Session(event) => match event {
                 buddy::runtime::SessionEvent::Created { session_id } => {
                     *ctx.active_session = session_id.clone();
-                    ctx.renderer.section(&format!("created session: {session_id}"));
+                    ctx.renderer
+                        .section(&format!("created session: {session_id}"));
                     eprintln!();
                 }
                 buddy::runtime::SessionEvent::Resumed { session_id } => {
                     *ctx.active_session = session_id.clone();
-                    ctx.renderer.section(&format!("resumed session: {session_id}"));
+                    ctx.renderer
+                        .section(&format!("resumed session: {session_id}"));
                     eprintln!();
                 }
-                buddy::runtime::SessionEvent::Saved { .. }
-                | buddy::runtime::SessionEvent::Compacted { .. } => {}
+                buddy::runtime::SessionEvent::Compacted { session_id } => {
+                    ctx.renderer
+                        .section(&format!("compacted session: {session_id}"));
+                    eprintln!();
+                }
+                buddy::runtime::SessionEvent::Saved { .. } => {}
             },
             RuntimeEvent::Task(event) => match event {
                 TaskEvent::Queued {
@@ -188,8 +196,7 @@ pub(crate) fn process_runtime_events(
                     ctx.renderer.field("base_url", &base_url);
                     ctx.renderer.field(
                         "context_limit",
-                        &ctx
-                            .config
+                        &ctx.config
                             .api
                             .context_limit
                             .map(|v| v.to_string())
@@ -247,7 +254,9 @@ pub(crate) fn process_runtime_events(
                     name,
                     arguments_json,
                     result,
-                } => render_tool_result(ctx.renderer, task.task_id, &name, &arguments_json, &result),
+                } => {
+                    render_tool_result(ctx.renderer, task.task_id, &name, &arguments_json, &result)
+                }
             },
             RuntimeEvent::Metrics(event) => match event {
                 MetricsEvent::TokenUsage {
@@ -289,7 +298,10 @@ fn render_tool_result(renderer: &Renderer, task_id: u64, name: &str, args: &str,
     match name {
         "run_shell" => {
             if let Some(shell) = parse_shell_tool_result(result) {
-                renderer.activity(&format!("task #{task_id} exited with code {}", shell.exit_code));
+                renderer.activity(&format!(
+                    "task #{task_id} exited with code {}",
+                    shell.exit_code
+                ));
                 if !shell.stdout.trim().is_empty() {
                     renderer.command_output_block(&shell.stdout);
                 }
