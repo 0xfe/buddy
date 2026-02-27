@@ -1,60 +1,93 @@
 //! CLI argument parsing via clap.
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
-/// An AI agent for the terminal. Works with any OpenAI-compatible API.
+/// An AI agent for the terminal. Works with OpenAI-compatible APIs.
 #[derive(Debug, Parser)]
-#[command(name = "buddy", version)]
+#[command(name = "buddy", version, subcommand_required = false)]
 pub struct Args {
-    /// Prompt to send. If provided, runs in one-shot mode and exits.
-    pub prompt: Option<String>,
-
     /// Path to config file (default: ./buddy.toml or ~/.config/buddy/buddy.toml).
-    #[arg(short = 'c', long = "config")]
+    #[arg(short = 'c', long = "config", global = true)]
     pub config: Option<String>,
 
-    /// Override model name.
-    #[arg(short = 'm', long = "model")]
+    /// Override model profile key (if configured) or raw API model id.
+    #[arg(short = 'm', long = "model", global = true)]
     pub model: Option<String>,
 
     /// Override API base URL.
-    #[arg(long = "base-url")]
+    #[arg(long = "base-url", global = true)]
     pub base_url: Option<String>,
 
     /// Run shell/files tools inside a running container.
-    #[arg(long = "container", conflicts_with = "ssh")]
+    #[arg(long = "container", global = true, conflicts_with = "ssh")]
     pub container: Option<String>,
 
     /// Run shell/files tools on a remote host over SSH.
-    #[arg(long = "ssh", conflicts_with = "container")]
+    #[arg(long = "ssh", global = true, conflicts_with = "container")]
     pub ssh: Option<String>,
 
-    /// Optional tmux session name. Without a value, uses the default auto
-    /// `buddy-xxxx` name for the active target (local, --ssh, or --container).
-    #[arg(long = "tmux", num_args = 0..=1, value_name = "SESSION")]
+    /// Optional tmux session name. Without a value, uses an auto `buddy-xxxx`
+    /// name for the active target (local, --ssh, or --container).
+    #[arg(long = "tmux", global = true, num_args = 0..=1, value_name = "SESSION")]
     pub tmux: Option<Option<String>>,
 
     /// Disable color output.
-    #[arg(long = "no-color")]
+    #[arg(long = "no-color", global = true)]
     pub no_color: bool,
+
+    #[command(subcommand)]
+    pub command: Option<Command>,
+}
+
+/// Top-level CLI subcommands.
+#[derive(Debug, Clone, Subcommand)]
+pub enum Command {
+    /// Execute one prompt and exit.
+    Exec {
+        /// Prompt text to execute.
+        prompt: String,
+    },
+    /// Login to a provider for a model profile.
+    Login {
+        /// Model profile name. Uses [agent].model when omitted.
+        model: Option<String>,
+    },
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Args;
+    use super::{Args, Command};
     use clap::Parser;
 
     #[test]
-    fn tmux_parses_without_ssh() {
-        let args = Args::parse_from(["buddy", "--tmux", "buddy-dev"]);
-        assert_eq!(args.tmux, Some(Some("buddy-dev".to_string())));
-        assert!(args.ssh.is_none());
+    fn no_args_defaults_to_repl_mode() {
+        let args = Args::parse_from(["buddy"]);
+        assert!(args.command.is_none());
     }
 
     #[test]
-    fn tmux_without_value_uses_auto_session_name() {
-        let args = Args::parse_from(["buddy", "--tmux"]);
-        assert_eq!(args.tmux, Some(None));
+    fn exec_subcommand_parses_prompt() {
+        let args = Args::parse_from(["buddy", "exec", "hello"]);
+        assert!(matches!(
+            args.command,
+            Some(Command::Exec { prompt }) if prompt == "hello"
+        ));
+    }
+
+    #[test]
+    fn login_subcommand_accepts_optional_model() {
+        let args = Args::parse_from(["buddy", "login", "gpt-codex"]);
+        assert!(matches!(
+            args.command,
+            Some(Command::Login { model }) if model.as_deref() == Some("gpt-codex")
+        ));
+    }
+
+    #[test]
+    fn tmux_parses_without_remote_flags() {
+        let args = Args::parse_from(["buddy", "--tmux", "buddy-dev"]);
+        assert_eq!(args.tmux, Some(Some("buddy-dev".to_string())));
+        assert!(args.ssh.is_none());
     }
 
     #[test]

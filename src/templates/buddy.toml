@@ -2,17 +2,45 @@
 # See README for all options. Environment variables override these values:
 #   BUDDY_API_KEY, BUDDY_BASE_URL, BUDDY_MODEL
 # Legacy AGENT_* variables are still accepted for compatibility.
+#
+# Profiles live under [models.<name>] (alias: [model.<name>]).
+# Profile fields:
+# - api: "completions" | "responses"
+# - auth: "api-key" | "login"
+# - only one of api_key, api_key_env, api_key_file may be set.
 
-[api]
-base_url = "https://api.openai.com/v1"   # any OpenAI-compatible endpoint
-# Only one of api_key, api_key_env, or api_key_file may be set.
-api_key_env = "OPENAI_API_KEY"             # env var name containing your API key
-# api_key = "sk-..."                       # inline API key (discouraged)
-# api_key_file = "/path/to/key.txt"        # file containing the API key
-model = "gpt-5.2-codex"
-# context_limit = 128000                  # auto-detected from model if omitted
+[models.gpt-codex]
+api_base_url = "https://api.openai.com/v1"
+api = "responses"
+auth = "login"
+model = "gpt-5.3-codex"
+# If you prefer API-key auth for OpenAI, switch auth = "api-key" and set one:
+# api_key_env = "OPENAI_API_KEY"
+# api_key = "sk-..."
+# api_key_file = "/path/to/key.txt"
+
+[models.gpt-spark]
+api_base_url = "https://api.openai.com/v1"
+api = "responses"
+auth = "login"
+model = "gpt-5.3-codex-spark"
+
+[models.deepseek-coder-next]
+api_base_url = "https://openrouter.ai/api/v1"
+api = "completions"
+auth = "api-key"
+api_key_env = "OPENROUTER_API_KEY"
+model = "qwen/qwen3-coder-next"
+
+[models.kimi]
+api_base_url = "https://api.moonshot.ai/v1"
+api = "completions"
+auth = "api-key"
+api_key_env = "MOONSHOT_API_KEY"
+model = "kimi-k2.5"
 
 [agent]
+model = "gpt-codex"                           # active profile key from [models.<name>]
 # system_prompt = "Optional override. If unset, uses the built-in prompt template."
 max_iterations = 20
 # temperature = 0.7
@@ -23,7 +51,7 @@ shell_enabled = true
 fetch_enabled = true
 files_enabled = true
 search_enabled = true
-shell_confirm = true                       # ask before running shell commands
+shell_confirm = true                          # ask before running shell commands
 
 [display]
 color = true

@@ -11,35 +11,78 @@
 
 use crate::error::ConfigError;
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 const DEFAULT_BUDDY_CONFIG_TEMPLATE: &str = include_str!("templates/buddy.toml");
+const DEFAULT_MODEL_PROFILE_NAME: &str = "gpt-codex";
+const DEFAULT_MODEL_ID: &str = "gpt-5.3-codex";
+const DEFAULT_API_BASE_URL: &str = "https://api.openai.com/v1";
+
+/// Provider wire protocol for model requests.
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ApiProtocol {
+    #[default]
+    Completions,
+    Responses,
+}
+
+/// Authentication mode for a model profile.
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum AuthMode {
+    #[default]
+    ApiKey,
+    Login,
+}
 
 // ---------------------------------------------------------------------------
 // Config structs
 // ---------------------------------------------------------------------------
 
-/// Top-level configuration.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
+/// Top-level runtime configuration.
+#[derive(Debug, Clone)]
 pub struct Config {
+    /// Resolved active API settings from `agent.model` + `models.<name>`.
     pub api: ApiConfig,
+    /// Configured model profiles keyed by profile name.
+    pub models: BTreeMap<String, ModelConfig>,
     pub agent: AgentConfig,
     pub tools: ToolsConfig,
     pub display: DisplayConfig,
 }
 
-/// API connection settings.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
+impl Default for Config {
+    fn default() -> Self {
+        let models = default_models_map();
+        let mut agent = AgentConfig::default();
+        agent.model = DEFAULT_MODEL_PROFILE_NAME.into();
+        let api =
+            resolve_active_api_with(&models, &agent.model, None, |_| None, |_| Ok(String::new()))
+                .unwrap_or_default();
+        Self {
+            api,
+            models,
+            agent,
+            tools: ToolsConfig::default(),
+            display: DisplayConfig::default(),
+        }
+    }
+}
+
+/// Resolved API connection settings used by the runtime HTTP client.
+#[derive(Debug, Clone)]
 pub struct ApiConfig {
     pub base_url: String,
     pub api_key: String,
-    pub api_key_env: Option<String>,
-    pub api_key_file: Option<String>,
     pub model: String,
+    pub protocol: ApiProtocol,
+    pub auth: AuthMode,
+    /// Selected profile key (for login-token lookup and UX messaging).
+    pub profile: String,
     /// Override for context window size. Auto-detected from model name if omitted.
     pub context_limit: Option<usize>,
 }
@@ -47,11 +90,59 @@ pub struct ApiConfig {
 impl Default for ApiConfig {
     fn default() -> Self {
         Self {
-            base_url: "https://api.openai.com/v1".into(),
+            base_url: DEFAULT_API_BASE_URL.into(),
+            api_key: String::new(),
+            model: DEFAULT_MODEL_ID.into(),
+            protocol: ApiProtocol::Completions,
+            auth: AuthMode::ApiKey,
+            profile: DEFAULT_MODEL_PROFILE_NAME.to_string(),
+            context_limit: None,
+        }
+    }
+}
+
+impl ApiConfig {
+    /// True when the active profile requires stored login credentials.
+    pub fn uses_login(&self) -> bool {
+        self.auth == AuthMode::Login && self.api_key.trim().is_empty()
+    }
+}
+
+/// API model-profile settings stored under `[models.<name>]`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ModelConfig {
+    #[serde(alias = "base_url")]
+    pub api_base_url: String,
+    #[serde(default)]
+    pub api: ApiProtocol,
+    #[serde(default)]
+    pub auth: AuthMode,
+    pub api_key: String,
+    pub api_key_env: Option<String>,
+    pub api_key_file: Option<String>,
+    /// Optional concrete model id; defaults to the profile key when omitted.
+    pub model: Option<String>,
+    /// Optional override for context window size.
+    pub context_limit: Option<usize>,
+}
+
+impl ModelConfig {
+    fn resolved_model_name(&self, profile_name: &str) -> String {
+        normalized_option(&self.model).unwrap_or_else(|| profile_name.to_string())
+    }
+}
+
+impl Default for ModelConfig {
+    fn default() -> Self {
+        Self {
+            api_base_url: DEFAULT_API_BASE_URL.into(),
+            api: ApiProtocol::Completions,
+            auth: AuthMode::ApiKey,
             api_key: String::new(),
             api_key_env: None,
             api_key_file: None,
-            model: "gpt-5.2-codex".into(),
+            model: None,
             context_limit: None,
         }
     }
@@ -61,6 +152,8 @@ impl Default for ApiConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct AgentConfig {
+    /// Active model-profile key (must exist under `[models.<name>]`).
+    pub model: String,
     pub system_prompt: String,
     /// Safety cap on agentic loop iterations.
     pub max_iterations: usize,
@@ -71,6 +164,7 @@ pub struct AgentConfig {
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
+            model: String::new(),
             // Empty means "no additional operator instructions"; the built-in
             // system prompt template is rendered at runtime in `main.rs`.
             system_prompt: String::new(),
@@ -124,6 +218,57 @@ impl Default for DisplayConfig {
     }
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+struct FileConfig {
+    #[serde(alias = "model")]
+    models: BTreeMap<String, ModelConfig>,
+    /// Legacy compatibility for older configs that still use `[api]`.
+    api: Option<LegacyApiConfig>,
+    agent: AgentConfig,
+    tools: ToolsConfig,
+    display: DisplayConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+struct LegacyApiConfig {
+    base_url: String,
+    api_key: String,
+    api_key_env: Option<String>,
+    api_key_file: Option<String>,
+    model: String,
+    context_limit: Option<usize>,
+}
+
+impl Default for LegacyApiConfig {
+    fn default() -> Self {
+        Self {
+            base_url: DEFAULT_API_BASE_URL.into(),
+            api_key: String::new(),
+            api_key_env: None,
+            api_key_file: None,
+            model: DEFAULT_MODEL_ID.into(),
+            context_limit: None,
+        }
+    }
+}
+
+impl LegacyApiConfig {
+    fn into_model_config(self) -> ModelConfig {
+        ModelConfig {
+            api_base_url: self.base_url,
+            api: ApiProtocol::Completions,
+            auth: AuthMode::ApiKey,
+            api_key: self.api_key,
+            api_key_env: self.api_key_env,
+            api_key_file: self.api_key_file,
+            model: Some(self.model),
+            context_limit: self.context_limit,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Loading
 // ---------------------------------------------------------------------------
@@ -151,28 +296,54 @@ pub fn load_config(path_override: Option<&str>) -> Result<Config, ConfigError> {
         String::new()
     };
 
-    let mut config: Config = toml::from_str(&config_text)?;
+    let mut parsed: FileConfig = toml::from_str(&config_text)?;
 
-    // API key resolution order:
-    // 1) BUDDY_API_KEY / AGENT_API_KEY env override
-    // 2) api.api_key_env (named env var)
-    // 3) api.api_key_file (file contents)
-    // 4) api.api_key literal
-    let api_key_override = std::env::var("BUDDY_API_KEY")
-        .or_else(|_| std::env::var("AGENT_API_KEY"))
-        .ok();
-    resolve_api_key(
-        &mut config.api,
-        api_key_override,
+    if parsed.models.is_empty() {
+        if let Some(legacy_api) = parsed.api.take() {
+            parsed.models.insert(
+                DEFAULT_MODEL_PROFILE_NAME.to_string(),
+                legacy_api.into_model_config(),
+            );
+            if normalized_string(&parsed.agent.model).is_none() {
+                parsed.agent.model = DEFAULT_MODEL_PROFILE_NAME.to_string();
+            }
+        } else {
+            parsed.models = default_models_map();
+        }
+    }
+
+    if normalized_string(&parsed.agent.model).is_none() {
+        parsed.agent.model = parsed
+            .models
+            .keys()
+            .next()
+            .cloned()
+            .unwrap_or_else(|| DEFAULT_MODEL_PROFILE_NAME.to_string());
+    }
+
+    let mut config = Config {
+        api: ApiConfig::default(),
+        models: parsed.models,
+        agent: parsed.agent,
+        tools: parsed.tools,
+        display: parsed.display,
+    };
+
+    config.api = resolve_active_api_with(
+        &config.models,
+        &config.agent.model,
+        api_key_override_env(),
         |name| std::env::var(name).ok(),
         |path| {
             std::fs::read_to_string(path).map_err(|e| {
-                ConfigError::Invalid(format!("failed to read api.api_key_file `{path}`: {e}"))
+                ConfigError::Invalid(format!(
+                    "failed to read model profile api_key_file `{path}`: {e}"
+                ))
             })
         },
     )?;
 
-    // Environment variable overrides.
+    // Environment variable overrides for active runtime settings.
     if let Ok(url) = std::env::var("BUDDY_BASE_URL").or_else(|_| std::env::var("AGENT_BASE_URL")) {
         config.api.base_url = url;
     }
@@ -199,6 +370,34 @@ pub fn ensure_default_global_config() -> Result<Option<PathBuf>, ConfigError> {
     Ok(Some(path))
 }
 
+/// Switch the active profile to a configured `[models.<name>]` entry.
+pub fn select_model_profile(config: &mut Config, profile_name: &str) -> Result<(), ConfigError> {
+    let selected = profile_name.trim();
+    if selected.is_empty() {
+        return Err(ConfigError::Invalid(
+            "model profile name must not be empty".to_string(),
+        ));
+    }
+
+    let resolved_api = resolve_active_api_with(
+        &config.models,
+        selected,
+        api_key_override_env(),
+        |name| std::env::var(name).ok(),
+        |path| {
+            std::fs::read_to_string(path).map_err(|e| {
+                ConfigError::Invalid(format!(
+                    "failed to read model profile api_key_file `{path}`: {e}"
+                ))
+            })
+        },
+    )?;
+
+    config.agent.model = selected.to_string();
+    config.api = resolved_api;
+    Ok(())
+}
+
 fn ensure_default_global_config_at_path(path: &Path) -> Result<(), ConfigError> {
     if path.exists() {
         return Ok(());
@@ -218,51 +417,119 @@ fn ensure_default_global_config_at_path(path: &Path) -> Result<(), ConfigError> 
     }
 }
 
-fn resolve_api_key<FEnv, FRead>(
-    api: &mut ApiConfig,
+fn api_key_override_env() -> Option<String> {
+    std::env::var("BUDDY_API_KEY")
+        .or_else(|_| std::env::var("AGENT_API_KEY"))
+        .ok()
+}
+
+fn default_models_map() -> BTreeMap<String, ModelConfig> {
+    let mut models = BTreeMap::new();
+    models.insert(
+        DEFAULT_MODEL_PROFILE_NAME.to_string(),
+        ModelConfig {
+            api_base_url: DEFAULT_API_BASE_URL.to_string(),
+            api: ApiProtocol::Responses,
+            auth: AuthMode::Login,
+            api_key: String::new(),
+            api_key_env: None,
+            api_key_file: None,
+            model: Some(DEFAULT_MODEL_ID.to_string()),
+            context_limit: None,
+        },
+    );
+    models.insert(
+        "gpt-spark".to_string(),
+        ModelConfig {
+            api_base_url: DEFAULT_API_BASE_URL.to_string(),
+            api: ApiProtocol::Responses,
+            auth: AuthMode::Login,
+            api_key: String::new(),
+            api_key_env: None,
+            api_key_file: None,
+            model: Some("gpt-5.3-spark".to_string()),
+            context_limit: None,
+        },
+    );
+    models
+}
+
+fn resolve_active_api_with<FEnv, FRead>(
+    models: &BTreeMap<String, ModelConfig>,
+    selected_profile: &str,
     key_override: Option<String>,
     env_lookup: FEnv,
     read_file: FRead,
-) -> Result<(), ConfigError>
+) -> Result<ApiConfig, ConfigError>
 where
     FEnv: Fn(&str) -> Option<String>,
     FRead: Fn(&str) -> Result<String, ConfigError>,
 {
-    validate_api_key_sources(api)?;
+    let profile_name = selected_profile.trim();
+    let Some(profile) = models.get(profile_name) else {
+        return Err(ConfigError::Invalid(format!(
+            "agent.model `{profile_name}` not found in `[models.<name>]`"
+        )));
+    };
 
-    if let Some(key) = key_override {
-        api.api_key = key;
-        return Ok(());
-    }
+    let path_prefix = format!("models.{profile_name}");
+    let api_key = resolve_api_key(profile, key_override, env_lookup, read_file, &path_prefix)?;
+    let base_url = normalized_string(&profile.api_base_url)
+        .unwrap_or_else(|| DEFAULT_API_BASE_URL.to_string());
 
-    if let Some(env_name) = normalized_option(&api.api_key_env) {
-        api.api_key = env_lookup(&env_name).unwrap_or_default();
-        return Ok(());
-    }
-
-    if let Some(path) = normalized_option(&api.api_key_file) {
-        api.api_key = read_file(&path)?.trim_end().to_string();
-        return Ok(());
-    }
-
-    api.api_key = api.api_key.trim().to_string();
-    Ok(())
+    Ok(ApiConfig {
+        base_url,
+        api_key,
+        model: profile.resolved_model_name(profile_name),
+        protocol: profile.api,
+        auth: profile.auth,
+        profile: profile_name.to_string(),
+        context_limit: profile.context_limit,
+    })
 }
 
-fn validate_api_key_sources(api: &ApiConfig) -> Result<(), ConfigError> {
+fn resolve_api_key<FEnv, FRead>(
+    model: &ModelConfig,
+    key_override: Option<String>,
+    env_lookup: FEnv,
+    read_file: FRead,
+    path_prefix: &str,
+) -> Result<String, ConfigError>
+where
+    FEnv: Fn(&str) -> Option<String>,
+    FRead: Fn(&str) -> Result<String, ConfigError>,
+{
+    validate_api_key_sources(model, path_prefix)?;
+
+    if let Some(key) = key_override {
+        return Ok(key.trim().to_string());
+    }
+
+    if let Some(env_name) = normalized_option(&model.api_key_env) {
+        return Ok(env_lookup(&env_name).unwrap_or_default().trim().to_string());
+    }
+
+    if let Some(path) = normalized_option(&model.api_key_file) {
+        return Ok(read_file(&path)?.trim_end().to_string());
+    }
+
+    Ok(model.api_key.trim().to_string())
+}
+
+fn validate_api_key_sources(model: &ModelConfig, path_prefix: &str) -> Result<(), ConfigError> {
     let mut configured = Vec::new();
-    if normalized_string(&api.api_key).is_some() {
+    if normalized_string(&model.api_key).is_some() {
         configured.push("api_key");
     }
-    if normalized_option(&api.api_key_env).is_some() {
+    if normalized_option(&model.api_key_env).is_some() {
         configured.push("api_key_env");
     }
-    if normalized_option(&api.api_key_file).is_some() {
+    if normalized_option(&model.api_key_file).is_some() {
         configured.push("api_key_file");
     }
     if configured.len() > 1 {
         return Err(ConfigError::Invalid(format!(
-            "only one of api.api_key, api.api_key_env, and api.api_key_file may be set (found: {})",
+            "only one of {path_prefix}.api_key, {path_prefix}.api_key_env, and {path_prefix}.api_key_file may be set (found: {})",
             configured.join(", ")
         )));
     }
@@ -278,7 +545,7 @@ fn normalized_string(value: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
-fn config_root_dir() -> Option<PathBuf> {
+pub fn config_root_dir() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("XDG_CONFIG_HOME") {
         let trimmed = path.trim();
         if !trimmed.is_empty() {
@@ -301,8 +568,11 @@ mod tests {
     #[test]
     fn defaults_are_sensible() {
         let c = Config::default();
+        assert_eq!(c.agent.model, "gpt-codex");
         assert_eq!(c.api.base_url, "https://api.openai.com/v1");
-        assert_eq!(c.api.model, "gpt-5.2-codex");
+        assert_eq!(c.api.model, "gpt-5.3-codex");
+        assert_eq!(c.api.protocol, ApiProtocol::Responses);
+        assert_eq!(c.api.auth, AuthMode::Login);
         assert_eq!(c.agent.max_iterations, 20);
         assert!(c.tools.shell_enabled);
         assert!(c.display.color);
@@ -311,103 +581,193 @@ mod tests {
     #[test]
     fn parse_partial_toml() {
         let toml = r#"
-            [api]
-            model = "llama3"
+            [models.kimi]
+            api_base_url = "https://api.moonshot.ai/v1"
+            api_key_env = "MOONSHOT_API_KEY"
+
+            [agent]
+            model = "kimi"
+
             [tools]
             shell_confirm = false
         "#;
-        let c: Config = toml::from_str(toml).unwrap();
-        assert_eq!(c.api.model, "llama3");
+        let c = parse_file_config_for_test(toml).unwrap();
+        assert_eq!(c.agent.model, "kimi");
+        assert_eq!(c.api.model, "kimi");
+        assert_eq!(c.api.base_url, "https://api.moonshot.ai/v1");
         assert!(!c.tools.shell_confirm);
-        // Unset fields keep defaults.
-        assert_eq!(c.api.base_url, "https://api.openai.com/v1");
         assert!(c.display.color);
     }
 
     #[test]
+    fn parse_model_alias_table() {
+        let toml = r#"
+            [model.kimi]
+            api_base_url = "https://api.moonshot.ai/v1"
+
+            [agent]
+            model = "kimi"
+        "#;
+        let c = parse_file_config_for_test(toml).unwrap();
+        assert_eq!(c.agent.model, "kimi");
+        assert_eq!(c.api.model, "kimi");
+        assert_eq!(c.api.base_url, "https://api.moonshot.ai/v1");
+    }
+
+    #[test]
+    fn parse_model_api_and_auth_modes() {
+        let toml = r#"
+            [models.gpt-codex]
+            api_base_url = "https://api.openai.com/v1"
+            api = "responses"
+            auth = "login"
+            model = "gpt-5.3-codex"
+
+            [agent]
+            model = "gpt-codex"
+        "#;
+        let c = parse_file_config_for_test(toml).unwrap();
+        assert_eq!(c.api.protocol, ApiProtocol::Responses);
+        assert_eq!(c.api.auth, AuthMode::Login);
+    }
+
+    #[test]
+    fn missing_agent_model_defaults_to_first_profile() {
+        let toml = r#"
+            [models.kimi]
+            api_base_url = "https://api.moonshot.ai/v1"
+        "#;
+        let c = parse_file_config_for_test(toml).unwrap();
+        assert_eq!(c.agent.model, "kimi");
+        assert_eq!(c.api.model, "kimi");
+    }
+
+    #[test]
     fn parse_empty_string() {
-        let c: Config = toml::from_str("").unwrap();
-        assert_eq!(c.api.model, "gpt-5.2-codex");
+        let c = parse_file_config_for_test("").unwrap();
+        assert_eq!(c.agent.model, "gpt-codex");
+        assert_eq!(c.api.model, "gpt-5.3-codex");
     }
 
     #[test]
     fn api_key_sources_are_mutually_exclusive() {
-        let mut api = ApiConfig {
+        let model = ModelConfig {
             api_key: "literal".into(),
             api_key_env: Some("OPENAI_API_KEY".into()),
-            ..ApiConfig::default()
+            ..ModelConfig::default()
         };
-        let err = resolve_api_key(&mut api, None, |_| None, |_| Ok(String::new())).unwrap_err();
+        let err = resolve_api_key(
+            &model,
+            None,
+            |_| None,
+            |_| Ok(String::new()),
+            "models.gpt-codex",
+        )
+        .unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("only one of api.api_key"));
+        assert!(msg.contains("only one of models.gpt-codex.api_key"));
     }
 
     #[test]
     fn api_key_env_source_is_resolved() {
-        let mut api = ApiConfig {
+        let model = ModelConfig {
             api_key_env: Some("OPENAI_API_KEY".into()),
-            ..ApiConfig::default()
+            ..ModelConfig::default()
         };
 
-        resolve_api_key(
-            &mut api,
+        let resolved = resolve_api_key(
+            &model,
             None,
             |name| (name == "OPENAI_API_KEY").then(|| "env-secret".into()),
             |_| Ok(String::new()),
+            "models.gpt-codex",
         )
         .unwrap();
 
-        assert_eq!(api.api_key, "env-secret");
+        assert_eq!(resolved, "env-secret");
     }
 
     #[test]
     fn missing_api_key_env_source_defaults_to_empty() {
-        let mut api = ApiConfig {
+        let model = ModelConfig {
             api_key_env: Some("OPENAI_API_KEY".into()),
-            ..ApiConfig::default()
+            ..ModelConfig::default()
         };
 
-        resolve_api_key(&mut api, None, |_| None, |_| Ok(String::new())).unwrap();
-        assert!(api.api_key.is_empty());
+        let resolved = resolve_api_key(
+            &model,
+            None,
+            |_| None,
+            |_| Ok(String::new()),
+            "models.gpt-codex",
+        )
+        .unwrap();
+        assert!(resolved.is_empty());
     }
 
     #[test]
     fn api_key_file_source_is_trimmed() {
-        let mut api = ApiConfig {
+        let model = ModelConfig {
             api_key_file: Some("/tmp/key.txt".into()),
-            ..ApiConfig::default()
+            ..ModelConfig::default()
         };
 
-        resolve_api_key(
-            &mut api,
+        let resolved = resolve_api_key(
+            &model,
             None,
             |_| None,
             |path| {
                 assert_eq!(path, "/tmp/key.txt");
                 Ok("file-secret\n".into())
             },
+            "models.gpt-codex",
         )
         .unwrap();
 
-        assert_eq!(api.api_key, "file-secret");
+        assert_eq!(resolved, "file-secret");
     }
 
     #[test]
     fn explicit_api_key_env_override_wins() {
-        let mut api = ApiConfig {
+        let model = ModelConfig {
             api_key_file: Some("/tmp/key.txt".into()),
-            ..ApiConfig::default()
+            ..ModelConfig::default()
         };
 
-        resolve_api_key(
-            &mut api,
+        let resolved = resolve_api_key(
+            &model,
             Some("override".into()),
             |_| None,
             |_| Ok("ignored".into()),
+            "models.gpt-codex",
         )
         .unwrap();
 
-        assert_eq!(api.api_key, "override");
+        assert_eq!(resolved, "override");
+    }
+
+    #[test]
+    fn select_model_profile_updates_active_api() {
+        let mut config = parse_file_config_for_test(
+            r#"
+            [models.gpt-codex]
+            model = "gpt-5.3-codex"
+
+            [models.kimi]
+            api_base_url = "https://api.moonshot.ai/v1"
+            model = "moonshot-v1"
+
+            [agent]
+            model = "gpt-codex"
+        "#,
+        )
+        .unwrap();
+
+        select_model_profile(&mut config, "kimi").unwrap();
+
+        assert_eq!(config.agent.model, "kimi");
+        assert_eq!(config.api.base_url, "https://api.moonshot.ai/v1");
+        assert_eq!(config.api.model, "moonshot-v1");
     }
 
     #[test]
@@ -428,5 +788,43 @@ mod tests {
 
         std::fs::remove_file(&path).unwrap();
         std::fs::remove_dir_all(&tmp_root).unwrap();
+    }
+
+    fn parse_file_config_for_test(toml_text: &str) -> Result<Config, ConfigError> {
+        let mut parsed: FileConfig = toml::from_str(toml_text)?;
+        if parsed.models.is_empty() {
+            if let Some(legacy_api) = parsed.api.take() {
+                parsed.models.insert(
+                    DEFAULT_MODEL_PROFILE_NAME.to_string(),
+                    legacy_api.into_model_config(),
+                );
+            } else {
+                parsed.models = default_models_map();
+            }
+        }
+        if normalized_string(&parsed.agent.model).is_none() {
+            parsed.agent.model = parsed
+                .models
+                .keys()
+                .next()
+                .cloned()
+                .unwrap_or_else(|| DEFAULT_MODEL_PROFILE_NAME.to_string());
+        }
+
+        let api = resolve_active_api_with(
+            &parsed.models,
+            &parsed.agent.model,
+            None,
+            |_| None,
+            |_| Ok(String::new()),
+        )?;
+
+        Ok(Config {
+            api,
+            models: parsed.models,
+            agent: parsed.agent,
+            tools: parsed.tools,
+            display: parsed.display,
+        })
     }
 }
