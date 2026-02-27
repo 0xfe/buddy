@@ -5,7 +5,7 @@
 //! stream without depending on `main.rs` orchestration details.
 
 use buddy::config::{select_model_profile, Config};
-use buddy::render::Renderer;
+use buddy::render::{set_progress_enabled, RenderSink};
 use buddy::runtime::{
     MetricsEvent, ModelEvent, RuntimeEvent, RuntimeEventEnvelope, TaskEvent, ToolEvent,
 };
@@ -18,7 +18,7 @@ use crate::{
 
 /// Mutable render-time state mirrored from the interactive loop.
 pub(crate) struct RuntimeEventRenderContext<'a> {
-    pub renderer: &'a Renderer,
+    pub renderer: &'a dyn RenderSink,
     pub background_tasks: &'a mut Vec<BackgroundTask>,
     pub completed_tasks: &'a mut Vec<CompletedBackgroundTask>,
     pub pending_approval: &'a mut Option<PendingApproval>,
@@ -89,7 +89,7 @@ pub(crate) fn process_runtime_events(
                         timeout_at: None,
                         final_response: None,
                     });
-                    Renderer::set_progress_enabled(false);
+                    set_progress_enabled(false);
                 }
                 TaskEvent::Started { task } => {
                     mark_task_running(ctx.background_tasks, task.task_id);
@@ -320,7 +320,7 @@ pub(crate) fn process_runtime_events(
     }
 }
 
-fn render_tool_result(renderer: &Renderer, task_id: u64, name: &str, args: &str, result: &str) {
+fn render_tool_result(renderer: &dyn RenderSink, task_id: u64, name: &str, args: &str, result: &str) {
     match name {
         "run_shell" => {
             if let Some(shell) = parse_shell_tool_result(result) {

@@ -17,7 +17,7 @@ use buddy::config::select_model_profile;
 use buddy::config::{AuthMode, Config, GlobalConfigInitResult, ToolsConfig};
 use buddy::preflight::validate_active_profile_ready;
 use buddy::prompt::{render_system_prompt, ExecutionTarget, SystemPromptParams};
-use buddy::render::Renderer;
+use buddy::render::{set_progress_enabled, RenderSink, Renderer};
 use buddy::runtime::{
     spawn_runtime_with_agent, spawn_runtime_with_shared_agent,
     ApprovalDecision as RuntimeApprovalDecision, BuddyRuntimeHandle, ModelEvent, PromptMetadata,
@@ -432,7 +432,7 @@ async fn main() {
             );
             let _ = drain_completed_tasks(&renderer, &mut completed_tasks);
             if background_tasks.is_empty() {
-                Renderer::set_progress_enabled(true);
+                set_progress_enabled(true);
             }
 
             if let Some(approval) = pending_approval.take() {
@@ -819,7 +819,7 @@ async fn main() {
                 continue;
             }
 
-            Renderer::set_progress_enabled(false);
+            set_progress_enabled(false);
             if let Err(err) = runtime
                 .send(RuntimeCommand::SubmitPrompt {
                     prompt: input.to_string(),
@@ -845,7 +845,7 @@ async fn main() {
     }
 }
 
-fn render_help(renderer: &Renderer) {
+fn render_help(renderer: &dyn RenderSink) {
     renderer.section("slash commands");
     for cmd in &repl::SLASH_COMMANDS {
         renderer.field(cmd.name, cmd.description);
@@ -853,7 +853,7 @@ fn render_help(renderer: &Renderer) {
     eprintln!();
 }
 
-fn run_init_flow(renderer: &Renderer, force: bool) -> Result<(), String> {
+fn run_init_flow(renderer: &dyn RenderSink, force: bool) -> Result<(), String> {
     match initialize_default_global_config(force)
         .map_err(|e| format!("failed to initialize ~/.config/buddy: {e}"))?
     {
@@ -878,7 +878,7 @@ fn run_init_flow(renderer: &Renderer, force: bool) -> Result<(), String> {
 }
 
 async fn handle_session_command(
-    renderer: &Renderer,
+    renderer: &dyn RenderSink,
     session_store: &SessionStore,
     runtime: &BuddyRuntimeHandle,
     active_session: &mut String,
@@ -946,7 +946,7 @@ async fn handle_session_command(
 }
 
 async fn handle_model_command(
-    renderer: &Renderer,
+    renderer: &dyn RenderSink,
     config: &mut Config,
     runtime: &BuddyRuntimeHandle,
     selector: Option<&str>,
@@ -1118,7 +1118,7 @@ fn normalize_model_selector(selector: &str) -> &str {
 }
 
 async fn run_login_flow(
-    renderer: &Renderer,
+    renderer: &dyn RenderSink,
     config: &Config,
     selector: Option<&str>,
     reset: bool,
@@ -1230,7 +1230,7 @@ async fn run_login_flow(
     Ok(())
 }
 
-fn render_sessions(renderer: &Renderer, active_session: &str, sessions: &[SessionSummary]) {
+fn render_sessions(renderer: &dyn RenderSink, active_session: &str, sessions: &[SessionSummary]) {
     renderer.section("sessions");
     renderer.field("current", active_session);
     if sessions.is_empty() {
@@ -1268,7 +1268,7 @@ fn format_elapsed_since_epoch_millis(ts: u64) -> String {
 }
 
 fn render_status(
-    renderer: &Renderer,
+    renderer: &dyn RenderSink,
     config: &Config,
     agent: Option<&Agent>,
     runtime_context: RuntimeContextState,
@@ -1312,7 +1312,7 @@ fn render_status(
 }
 
 fn render_context(
-    renderer: &Renderer,
+    renderer: &dyn RenderSink,
     agent: Option<&Agent>,
     runtime_context: RuntimeContextState,
     background_tasks: &[BackgroundTask],
@@ -1420,7 +1420,7 @@ fn collect_runtime_events(
 }
 
 fn process_runtime_events(
-    renderer: &Renderer,
+    renderer: &dyn RenderSink,
     events: &mut Vec<RuntimeEventEnvelope>,
     background_tasks: &mut Vec<BackgroundTask>,
     completed_tasks: &mut Vec<CompletedBackgroundTask>,
@@ -1442,7 +1442,7 @@ fn process_runtime_events(
 }
 
 fn drain_completed_tasks(
-    renderer: &Renderer,
+    renderer: &dyn RenderSink,
     completed: &mut Vec<CompletedBackgroundTask>,
 ) -> bool {
     if completed.is_empty() {
@@ -1859,7 +1859,7 @@ fn approval_prompt_actor(
     actor
 }
 
-fn render_shell_approval_request(renderer: &Renderer, actor: &str, command: &str) {
+fn render_shell_approval_request(renderer: &dyn RenderSink, actor: &str, command: &str) {
     renderer.activity(&format!("shell command on {actor}"));
     renderer.approval_block(&format_approval_command_block(command));
 }
@@ -2006,7 +2006,7 @@ fn resume_request_from_command(
 }
 
 fn initialize_active_session(
-    renderer: &Renderer,
+    renderer: &dyn RenderSink,
     session_store: &SessionStore,
     agent: &mut Agent,
     resume_request: Option<ResumeRequest>,
@@ -2152,7 +2152,7 @@ async fn request_task_cancellation(
 }
 
 async fn kill_background_task(
-    renderer: &Renderer,
+    renderer: &dyn RenderSink,
     runtime: &BuddyRuntimeHandle,
     tasks: &mut [BackgroundTask],
     pending_approval: &mut Option<PendingApproval>,
@@ -2166,7 +2166,7 @@ async fn kill_background_task(
 }
 
 async fn enforce_task_timeouts(
-    renderer: &Renderer,
+    renderer: &dyn RenderSink,
     runtime: &BuddyRuntimeHandle,
     tasks: &mut [BackgroundTask],
     pending_approval: &mut Option<PendingApproval>,
@@ -2191,7 +2191,7 @@ async fn enforce_task_timeouts(
     }
 }
 
-fn render_background_tasks(renderer: &Renderer, tasks: &[BackgroundTask]) {
+fn render_background_tasks(renderer: &dyn RenderSink, tasks: &[BackgroundTask]) {
     renderer.section("background tasks");
     if tasks.is_empty() {
         renderer.field("running", "none");
@@ -2254,6 +2254,114 @@ fn truncate_preview(text: &str, max_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex as StdMutex};
+
+    #[derive(Clone, Default)]
+    struct MockRenderer {
+        entries: Arc<StdMutex<Vec<(String, String)>>>,
+    }
+
+    impl MockRenderer {
+        fn record(&self, kind: &str, message: &str) {
+            self.entries
+                .lock()
+                .expect("mock renderer lock")
+                .push((kind.to_string(), message.to_string()));
+        }
+
+        fn saw(&self, kind: &str, needle: &str) -> bool {
+            self.entries
+                .lock()
+                .expect("mock renderer lock")
+                .iter()
+                .any(|(k, msg)| k == kind && msg.contains(needle))
+        }
+    }
+
+    impl RenderSink for MockRenderer {
+        fn prompt(&self) {}
+
+        fn assistant_message(&self, content: &str) {
+            self.record("assistant", content);
+        }
+
+        fn progress(&self, label: &str) -> buddy::render::ProgressHandle {
+            self.record("progress", label);
+            Renderer::new(false).progress(label)
+        }
+
+        fn progress_with_metrics(
+            &self,
+            label: &str,
+            _metrics: buddy::render::ProgressMetrics,
+        ) -> buddy::render::ProgressHandle {
+            self.record("progress", label);
+            Renderer::new(false).progress(label)
+        }
+
+        fn header(&self, model: &str) {
+            self.record("header", model);
+        }
+
+        fn tool_call(&self, name: &str, args: &str) {
+            self.record("tool_call", &format!("{name}({args})"));
+        }
+
+        fn tool_result(&self, result: &str) {
+            self.record("tool_result", result);
+        }
+
+        fn token_usage(&self, prompt: u64, completion: u64, session_total: u64) {
+            self.record(
+                "token_usage",
+                &format!("{prompt}/{completion}/{session_total}"),
+            );
+        }
+
+        fn reasoning_trace(&self, field: &str, trace: &str) {
+            self.record("reasoning", &format!("{field}:{trace}"));
+        }
+
+        fn warn(&self, msg: &str) {
+            self.record("warn", msg);
+        }
+
+        fn section(&self, title: &str) {
+            self.record("section", title);
+        }
+
+        fn activity(&self, text: &str) {
+            self.record("activity", text);
+        }
+
+        fn field(&self, key: &str, value: &str) {
+            self.record("field", &format!("{key}:{value}"));
+        }
+
+        fn detail(&self, text: &str) {
+            self.record("detail", text);
+        }
+
+        fn error(&self, msg: &str) {
+            self.record("error", msg);
+        }
+
+        fn tool_output_block(&self, text: &str, _syntax_path: Option<&str>) {
+            self.record("tool_output", text);
+        }
+
+        fn command_output_block(&self, text: &str) {
+            self.record("command_output", text);
+        }
+
+        fn reasoning_block(&self, text: &str) {
+            self.record("reasoning_block", text);
+        }
+
+        fn approval_block(&self, text: &str) {
+            self.record("approval_block", text);
+        }
+    }
 
     #[test]
     fn exec_shell_guardrails_fail_closed_without_override() {
@@ -2577,6 +2685,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn handle_session_command_resume_without_id_warns() {
+        let temp = std::env::temp_dir().join(format!(
+            "buddy-main-session-test-missing-id-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let store = SessionStore::open(&temp).expect("open session store");
+        let (tx, mut rx) = mpsc::channel(4);
+        let runtime = BuddyRuntimeHandle { commands: tx };
+        let renderer = MockRenderer::default();
+        let mut active = "abcd-1234".to_string();
+
+        handle_session_command(
+            &renderer,
+            &store,
+            &runtime,
+            &mut active,
+            Some("resume"),
+            None,
+        )
+        .await;
+
+        assert!(
+            renderer.saw("warn", "Usage: /session resume <session-id|last>"),
+            "expected usage warning"
+        );
+        assert!(rx.try_recv().is_err(), "no runtime command expected");
+    }
+
+    #[tokio::test]
+    async fn handle_session_command_resume_last_without_sessions_warns() {
+        let temp = std::env::temp_dir().join(format!(
+            "buddy-main-session-test-last-empty-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let store = SessionStore::open(&temp).expect("open session store");
+        let (tx, mut rx) = mpsc::channel(4);
+        let runtime = BuddyRuntimeHandle { commands: tx };
+        let renderer = MockRenderer::default();
+        let mut active = "abcd-1234".to_string();
+
+        handle_session_command(
+            &renderer,
+            &store,
+            &runtime,
+            &mut active,
+            Some("resume"),
+            Some("last"),
+        )
+        .await;
+
+        assert!(
+            renderer.saw("warn", "No saved sessions found."),
+            "expected empty-session warning"
+        );
+        assert!(rx.try_recv().is_err(), "no runtime command expected");
+    }
+
+    #[tokio::test]
     async fn handle_model_command_submits_switch_command() {
         let (tx, mut rx) = mpsc::channel(4);
         let runtime = BuddyRuntimeHandle { commands: tx };
@@ -2598,5 +2770,56 @@ mod tests {
             }
             other => panic!("unexpected command: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn handle_model_command_warns_on_unknown_selector() {
+        let (tx, mut rx) = mpsc::channel(4);
+        let runtime = BuddyRuntimeHandle { commands: tx };
+        let renderer = MockRenderer::default();
+        let mut config = Config::default();
+
+        handle_model_command(&renderer, &mut config, &runtime, Some("missing-profile")).await;
+
+        assert!(
+            renderer.saw("warn", "Unknown model profile"),
+            "expected unknown-profile warning"
+        );
+        assert!(rx.try_recv().is_err(), "no runtime command expected");
+    }
+
+    #[test]
+    fn process_runtime_events_routes_warning_to_injected_renderer() {
+        let renderer = MockRenderer::default();
+        let mut events = vec![RuntimeEventEnvelope {
+            seq: 1,
+            ts_unix_ms: 1,
+            event: RuntimeEvent::Warning(buddy::runtime::WarningEvent {
+                task: None,
+                message: "demo warning".to_string(),
+            }),
+        }];
+        let mut background_tasks = Vec::new();
+        let mut completed_tasks = Vec::new();
+        let mut pending_approval = None;
+        let mut config = Config::default();
+        let mut active_session = "session-x".to_string();
+        let mut runtime_context = RuntimeContextState::new(None);
+
+        process_runtime_events(
+            &renderer,
+            &mut events,
+            &mut background_tasks,
+            &mut completed_tasks,
+            &mut pending_approval,
+            &mut config,
+            &mut active_session,
+            &mut runtime_context,
+        );
+
+        assert!(
+            renderer.saw("warn", "demo warning"),
+            "runtime warning should flow through render trait"
+        );
     }
 }
