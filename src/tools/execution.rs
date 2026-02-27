@@ -7,6 +7,7 @@
 //! - a remote host over SSH with a persistent master connection
 
 use crate::error::ToolError;
+use async_trait::async_trait;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -23,15 +24,33 @@ use tokio::time::{sleep, timeout, Duration, Instant};
 /// Runtime-execution backend shared across tool instances.
 #[derive(Clone)]
 pub struct ExecutionContext {
-    inner: Arc<ExecutionBackend>,
+    inner: Arc<dyn ExecutionBackendOps>,
 }
 
-enum ExecutionBackend {
-    Local,
-    LocalTmux(LocalTmuxContext),
-    Container(ContainerContext),
-    ContainerTmux(ContainerTmuxContext),
-    Ssh(SshContext),
+/// Internal backend trait used to decouple `ExecutionContext` from concrete
+/// local/container/ssh implementations.
+#[async_trait]
+trait ExecutionBackendOps: Send + Sync {
+    fn summary(&self) -> String;
+    fn tmux_attach_info(&self) -> Option<TmuxAttachInfo>;
+    fn capture_pane_available(&self) -> bool;
+    async fn capture_pane(&self, options: CapturePaneOptions) -> Result<String, ToolError>;
+    async fn send_keys(&self, options: SendKeysOptions) -> Result<String, ToolError>;
+    async fn run_shell_command(&self, command: &str, wait: ShellWait)
+    -> Result<ExecOutput, ToolError>;
+    async fn read_file(&self, path: &str) -> Result<String, ToolError>;
+    async fn write_file(&self, path: &str, content: &str) -> Result<(), ToolError>;
+}
+
+/// Shared contract for backends that can execute shell snippets.
+#[async_trait]
+trait CommandBackend: Send + Sync {
+    async fn run_command(
+        &self,
+        command: &str,
+        stdin: Option<&[u8]>,
+        wait: ShellWait,
+    ) -> Result<ExecOutput, ToolError>;
 }
 
 /// Structured process output for shell-style commands.
@@ -127,6 +146,8 @@ struct ContainerContext {
     engine: ContainerEngine,
     container: String,
 }
+
+struct LocalBackend;
 
 struct ContainerTmuxContext {
     engine: ContainerEngine,
@@ -263,11 +284,69 @@ impl ContainerTmuxContext {
     }
 }
 
+#[async_trait]
+impl CommandBackend for LocalTmuxContext {
+    async fn run_command(
+        &self,
+        command: &str,
+        stdin: Option<&[u8]>,
+        wait: ShellWait,
+    ) -> Result<ExecOutput, ToolError> {
+        LocalTmuxContext::run_command(self, command, stdin, wait).await
+    }
+}
+
+#[async_trait]
+impl CommandBackend for ContainerContext {
+    async fn run_command(
+        &self,
+        command: &str,
+        stdin: Option<&[u8]>,
+        wait: ShellWait,
+    ) -> Result<ExecOutput, ToolError> {
+        if matches!(wait, ShellWait::NoWait) {
+            return Err(ToolError::ExecutionFailed(
+                "run_shell wait=false requires a tmux-backed execution target".into(),
+            ));
+        }
+        run_with_wait(
+            run_container_sh_process(self, command, stdin),
+            wait,
+            "timed out waiting for container command completion",
+        )
+        .await
+    }
+}
+
+#[async_trait]
+impl CommandBackend for ContainerTmuxContext {
+    async fn run_command(
+        &self,
+        command: &str,
+        stdin: Option<&[u8]>,
+        wait: ShellWait,
+    ) -> Result<ExecOutput, ToolError> {
+        ContainerTmuxContext::run_command(self, command, stdin, wait).await
+    }
+}
+
+#[async_trait]
+impl CommandBackend for SshContext {
+    async fn run_command(
+        &self,
+        command: &str,
+        stdin: Option<&[u8]>,
+        wait: ShellWait,
+    ) -> Result<ExecOutput, ToolError> {
+        SshContext::run_command(self, command, stdin, wait).await
+    }
+}
+
 impl ExecutionContext {
     /// Build a local execution context.
     pub fn local() -> Self {
         Self {
-            inner: Arc::new(ExecutionBackend::Local),
+            inner: Arc::new(LocalBackend),
         }
     }
 
@@ -300,10 +379,10 @@ impl ExecutionContext {
         }
 
         Ok(Self {
-            inner: Arc::new(ExecutionBackend::LocalTmux(LocalTmuxContext {
+            inner: Arc::new(LocalTmuxContext {
                 tmux_session,
                 configured_tmux_pane: Mutex::new(Some(ensured.pane_id)),
-            })),
+            }),
         })
     }
 
@@ -318,10 +397,10 @@ impl ExecutionContext {
 
         let engine = detect_container_engine().await?;
         Ok(Self {
-            inner: Arc::new(ExecutionBackend::Container(ContainerContext {
+            inner: Arc::new(ContainerContext {
                 engine,
                 container,
-            })),
+            }),
         })
     }
 
@@ -373,7 +452,7 @@ impl ExecutionContext {
         }
 
         Ok(Self {
-            inner: Arc::new(ExecutionBackend::ContainerTmux(context)),
+            inner: Arc::new(context),
         })
     }
 
@@ -484,153 +563,43 @@ impl ExecutionContext {
         };
 
         Ok(Self {
-            inner: Arc::new(ExecutionBackend::Ssh(SshContext {
+            inner: Arc::new(SshContext {
                 target,
                 control_path,
                 tmux_session,
                 configured_tmux_pane: Mutex::new(configured_tmux_pane),
-            })),
+            }),
         })
     }
 
     /// Human-readable execution target summary for UI/status output.
     pub fn summary(&self) -> String {
-        match self.inner.as_ref() {
-            ExecutionBackend::Local => "local".into(),
-            ExecutionBackend::LocalTmux(ctx) => format!("local (tmux:{})", ctx.tmux_session),
-            ExecutionBackend::Container(ctx) => {
-                format!(
-                    "container:{} (via {}{})",
-                    ctx.container,
-                    ctx.engine.command,
-                    if ctx.engine.kind == ContainerEngineKind::Podman {
-                        ", podman-compatible"
-                    } else {
-                        ""
-                    }
-                )
-            }
-            ExecutionBackend::ContainerTmux(ctx) => {
-                format!(
-                    "container:{} (tmux:{}) (via {}{})",
-                    ctx.container,
-                    ctx.tmux_session,
-                    ctx.engine.command,
-                    if ctx.engine.kind == ContainerEngineKind::Podman {
-                        ", podman-compatible"
-                    } else {
-                        ""
-                    }
-                )
-            }
-            ExecutionBackend::Ssh(ctx) => {
-                let mut base = format!("ssh:{}", ctx.target);
-                if let Some(name) = &ctx.tmux_session {
-                    base.push_str(&format!(" (tmux:{name})"));
-                }
-                base
-            }
-        }
+        self.inner.summary()
     }
 
     /// Return tmux attach metadata when this context is backed by a managed
     /// tmux session.
     pub fn tmux_attach_info(&self) -> Option<TmuxAttachInfo> {
-        match self.inner.as_ref() {
-            ExecutionBackend::Local => None,
-            ExecutionBackend::LocalTmux(ctx) => Some(TmuxAttachInfo {
-                session: ctx.tmux_session.clone(),
-                window: TMUX_WINDOW_NAME,
-                target: TmuxAttachTarget::Local,
-            }),
-            ExecutionBackend::Container(_) => None,
-            ExecutionBackend::ContainerTmux(ctx) => Some(TmuxAttachInfo {
-                session: ctx.tmux_session.clone(),
-                window: TMUX_WINDOW_NAME,
-                target: TmuxAttachTarget::Container {
-                    engine: ctx.engine.command.to_string(),
-                    container: ctx.container.clone(),
-                },
-            }),
-            ExecutionBackend::Ssh(ctx) => ctx.tmux_session.as_ref().map(|session| TmuxAttachInfo {
-                session: session.clone(),
-                window: TMUX_WINDOW_NAME,
-                target: TmuxAttachTarget::Ssh {
-                    target: ctx.target.clone(),
-                },
-            }),
-        }
+        self.inner.tmux_attach_info()
     }
 
     /// Whether tmux pane capture is available for this execution backend.
     pub fn capture_pane_available(&self) -> bool {
-        match self.inner.as_ref() {
-            ExecutionBackend::Local => local_tmux_pane_target().is_some(),
-            ExecutionBackend::LocalTmux(_) => true,
-            ExecutionBackend::Container(_) => false,
-            ExecutionBackend::ContainerTmux(_) => true,
-            ExecutionBackend::Ssh(ctx) => ctx.tmux_session.is_some(),
-        }
+        self.inner.capture_pane_available()
     }
 
     /// Capture pane output using tmux in the active execution backend.
     pub async fn capture_pane(&self, options: CapturePaneOptions) -> Result<String, ToolError> {
-        if options.delay > Duration::ZERO {
-            sleep(options.delay).await;
+        let mut normalized = options;
+        if normalized.delay > Duration::ZERO {
+            sleep(normalized.delay).await;
+            normalized.delay = Duration::ZERO;
         }
-
-        match self.inner.as_ref() {
-            ExecutionBackend::Local => {
-                let pane_target = options
-                    .target
-                    .as_deref()
-                    .map(str::to_string)
-                    .or_else(local_tmux_pane_target)
-                    .ok_or_else(|| {
-                        ToolError::ExecutionFailed(
-                            "capture-pane requires an active tmux session".into(),
-                        )
-                    })?;
-                run_local_capture_pane(&pane_target, &options).await
-            }
-            ExecutionBackend::LocalTmux(ctx) => {
-                let pane_target = if let Some(target) = options.target.as_deref() {
-                    target.to_string()
-                } else {
-                    ctx.ensure_prompt_ready().await?
-                };
-                run_local_capture_pane(&pane_target, &options).await
-            }
-            ExecutionBackend::Container(_) => Err(ToolError::ExecutionFailed(
-                "capture-pane is unavailable for container execution targets".into(),
-            )),
-            ExecutionBackend::ContainerTmux(ctx) => {
-                let pane_target = if let Some(target) = options.target.as_deref() {
-                    target.to_string()
-                } else {
-                    ctx.ensure_prompt_ready().await?
-                };
-                run_container_capture_pane(ctx, &pane_target, &options).await
-            }
-            ExecutionBackend::Ssh(ctx) => {
-                let tmux_session = ctx.tmux_session.as_deref().ok_or_else(|| {
-                    ToolError::ExecutionFailed(
-                        "capture-pane is unavailable: no tmux session for this ssh target".into(),
-                    )
-                })?;
-                let pane_target = if let Some(target) = options.target.as_deref() {
-                    target.to_string()
-                } else {
-                    ctx.ensure_prompt_ready(tmux_session).await?
-                };
-                run_remote_capture_pane(&ctx.target, &ctx.control_path, &pane_target, &options)
-                    .await
-            }
-        }
+        self.inner.capture_pane(normalized).await
     }
 
     /// Send keys directly to a tmux pane.
-    pub async fn send_keys(&self, options: SendKeysOptions) -> Result<String, ToolError> {
+    pub async fn send_keys(&self, mut options: SendKeysOptions) -> Result<String, ToolError> {
         if options.keys.is_empty()
             && options
                 .literal_text
@@ -644,60 +613,9 @@ impl ExecutionContext {
         }
         if options.delay > Duration::ZERO {
             sleep(options.delay).await;
+            options.delay = Duration::ZERO;
         }
-
-        match self.inner.as_ref() {
-            ExecutionBackend::Local => {
-                let pane_target = options
-                    .target
-                    .as_deref()
-                    .map(str::to_string)
-                    .or_else(local_tmux_pane_target)
-                    .ok_or_else(|| {
-                        ToolError::ExecutionFailed(
-                            "send-keys requires an active tmux session".into(),
-                        )
-                    })?;
-                send_local_tmux_keys(&pane_target, &options).await?;
-                Ok(format!("sent keys to tmux pane {pane_target}"))
-            }
-            ExecutionBackend::LocalTmux(ctx) => {
-                let pane_target = if let Some(target) = options.target.as_deref() {
-                    target.to_string()
-                } else {
-                    ctx.ensure_prompt_ready().await?
-                };
-                send_local_tmux_keys(&pane_target, &options).await?;
-                Ok(format!("sent keys to tmux pane {pane_target}"))
-            }
-            ExecutionBackend::Container(_) => Err(ToolError::ExecutionFailed(
-                "send-keys is unavailable for container execution targets".into(),
-            )),
-            ExecutionBackend::ContainerTmux(ctx) => {
-                let pane_target = if let Some(target) = options.target.as_deref() {
-                    target.to_string()
-                } else {
-                    ctx.ensure_prompt_ready().await?
-                };
-                send_container_tmux_keys(ctx, &pane_target, &options).await?;
-                Ok(format!("sent keys to tmux pane {pane_target}"))
-            }
-            ExecutionBackend::Ssh(ctx) => {
-                let tmux_session = ctx.tmux_session.as_deref().ok_or_else(|| {
-                    ToolError::ExecutionFailed(
-                        "send-keys is unavailable: no tmux session for this ssh target".into(),
-                    )
-                })?;
-                let pane_target = if let Some(target) = options.target.as_deref() {
-                    target.to_string()
-                } else {
-                    ctx.ensure_prompt_ready(tmux_session).await?
-                };
-                send_remote_tmux_keys(&ctx.target, &ctx.control_path, &pane_target, &options)
-                    .await?;
-                Ok(format!("sent keys to tmux pane {pane_target}"))
-            }
-        }
+        self.inner.send_keys(options).await
     }
 
     /// Run a shell command in the selected execution backend.
@@ -706,113 +624,362 @@ impl ExecutionContext {
         command: &str,
         wait: ShellWait,
     ) -> Result<ExecOutput, ToolError> {
-        match self.inner.as_ref() {
-            ExecutionBackend::Local => {
-                if matches!(wait, ShellWait::NoWait) {
-                    let pane_id = local_tmux_pane_target().ok_or_else(|| {
-                        ToolError::ExecutionFailed(
-                            "run_shell wait=false requires an active tmux session".into(),
-                        )
-                    })?;
-                    send_local_tmux_line(&pane_id, command).await?;
-                    return Ok(ExecOutput {
-                        exit_code: 0,
-                        stdout: format!(
-                            "command dispatched to tmux pane {pane_id}; still running in background. Use capture-pane (optionally with delay) to poll output."
-                        ),
-                        stderr: String::new(),
-                    });
-                }
-                run_with_wait(
-                    run_sh_process("sh", command, None),
-                    wait,
-                    "timed out waiting for local command completion",
-                )
-                .await
-            }
-            ExecutionBackend::LocalTmux(ctx) => ctx.run_command(command, None, wait).await,
-            ExecutionBackend::Container(ctx) => {
-                if matches!(wait, ShellWait::NoWait) {
-                    return Err(ToolError::ExecutionFailed(
-                        "run_shell wait=false requires a tmux-backed execution target".into(),
-                    ));
-                }
-                run_with_wait(
-                    run_container_sh_process(ctx, command, None),
-                    wait,
-                    "timed out waiting for container command completion",
-                )
-                .await
-            }
-            ExecutionBackend::ContainerTmux(ctx) => ctx.run_command(command, None, wait).await,
-            ExecutionBackend::Ssh(ctx) => ctx.run_command(command, None, wait).await,
-        }
+        self.inner.run_shell_command(command, wait).await
     }
 
     /// Read a text file through the configured backend.
     pub async fn read_file(&self, path: &str) -> Result<String, ToolError> {
-        match self.inner.as_ref() {
-            ExecutionBackend::Local => tokio::fs::read_to_string(path)
-                .await
-                .map_err(|e| ToolError::ExecutionFailed(format!("{path}: {e}"))),
-            ExecutionBackend::LocalTmux(ctx) => {
-                let script = format!("cat -- {}", shell_quote(path));
-                let output = ctx.run_command(&script, None, ShellWait::Wait).await?;
-                ensure_success(output, path.to_string()).map(|out| out.stdout)
-            }
-            ExecutionBackend::Container(ctx) => {
-                let script = format!("cat -- {}", shell_quote(path));
-                let output = run_container_sh_process(ctx, &script, None).await?;
-                ensure_success(output, path.to_string()).map(|out| out.stdout)
-            }
-            ExecutionBackend::ContainerTmux(ctx) => {
-                let script = format!("cat -- {}", shell_quote(path));
-                let output = ctx.run_command(&script, None, ShellWait::Wait).await?;
-                ensure_success(output, path.to_string()).map(|out| out.stdout)
-            }
-            ExecutionBackend::Ssh(ctx) => {
-                let script = format!("cat -- {}", shell_quote(path));
-                let output = ctx.run_command(&script, None, ShellWait::Wait).await?;
-                ensure_success(output, path.to_string()).map(|out| out.stdout)
-            }
-        }
+        self.inner.read_file(path).await
     }
 
     /// Write a text file through the configured backend.
     pub async fn write_file(&self, path: &str, content: &str) -> Result<(), ToolError> {
-        match self.inner.as_ref() {
-            ExecutionBackend::Local => tokio::fs::write(path, content)
-                .await
-                .map_err(|e| ToolError::ExecutionFailed(format!("{path}: {e}"))),
-            ExecutionBackend::LocalTmux(ctx) => {
-                let script = format!("cat > {}", shell_quote(path));
-                let output = ctx
-                    .run_command(&script, Some(content.as_bytes()), ShellWait::Wait)
-                    .await?;
-                ensure_success(output, path.to_string()).map(|_| ())
-            }
-            ExecutionBackend::Container(ctx) => {
-                let script = format!("cat > {}", shell_quote(path));
-                let output =
-                    run_container_sh_process(ctx, &script, Some(content.as_bytes())).await?;
-                ensure_success(output, path.to_string()).map(|_| ())
-            }
-            ExecutionBackend::ContainerTmux(ctx) => {
-                let script = format!("cat > {}", shell_quote(path));
-                let output = ctx
-                    .run_command(&script, Some(content.as_bytes()), ShellWait::Wait)
-                    .await?;
-                ensure_success(output, path.to_string()).map(|_| ())
-            }
-            ExecutionBackend::Ssh(ctx) => {
-                let script = format!("cat > {}", shell_quote(path));
-                let output = ctx
-                    .run_command(&script, Some(content.as_bytes()), ShellWait::Wait)
-                    .await?;
-                ensure_success(output, path.to_string()).map(|_| ())
-            }
-        }
+        self.inner.write_file(path, content).await
     }
+}
+
+#[async_trait]
+impl ExecutionBackendOps for LocalBackend {
+    fn summary(&self) -> String {
+        "local".to_string()
+    }
+
+    fn tmux_attach_info(&self) -> Option<TmuxAttachInfo> {
+        None
+    }
+
+    fn capture_pane_available(&self) -> bool {
+        local_tmux_pane_target().is_some()
+    }
+
+    async fn capture_pane(&self, options: CapturePaneOptions) -> Result<String, ToolError> {
+        let pane_target = options
+            .target
+            .as_deref()
+            .map(str::to_string)
+            .or_else(local_tmux_pane_target)
+            .ok_or_else(|| {
+                ToolError::ExecutionFailed("capture-pane requires an active tmux session".into())
+            })?;
+        run_local_capture_pane(&pane_target, &options).await
+    }
+
+    async fn send_keys(&self, options: SendKeysOptions) -> Result<String, ToolError> {
+        let pane_target = options
+            .target
+            .as_deref()
+            .map(str::to_string)
+            .or_else(local_tmux_pane_target)
+            .ok_or_else(|| {
+                ToolError::ExecutionFailed("send-keys requires an active tmux session".into())
+            })?;
+        send_local_tmux_keys(&pane_target, &options).await?;
+        Ok(format!("sent keys to tmux pane {pane_target}"))
+    }
+
+    async fn run_shell_command(
+        &self,
+        command: &str,
+        wait: ShellWait,
+    ) -> Result<ExecOutput, ToolError> {
+        if matches!(wait, ShellWait::NoWait) {
+            let pane_id = local_tmux_pane_target().ok_or_else(|| {
+                ToolError::ExecutionFailed(
+                    "run_shell wait=false requires an active tmux session".into(),
+                )
+            })?;
+            send_local_tmux_line(&pane_id, command).await?;
+            return Ok(ExecOutput {
+                exit_code: 0,
+                stdout: format!(
+                    "command dispatched to tmux pane {pane_id}; still running in background. Use capture-pane (optionally with delay) to poll output."
+                ),
+                stderr: String::new(),
+            });
+        }
+        run_with_wait(
+            run_sh_process("sh", command, None),
+            wait,
+            "timed out waiting for local command completion",
+        )
+        .await
+    }
+
+    async fn read_file(&self, path: &str) -> Result<String, ToolError> {
+        tokio::fs::read_to_string(path)
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("{path}: {e}")))
+    }
+
+    async fn write_file(&self, path: &str, content: &str) -> Result<(), ToolError> {
+        tokio::fs::write(path, content)
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("{path}: {e}")))
+    }
+}
+
+#[async_trait]
+impl ExecutionBackendOps for LocalTmuxContext {
+    fn summary(&self) -> String {
+        format!("local (tmux:{})", self.tmux_session)
+    }
+
+    fn tmux_attach_info(&self) -> Option<TmuxAttachInfo> {
+        Some(TmuxAttachInfo {
+            session: self.tmux_session.clone(),
+            window: TMUX_WINDOW_NAME,
+            target: TmuxAttachTarget::Local,
+        })
+    }
+
+    fn capture_pane_available(&self) -> bool {
+        true
+    }
+
+    async fn capture_pane(&self, options: CapturePaneOptions) -> Result<String, ToolError> {
+        let pane_target = if let Some(target) = options.target.as_deref() {
+            target.to_string()
+        } else {
+            self.ensure_prompt_ready().await?
+        };
+        run_local_capture_pane(&pane_target, &options).await
+    }
+
+    async fn send_keys(&self, options: SendKeysOptions) -> Result<String, ToolError> {
+        let pane_target = if let Some(target) = options.target.as_deref() {
+            target.to_string()
+        } else {
+            self.ensure_prompt_ready().await?
+        };
+        send_local_tmux_keys(&pane_target, &options).await?;
+        Ok(format!("sent keys to tmux pane {pane_target}"))
+    }
+
+    async fn run_shell_command(
+        &self,
+        command: &str,
+        wait: ShellWait,
+    ) -> Result<ExecOutput, ToolError> {
+        self.run_command(command, None, wait).await
+    }
+
+    async fn read_file(&self, path: &str) -> Result<String, ToolError> {
+        read_file_via_command_backend(self, path).await
+    }
+
+    async fn write_file(&self, path: &str, content: &str) -> Result<(), ToolError> {
+        write_file_via_command_backend(self, path, content).await
+    }
+}
+
+#[async_trait]
+impl ExecutionBackendOps for ContainerContext {
+    fn summary(&self) -> String {
+        format!(
+            "container:{} (via {}{})",
+            self.container,
+            self.engine.command,
+            if self.engine.kind == ContainerEngineKind::Podman {
+                ", podman-compatible"
+            } else {
+                ""
+            }
+        )
+    }
+
+    fn tmux_attach_info(&self) -> Option<TmuxAttachInfo> {
+        None
+    }
+
+    fn capture_pane_available(&self) -> bool {
+        false
+    }
+
+    async fn capture_pane(&self, _options: CapturePaneOptions) -> Result<String, ToolError> {
+        Err(ToolError::ExecutionFailed(
+            "capture-pane is unavailable for container execution targets".into(),
+        ))
+    }
+
+    async fn send_keys(&self, _options: SendKeysOptions) -> Result<String, ToolError> {
+        Err(ToolError::ExecutionFailed(
+            "send-keys is unavailable for container execution targets".into(),
+        ))
+    }
+
+    async fn run_shell_command(
+        &self,
+        command: &str,
+        wait: ShellWait,
+    ) -> Result<ExecOutput, ToolError> {
+        self.run_command(command, None, wait).await
+    }
+
+    async fn read_file(&self, path: &str) -> Result<String, ToolError> {
+        read_file_via_command_backend(self, path).await
+    }
+
+    async fn write_file(&self, path: &str, content: &str) -> Result<(), ToolError> {
+        write_file_via_command_backend(self, path, content).await
+    }
+}
+
+#[async_trait]
+impl ExecutionBackendOps for ContainerTmuxContext {
+    fn summary(&self) -> String {
+        format!(
+            "container:{} (tmux:{}) (via {}{})",
+            self.container,
+            self.tmux_session,
+            self.engine.command,
+            if self.engine.kind == ContainerEngineKind::Podman {
+                ", podman-compatible"
+            } else {
+                ""
+            }
+        )
+    }
+
+    fn tmux_attach_info(&self) -> Option<TmuxAttachInfo> {
+        Some(TmuxAttachInfo {
+            session: self.tmux_session.clone(),
+            window: TMUX_WINDOW_NAME,
+            target: TmuxAttachTarget::Container {
+                engine: self.engine.command.to_string(),
+                container: self.container.clone(),
+            },
+        })
+    }
+
+    fn capture_pane_available(&self) -> bool {
+        true
+    }
+
+    async fn capture_pane(&self, options: CapturePaneOptions) -> Result<String, ToolError> {
+        let pane_target = if let Some(target) = options.target.as_deref() {
+            target.to_string()
+        } else {
+            self.ensure_prompt_ready().await?
+        };
+        run_container_capture_pane(self, &pane_target, &options).await
+    }
+
+    async fn send_keys(&self, options: SendKeysOptions) -> Result<String, ToolError> {
+        let pane_target = if let Some(target) = options.target.as_deref() {
+            target.to_string()
+        } else {
+            self.ensure_prompt_ready().await?
+        };
+        send_container_tmux_keys(self, &pane_target, &options).await?;
+        Ok(format!("sent keys to tmux pane {pane_target}"))
+    }
+
+    async fn run_shell_command(
+        &self,
+        command: &str,
+        wait: ShellWait,
+    ) -> Result<ExecOutput, ToolError> {
+        self.run_command(command, None, wait).await
+    }
+
+    async fn read_file(&self, path: &str) -> Result<String, ToolError> {
+        read_file_via_command_backend(self, path).await
+    }
+
+    async fn write_file(&self, path: &str, content: &str) -> Result<(), ToolError> {
+        write_file_via_command_backend(self, path, content).await
+    }
+}
+
+#[async_trait]
+impl ExecutionBackendOps for SshContext {
+    fn summary(&self) -> String {
+        let mut base = format!("ssh:{}", self.target);
+        if let Some(name) = &self.tmux_session {
+            base.push_str(&format!(" (tmux:{name})"));
+        }
+        base
+    }
+
+    fn tmux_attach_info(&self) -> Option<TmuxAttachInfo> {
+        self.tmux_session.as_ref().map(|session| TmuxAttachInfo {
+            session: session.clone(),
+            window: TMUX_WINDOW_NAME,
+            target: TmuxAttachTarget::Ssh {
+                target: self.target.clone(),
+            },
+        })
+    }
+
+    fn capture_pane_available(&self) -> bool {
+        self.tmux_session.is_some()
+    }
+
+    async fn capture_pane(&self, options: CapturePaneOptions) -> Result<String, ToolError> {
+        let tmux_session = self.tmux_session.as_deref().ok_or_else(|| {
+            ToolError::ExecutionFailed(
+                "capture-pane is unavailable: no tmux session for this ssh target".into(),
+            )
+        })?;
+        let pane_target = if let Some(target) = options.target.as_deref() {
+            target.to_string()
+        } else {
+            self.ensure_prompt_ready(tmux_session).await?
+        };
+        run_remote_capture_pane(&self.target, &self.control_path, &pane_target, &options).await
+    }
+
+    async fn send_keys(&self, options: SendKeysOptions) -> Result<String, ToolError> {
+        let tmux_session = self.tmux_session.as_deref().ok_or_else(|| {
+            ToolError::ExecutionFailed(
+                "send-keys is unavailable: no tmux session for this ssh target".into(),
+            )
+        })?;
+        let pane_target = if let Some(target) = options.target.as_deref() {
+            target.to_string()
+        } else {
+            self.ensure_prompt_ready(tmux_session).await?
+        };
+        send_remote_tmux_keys(&self.target, &self.control_path, &pane_target, &options).await?;
+        Ok(format!("sent keys to tmux pane {pane_target}"))
+    }
+
+    async fn run_shell_command(
+        &self,
+        command: &str,
+        wait: ShellWait,
+    ) -> Result<ExecOutput, ToolError> {
+        self.run_command(command, None, wait).await
+    }
+
+    async fn read_file(&self, path: &str) -> Result<String, ToolError> {
+        read_file_via_command_backend(self, path).await
+    }
+
+    async fn write_file(&self, path: &str, content: &str) -> Result<(), ToolError> {
+        write_file_via_command_backend(self, path, content).await
+    }
+}
+
+async fn read_file_via_command_backend(
+    backend: &(impl CommandBackend + ?Sized),
+    path: &str,
+) -> Result<String, ToolError> {
+    let script = format!("cat -- {}", shell_quote(path));
+    let output = backend.run_command(&script, None, ShellWait::Wait).await?;
+    ensure_success(output, path.to_string()).map(|out| out.stdout)
+}
+
+async fn write_file_via_command_backend(
+    backend: &(impl CommandBackend + ?Sized),
+    path: &str,
+    content: &str,
+) -> Result<(), ToolError> {
+    let script = format!("cat > {}", shell_quote(path));
+    let output = backend
+        .run_command(&script, Some(content.as_bytes()), ShellWait::Wait)
+        .await?;
+    ensure_success(output, path.to_string()).map(|_| ())
 }
 
 impl Drop for SshContext {
@@ -2134,10 +2301,10 @@ mod tests {
     #[test]
     fn local_tmux_summary_and_capture_availability() {
         let ctx = ExecutionContext {
-            inner: Arc::new(ExecutionBackend::LocalTmux(LocalTmuxContext {
+            inner: Arc::new(LocalTmuxContext {
                 tmux_session: "buddy-dev".to_string(),
                 configured_tmux_pane: Mutex::new(None),
-            })),
+            }),
         };
         assert_eq!(ctx.summary(), "local (tmux:buddy-dev)");
         assert!(ctx.capture_pane_available());
@@ -2154,7 +2321,7 @@ mod tests {
     #[test]
     fn container_tmux_summary_and_capture_availability() {
         let ctx = ExecutionContext {
-            inner: Arc::new(ExecutionBackend::ContainerTmux(ContainerTmuxContext {
+            inner: Arc::new(ContainerTmuxContext {
                 engine: ContainerEngine {
                     command: "docker",
                     kind: ContainerEngineKind::Docker,
@@ -2162,7 +2329,7 @@ mod tests {
                 container: "devbox".to_string(),
                 tmux_session: "buddy-dev".to_string(),
                 configured_tmux_pane: Mutex::new(None),
-            })),
+            }),
         };
         assert_eq!(
             ctx.summary(),
@@ -2185,12 +2352,12 @@ mod tests {
     #[test]
     fn ssh_tmux_summary_and_attach_metadata() {
         let ctx = ExecutionContext {
-            inner: Arc::new(ExecutionBackend::Ssh(SshContext {
+            inner: Arc::new(SshContext {
                 target: "dev@host".to_string(),
                 control_path: PathBuf::from("/tmp/buddy-ssh.sock"),
                 tmux_session: Some("buddy-4a2f".to_string()),
                 configured_tmux_pane: Mutex::new(None),
-            })),
+            }),
         };
         assert_eq!(ctx.summary(), "ssh:dev@host (tmux:buddy-4a2f)");
         assert!(ctx.capture_pane_available());
