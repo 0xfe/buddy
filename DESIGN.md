@@ -35,6 +35,7 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
   - One-shot mode via `buddy exec <prompt>`.
 - CLI subcommands:
   - `buddy` (REPL)
+  - `buddy init [--force]`
   - `buddy exec <prompt>`
   - `buddy resume <session-id>` / `buddy resume --last`
   - `buddy login [model-profile]`
@@ -44,7 +45,9 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
   - CLI overrides.
   - Local/global TOML config.
   - Built-in defaults.
-  - On startup, `~/.config/buddy/buddy.toml` is auto-created (if missing) from a compiled template (`src/templates/buddy.toml`).
+  - `buddy init` creates `~/.config/buddy/buddy.toml` from a compiled template (`src/templates/buddy.toml`).
+  - `buddy init --force` overwrites the file after writing a timestamped backup into the same directory.
+  - Startup still auto-creates `~/.config/buddy/buddy.toml` when missing.
   - Built-in template includes OpenAI `responses` profiles for `gpt-codex` (`gpt-5.3-codex`) and `gpt-spark` (`gpt-5.3-codex-spark`), plus OpenRouter examples for DeepSeek V3.2 and GLM, with `gpt-codex` selected by default.
   - Primary naming uses `BUDDY_*` env vars + `buddy.toml`, with legacy `AGENT_*` and `agent.toml` compatibility fallbacks.
 - Built-in tool-calling agent loop:
@@ -139,7 +142,7 @@ Every field has a default, so a completely empty config file (or no config file 
 4. `$XDG_CONFIG_HOME/buddy/buddy.toml` (or `~/.config/buddy/buddy.toml`)
 5. legacy `~/.config/agent/agent.toml` fallback
 
-Startup ensures `~/.config/buddy/buddy.toml` exists by writing the compiled default template when the file is missing. Login auth stores provider-scoped tokens in `~/.config/buddy/auth.json` (mode `0600` on Unix), so one login is reused across model profiles that target the same provider.
+`buddy init` explicitly materializes `~/.config/buddy/buddy.toml` from the compiled template; `--force` first writes a timestamped backup (`buddy.toml.<unix-seconds>.bak`) in the same directory. Startup also ensures `~/.config/buddy/buddy.toml` exists when missing. Login auth stores provider-scoped tokens in `~/.config/buddy/auth.json` (mode `0600` on Unix), so one login is reused across model profiles that target the same provider.
 
 API key resolution supports exactly one configured source per model profile: `api_key`, `api_key_env`, or `api_key_file`. The key source order is:
 1. `BUDDY_API_KEY` (legacy `AGENT_API_KEY` fallback)

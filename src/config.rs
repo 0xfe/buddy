@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const DEFAULT_BUDDY_CONFIG_TEMPLATE: &str = include_str!("templates/buddy.toml");
 const DEFAULT_MODEL_PROFILE_NAME: &str = "gpt-codex";
@@ -359,6 +360,30 @@ pub fn default_global_config_path() -> Option<PathBuf> {
     config_root_dir().map(|dir| dir.join("buddy").join("buddy.toml"))
 }
 
+/// Result of explicit global config initialization (`buddy init`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GlobalConfigInitResult {
+    Created { path: PathBuf },
+    AlreadyInitialized { path: PathBuf },
+    Overwritten { path: PathBuf, backup_path: PathBuf },
+}
+
+/// Initialize `~/.config/buddy/buddy.toml`.
+///
+/// - Without `force`, returns `AlreadyInitialized` if the file exists.
+/// - With `force`, backs up the existing file in the same directory using a
+///   timestamped name, then rewrites it from the compiled template.
+pub fn initialize_default_global_config(
+    force: bool,
+) -> Result<GlobalConfigInitResult, ConfigError> {
+    let path = default_global_config_path().ok_or_else(|| {
+        ConfigError::Invalid(
+            "unable to resolve default config path for ~/.config/buddy/buddy.toml".to_string(),
+        )
+    })?;
+    initialize_default_global_config_at_path(&path, force)
+}
+
 /// Ensure the default global config file exists.
 ///
 /// Returns the global config path when available on this platform.
@@ -415,6 +440,74 @@ fn ensure_default_global_config_at_path(path: &Path) -> Result<(), ConfigError> 
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
         Err(e) => Err(ConfigError::Io(e)),
     }
+}
+
+fn initialize_default_global_config_at_path(
+    path: &Path,
+    force: bool,
+) -> Result<GlobalConfigInitResult, ConfigError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    if path.exists() {
+        if !force {
+            return Ok(GlobalConfigInitResult::AlreadyInitialized {
+                path: path.to_path_buf(),
+            });
+        }
+        let backup_path = timestamped_backup_path(path);
+        std::fs::copy(path, &backup_path)?;
+        std::fs::write(path, DEFAULT_BUDDY_CONFIG_TEMPLATE)?;
+        return Ok(GlobalConfigInitResult::Overwritten {
+            path: path.to_path_buf(),
+            backup_path,
+        });
+    }
+
+    // create_new avoids clobbering if another process wins a race to create.
+    match OpenOptions::new().write(true).create_new(true).open(path) {
+        Ok(mut file) => {
+            file.write_all(DEFAULT_BUDDY_CONFIG_TEMPLATE.as_bytes())?;
+            Ok(GlobalConfigInitResult::Created {
+                path: path.to_path_buf(),
+            })
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            Ok(GlobalConfigInitResult::AlreadyInitialized {
+                path: path.to_path_buf(),
+            })
+        }
+        Err(e) => Err(ConfigError::Io(e)),
+    }
+}
+
+fn timestamped_backup_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "buddy.toml".to_string());
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    for suffix in 0..1000usize {
+        let candidate_name = if suffix == 0 {
+            format!("{file_name}.{timestamp}.bak")
+        } else {
+            format!("{file_name}.{timestamp}.{suffix}.bak")
+        };
+        let candidate = path.with_file_name(candidate_name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+
+    path.with_file_name(format!(
+        "{file_name}.{timestamp}.{}.bak",
+        std::process::id()
+    ))
 }
 
 fn api_key_override_env() -> Option<String> {
@@ -831,6 +924,73 @@ mod tests {
         assert_eq!(written, DEFAULT_BUDDY_CONFIG_TEMPLATE);
 
         std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir_all(&tmp_root).unwrap();
+    }
+
+    #[test]
+    fn initialize_global_config_returns_already_initialized_without_force() {
+        let tmp_root = std::env::temp_dir().join(format!(
+            "buddy-config-init-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let path = tmp_root.join("buddy").join("buddy.toml");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "old-config").unwrap();
+
+        let outcome = initialize_default_global_config_at_path(&path, false).unwrap();
+        assert!(matches!(
+            outcome,
+            GlobalConfigInitResult::AlreadyInitialized { path: ref p } if p == &path
+        ));
+        let current = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(current, "old-config");
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir_all(&tmp_root).unwrap();
+    }
+
+    #[test]
+    fn initialize_global_config_force_overwrites_and_creates_backup() {
+        let tmp_root = std::env::temp_dir().join(format!(
+            "buddy-config-force-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let path = tmp_root.join("buddy").join("buddy.toml");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "old-config").unwrap();
+
+        let outcome = initialize_default_global_config_at_path(&path, true).unwrap();
+        let backup_path = match outcome {
+            GlobalConfigInitResult::Overwritten {
+                path: returned_path,
+                backup_path,
+            } => {
+                assert_eq!(returned_path, path);
+                backup_path
+            }
+            other => panic!("unexpected outcome: {other:?}"),
+        };
+
+        let current = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(current, DEFAULT_BUDDY_CONFIG_TEMPLATE);
+        let backup = std::fs::read_to_string(&backup_path).unwrap();
+        assert_eq!(backup, "old-config");
+        assert_eq!(backup_path.parent(), path.parent());
+        assert!(backup_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|name| name.contains(".bak")));
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_file(&backup_path).unwrap();
         std::fs::remove_dir_all(&tmp_root).unwrap();
     }
 

@@ -42,6 +42,12 @@ pub struct Args {
 /// Top-level CLI subcommands.
 #[derive(Debug, Clone, Subcommand)]
 pub enum Command {
+    /// Initialize ~/.config/buddy with default config files.
+    Init {
+        /// Overwrite existing files after creating timestamped backups.
+        #[arg(long = "force", default_value_t = false)]
+        force: bool,
+    },
     /// Execute one prompt and exit.
     Exec {
         /// Prompt text to execute.
@@ -79,6 +85,15 @@ mod tests {
         assert!(matches!(
             args.command,
             Some(Command::Exec { prompt }) if prompt == "hello"
+        ));
+    }
+
+    #[test]
+    fn init_subcommand_supports_force_flag() {
+        let args = Args::parse_from(["buddy", "init", "--force"]);
+        assert!(matches!(
+            args.command,
+            Some(Command::Init { force }) if force
         ));
     }
 

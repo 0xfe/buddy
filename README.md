@@ -4,15 +4,12 @@ A terminal AI agent written in Rust with native `tmux` support. Specifically des
 
 Works with any OpenAI API-compatible model — OpenAI, Ollama, OpenRouter, vLLM, LM Studio, or anything else that speaks the same protocol.
 
-Runs as an interactive REPL or in one-shot mode. Handles multi-step tool-use loops automatically: the model can run shell commands, fetch URLs, read/write files, search the web, capture tmux panes (when available), and read harness time, with results fed back into the conversation until the model produces a final answer.
-
-Interactive mode includes slash commands with live autocomplete (type `/`), history navigation (`↑`/`↓`), multiline entry (`Alt+Enter`), background task control (`/ps`, `/kill <id>`), session persistence (`/session`), and foreground approval handoff for `run_shell` confirmations.
-
 Usable as both a standalone CLI binary and a Rust library crate.
 
 ## Pre-requisites
 
 - **Rust** 1.70+ (install via [rustup](https://rustup.rs/))
+- `tmux` must be installed on the host you're operating on
 - An OpenAI-compatible API endpoint. Any of:
   - [OpenAI](https://platform.openai.com/) — API key auth or `buddy login`
   - [Ollama](https://ollama.ai/) — runs locally, no API key needed
@@ -32,107 +29,59 @@ make install
 
 **2. Configure**
 
-The fastest way is via environment variables:
+You can configure buddy via the config file at `~/.config/buddy/buddy.toml`.
 
 ```bash
-# Set base url and api key of Model provider
-export BUDDY_BASE_URL="http://localhost:11434/v1"
-export BUDDY_API_KEY="sk-..."
-export BUDDY_MODEL="llama3.2"
-```
+# Initialize config files under ~/.config/buddy
+buddy init
 
-Or use the generated config file:
-
-```bash
-# buddy creates ~/.config/buddy/buddy.toml on first startup if missing
 $EDITOR ~/.config/buddy/buddy.toml
 ```
 
 **3. Run**
 
 ```bash
-# Interactive mode
+# Optiona: If you're not using API keys, e.g., OpenAI user login
+buddy login
+
+# Interactive mode on local machine, this creates a tmux session named buddy-...
 buddy
-# starts tmux-backed local execution by default; buddy prints attach command.
+tmux attach -t buddy # if you want to watch or co-work with buddy
+
+# Operate a remote ssh host (in a tmux session on the host)
+buddy --ssh user@hostname
+
+# Operate a local container (in a tmux session in the container)
+buddy --container my-dev-container
 
 # One-shot mode
 buddy exec "how much free disk space do I have?"
 
-# Login for the active/default profile
-buddy login
-
 # Resume a prior session by ID (or last in this directory)
 buddy resume f4e3-5bc3-a912-1f0d
 buddy resume --last
-
-# Operate a remote ssh host
-buddy --ssh user@hostname
-
-# Operate a local container
-buddy --container my-dev-container
 ```
 
-**4. In the REPL**
+### REPL slash commands
 
-```
-> What files are in the current directory?
-task #1 running 0s
+| Command | Description |
+|---------|-------------|
+| `/status` | Show current model, base URL, enabled tools, and session counters. |
+| `/model [name\|index]` | Switch the active configured model profile (`/model` opens arrow-key picker). |
+| `/login [name\|index]` | Start login flow for a configured profile. |
+| `/context` | Show estimated context usage (`messages` estimate / context window) and token stats. |
+| `/ps` | Show running background tasks with IDs and elapsed time. |
+| `/kill <id>` | Cancel a running background task by task ID. |
+| `/timeout <duration> [id]` | Set timeout for a background task (`id` optional only when one task exists). |
+| `/approve ask|all|none|<duration>` | Configure shell approval policy for this REPL session. |
+| `/session` | List saved sessions (ordered by last use). |
+| `/session resume <session-id\|last>` | Resume a saved session by ID, or the most recently used one. |
+| `/session new` | Create and switch to a fresh generated session ID. |
+| `/help` | Show slash command help (only when no background tasks are running). |
+| `/quit` `/exit` `/q` | Exit interactive mode (only when no background tasks are running). |
 
-> /ps
-  • background tasks
-    #1: prompt "What files are in the current directory?" [running (1.2s)]
-
-> /kill 1
-warning: Cancelled task #1.
-
-> What files are in the current directory?
-dev@my-host$ ls -- approve? y
-  • task #2 exited with code 0, stdout: "Cargo.toml src ..."
-  • prompt #2 processed in 2.3s
-
-Here are the files in the current directory:
-- Cargo.toml
-- src/
-...
-
-> /quit
-```
-
-Type `/` to open slash-command autocomplete.
-Use `↑`/`↓` for history, and `Alt+Enter` to insert a newline without submitting.
-Common editing shortcuts are supported (`Ctrl-A`, `Ctrl-E`, `Ctrl-B`, `Ctrl-F`, `Ctrl-K`, `Ctrl-U`, `Ctrl-W`).
-In interactive mode, prompts run as background tasks so the REPL remains available; use `/ps` and `/kill <id>` to inspect/cancel active tasks.
-If a background task reaches a shell confirmation point, input is interrupted and the confirmation is brought to the foreground as a stable multi-line approval block (command preview + `approve? [y/n]` prompt).
-Background task activity (reasoning traces and tool results) is forwarded to the foreground loop and rendered cleanly without breaking keyboard input.
-A live liveness line (task state) is rendered above the prompt while background tasks are active.
-When running in a tmux-backed execution target, use `run_shell` with `wait: false` to dispatch long-running/interactive commands, then poll with `capture-pane`. Use `send-keys` for control input (for example Ctrl-C, Ctrl-Z, Enter, arrows) when interacting with full-screen TUIs or stuck jobs.
-On tmux-backed startup, buddy shows a friendly `tmux attach` command (local/SSH/container) and works in a shared window named `buddy-shared`.
-
-- `/status` shows model, endpoint, enabled tools, and session stats.
-- `/context` shows estimated context usage and recent token counts.
-- `/ps` lists background tasks currently running.
-- `/kill <id>` cancels a background task by ID.
-- `/timeout <duration> [id]` sets/corrects background task deadlines.
-- `/approve ask|all|none|<duration>` changes shell-approval policy.
-- `/session` lists saved sessions; `/session resume <session-id|last>` resumes one; `/session new` creates a fresh ID-based session.
-- While background tasks are running, only `/ps`, `/kill <id>`, `/timeout <duration> [id]`, `/approve <mode>`, `/status`, and `/context` are accepted.
-- For foreground approvals, reply `y`/`yes` to approve or `n`/`no` (or empty enter) to deny.
 
 ## Developers
-
-**Build**
-
-```bash
-cargo build
-# or:
-make build
-```
-
-**Install to `~/.local/bin`**
-
-```bash
-make install
-```
 
 **Test**
 
@@ -232,7 +181,7 @@ Configuration is loaded with this precedence (highest wins):
 1. **CLI flags** — `--config`, `--model`, `--base-url`, `--container`, `--ssh`, `--tmux`, `--no-color`
 2. **Environment variables** — `BUDDY_API_KEY`, `BUDDY_BASE_URL`, `BUDDY_MODEL`
 3. **Local config** — `./buddy.toml` in the current directory
-4. **Global config** — `~/.config/buddy/buddy.toml` (auto-created on startup if missing)
+4. **Global config** — `~/.config/buddy/buddy.toml` (create with `buddy init`; startup also auto-creates if missing)
 5. **Built-in defaults**
 
 Legacy compatibility:
@@ -330,24 +279,6 @@ At startup, the system prompt is rendered from one compiled template with runtim
 | `capture-pane` | Capture tmux pane output (with common `capture-pane` flags and optional delay) to inspect interactive/stuck terminal state. By default it uses tmux screenshot behavior (current visible pane content). |
 | `send-keys` | Inject tmux keys/text into a pane (Ctrl-C/Ctrl-Z/Enter/arrows/literal text) for interactive control. |
 | `time` | Return harness-recorded current wall-clock time in multiple common formats (epoch + UTC text formats). |
-
-### REPL slash commands
-
-| Command | Description |
-|---------|-------------|
-| `/status` | Show current model, base URL, enabled tools, and session counters. |
-| `/model [name\|index]` | Switch the active configured model profile (`/model` opens arrow-key picker). |
-| `/login [name\|index]` | Start login flow for a configured profile. |
-| `/context` | Show estimated context usage (`messages` estimate / context window) and token stats. |
-| `/ps` | Show running background tasks with IDs and elapsed time. |
-| `/kill <id>` | Cancel a running background task by task ID. |
-| `/timeout <duration> [id]` | Set timeout for a background task (`id` optional only when one task exists). |
-| `/approve ask|all|none|<duration>` | Configure shell approval policy for this REPL session. |
-| `/session` | List saved sessions (ordered by last use). |
-| `/session resume <session-id\|last>` | Resume a saved session by ID, or the most recently used one. |
-| `/session new` | Create and switch to a fresh generated session ID. |
-| `/help` | Show slash command help (only when no background tasks are running). |
-| `/quit` `/exit` `/q` | Exit interactive mode (only when no background tasks are running). |
 
 ### Context window catalog
 

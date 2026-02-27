@@ -2,7 +2,8 @@
 
 - Crate: `buddy` (lib + bin). Entry: `src/main.rs`, core loop: `src/agent.rs`.
 - Config load precedence (effective): env vars override TOML; CLI flags override loaded config in `main.rs`.
-- Startup now ensures `~/.config/buddy/buddy.toml` exists (materialized from compiled `src/templates/buddy.toml`).
+- Startup auto-creates `~/.config/buddy/buddy.toml` when missing (materialized from compiled `src/templates/buddy.toml`).
+- Explicit init flow exists via `buddy init` (`--force` writes `buddy.toml.<unix-seconds>.bak` then overwrites).
 - API protocol: OpenAI-compatible Chat Completions + Responses API (per-profile `api = "completions" | "responses"` in `src/config.rs`; wire handling in `src/api/` modules).
 - Tool loop:
   1. push user msg
@@ -30,6 +31,7 @@
     - OpenAI device-code login + refresh flow.
   - CLI now uses subcommands (`src/cli.rs`):
     - `buddy` (REPL)
+    - `buddy init [--force]`
     - `buddy exec <prompt>`
     - `buddy resume <session-id>` / `buddy resume --last`
     - `buddy login [model-profile]`

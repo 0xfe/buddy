@@ -8,9 +8,10 @@ use buddy::auth::{
     save_provider_tokens, start_openai_device_login, supports_openai_login, try_open_browser,
 };
 use buddy::config::ensure_default_global_config;
+use buddy::config::initialize_default_global_config;
 use buddy::config::load_config;
 use buddy::config::select_model_profile;
-use buddy::config::{AuthMode, Config};
+use buddy::config::{AuthMode, Config, GlobalConfigInitResult};
 use buddy::prompt::{render_system_prompt, ExecutionTarget, SystemPromptParams};
 use buddy::render::Renderer;
 use buddy::session::{SessionStore, SessionSummary};
@@ -40,6 +41,15 @@ const BACKGROUND_TASK_WARNING: &str =
 #[tokio::main]
 async fn main() {
     let args = cli::Args::parse();
+    let renderer = Renderer::new(!args.no_color);
+
+    if let Some(cli::Command::Init { force }) = args.command.as_ref() {
+        if let Err(msg) = run_init_flow(&renderer, *force) {
+            renderer.error(&msg);
+            std::process::exit(1);
+        }
+        return;
+    }
 
     if let Err(e) = ensure_default_global_config() {
         eprintln!("warning: failed to initialize ~/.config/buddy/buddy.toml: {e}");
@@ -687,6 +697,30 @@ fn render_help(renderer: &Renderer) {
         renderer.field(cmd.name, cmd.description);
     }
     eprintln!();
+}
+
+fn run_init_flow(renderer: &Renderer, force: bool) -> Result<(), String> {
+    match initialize_default_global_config(force)
+        .map_err(|e| format!("failed to initialize ~/.config/buddy: {e}"))?
+    {
+        GlobalConfigInitResult::Created { path } => {
+            renderer.section("initialized buddy config");
+            renderer.field("path", &path.display().to_string());
+            eprintln!();
+            Ok(())
+        }
+        GlobalConfigInitResult::Overwritten { path, backup_path } => {
+            renderer.section("reinitialized buddy config");
+            renderer.field("path", &path.display().to_string());
+            renderer.field("backup", &backup_path.display().to_string());
+            eprintln!();
+            Ok(())
+        }
+        GlobalConfigInitResult::AlreadyInitialized { path } => Err(format!(
+            "buddy is already initialized at {}. Use `buddy init --force` to overwrite.",
+            path.display()
+        )),
+    }
 }
 
 async fn persist_active_session(
