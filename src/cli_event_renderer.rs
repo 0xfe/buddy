@@ -36,6 +36,9 @@ pub(crate) fn process_runtime_events(
         match envelope.event {
             RuntimeEvent::Lifecycle(_) => {}
             RuntimeEvent::Warning(event) => {
+                if is_transient_approval_warning(&event.message) {
+                    continue;
+                }
                 if let Some(task) = event.task {
                     ctx.renderer
                         .warn(&format!("[task #{}] {}", task.task_id, event.message));
@@ -406,4 +409,11 @@ fn render_tool_result(renderer: &Renderer, task_id: u64, name: &str, args: &str,
         truncate_preview(result, 120)
     ));
     eprintln!();
+}
+
+fn is_transient_approval_warning(message: &str) -> bool {
+    matches!(
+        message.trim().to_ascii_lowercase().as_str(),
+        "approval granted" | "approval denied"
+    )
 }

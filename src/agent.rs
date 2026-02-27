@@ -572,7 +572,10 @@ impl Agent {
                 } else {
                     format!("calling model {} (follow-up)", self.config.api.model)
                 };
-                let _progress = self.renderer.progress(&phase);
+                // Runtime/background execution has its own centralized liveness UI in the REPL.
+                // Spawning another spinner thread here causes prompt/status overlap and flicker.
+                let _progress =
+                    (!self.suppress_live_output).then(|| self.renderer.progress(&phase));
                 if let Some(cancel_rx) = &self.cancellation_rx {
                     let mut cancel_rx = cancel_rx.clone();
                     tokio::select! {

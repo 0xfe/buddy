@@ -164,7 +164,10 @@ impl Tool for ShellTool {
         // Shell commands can take a while; show a spinner while the command is running.
         // This spinner intentionally starts after any confirmation prompt.
         let renderer = Renderer::new(self.color);
-        let _progress = renderer.progress("running tool run_shell");
+        // In runtime/interactive mode a foreground liveness spinner already exists.
+        // Avoid an extra background spinner thread that competes for stderr cursor control.
+        let _progress =
+            (!context.has_stream()).then(|| renderer.progress("running tool run_shell"));
         let output = self
             .execution
             .run_shell_command(&args.command, wait)

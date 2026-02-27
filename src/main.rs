@@ -1453,10 +1453,12 @@ fn background_liveness_line(tasks: &[BackgroundTask]) -> Option<String> {
         return None;
     }
 
+    let spinner = background_liveness_spinner(tasks);
+
     if tasks.len() == 1 {
         let task = &tasks[0];
         let timeout_suffix = timeout_suffix_for_task(task);
-        return Some(match &task.state {
+        let body = match &task.state {
             BackgroundTaskState::Running => format!(
                 "task #{} running {}{}",
                 task.id,
@@ -1475,7 +1477,8 @@ fn background_liveness_line(tasks: &[BackgroundTask]) -> Option<String> {
                 format_elapsed_coarse(since.elapsed()),
                 timeout_suffix
             ),
-        });
+        };
+        return Some(format!("[{spinner}] {body}"));
     }
 
     let running = tasks
@@ -1500,7 +1503,7 @@ fn background_liveness_line(tasks: &[BackgroundTask]) -> Option<String> {
         .max()
         .unwrap_or_default();
     Some(format!(
-        "{} tasks: {} running, {} waiting approval, {} cancelling, {} with timeout, oldest {}",
+        "[{spinner}] {} tasks: {} running, {} waiting approval, {} cancelling, {} with timeout, oldest {}",
         tasks.len(),
         running,
         waiting,
@@ -1508,6 +1511,20 @@ fn background_liveness_line(tasks: &[BackgroundTask]) -> Option<String> {
         with_timeout,
         format_elapsed_coarse(oldest)
     ))
+}
+
+fn background_liveness_spinner(tasks: &[BackgroundTask]) -> char {
+    let elapsed = tasks
+        .iter()
+        .map(|task| match &task.state {
+            BackgroundTaskState::Running => task.started_at.elapsed(),
+            BackgroundTaskState::WaitingApproval { since, .. } => since.elapsed(),
+            BackgroundTaskState::Cancelling { since } => since.elapsed(),
+        })
+        .max()
+        .unwrap_or_default();
+    let idx = ((elapsed.as_millis() / 250) as usize) % repl::settings::PROGRESS_FRAMES.len();
+    repl::settings::PROGRESS_FRAMES[idx]
 }
 
 fn timeout_suffix_for_task(task: &BackgroundTask) -> String {

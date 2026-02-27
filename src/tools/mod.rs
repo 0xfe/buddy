@@ -71,6 +71,14 @@ impl ToolContext {
         }
     }
 
+    /// True when the caller attached a streaming event sink.
+    ///
+    /// Runtime-driven interactive mode uses this to render tool progress via
+    /// centralized task status UI instead of per-tool spinner threads.
+    pub fn has_stream(&self) -> bool {
+        self.stream_tx.is_some()
+    }
+
     /// Emit one stream event if a sink is attached.
     pub fn emit(&self, event: ToolStreamEvent) {
         if let Some(tx) = &self.stream_tx {
