@@ -73,6 +73,10 @@ pub enum ApiError {
     Http(reqwest::Error),
     /// Non-2xx status from the API.
     Status(u16, String),
+    /// Login-based auth is configured but no usable login exists.
+    LoginRequired(String),
+    /// Response body did not match the expected API shape.
+    InvalidResponse(String),
 }
 
 impl fmt::Display for ApiError {
@@ -80,6 +84,8 @@ impl fmt::Display for ApiError {
         match self {
             Self::Http(e) => write!(f, "http: {e}"),
             Self::Status(code, body) => write!(f, "status {code}: {body}"),
+            Self::LoginRequired(msg) => write!(f, "{msg}"),
+            Self::InvalidResponse(msg) => write!(f, "invalid response: {msg}"),
         }
     }
 }

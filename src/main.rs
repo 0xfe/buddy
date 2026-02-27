@@ -3,15 +3,20 @@
 mod cli;
 
 use buddy::agent::{Agent, AgentUiEvent};
+use buddy::auth::{
+    complete_openai_device_login, load_provider_tokens, login_provider_key_for_base_url,
+    save_provider_tokens, start_openai_device_login, supports_openai_login, try_open_browser,
+};
 use buddy::config::ensure_default_global_config;
 use buddy::config::load_config;
-use buddy::config::Config;
+use buddy::config::select_model_profile;
+use buddy::config::{AuthMode, Config};
 use buddy::prompt::{render_system_prompt, ExecutionTarget, SystemPromptParams};
 use buddy::render::Renderer;
 use buddy::session::{SessionStore, SessionSummary};
 use buddy::tokens::TokenTracker;
 use buddy::tools::capture_pane::CapturePaneTool;
-use buddy::tools::execution::ExecutionContext;
+use buddy::tools::execution::{ExecutionContext, TmuxAttachInfo, TmuxAttachTarget};
 use buddy::tools::fetch::FetchTool;
 use buddy::tools::files::{ReadFileTool, WriteFileTool};
 use buddy::tools::search::WebSearchTool;
@@ -51,7 +56,16 @@ async fn main() {
 
     // Apply CLI overrides.
     if let Some(model) = &args.model {
-        config.api.model = model.clone();
+        if config.models.contains_key(model) {
+            if let Err(e) = select_model_profile(&mut config, model) {
+                eprintln!("error: failed to select model profile `{model}`: {e}");
+                std::process::exit(1);
+            }
+        } else {
+            // Backward-compatible behavior: if the argument is not a configured
+            // profile key, treat it as a direct API model-id override.
+            config.api.model = model.clone();
+        }
     }
     if let Some(url) = &args.base_url {
         config.api.base_url = url.clone();
@@ -62,11 +76,25 @@ async fn main() {
 
     let renderer = Renderer::new(config.display.color);
 
+    if let Some(cli::Command::Login { model }) = args.command.as_ref() {
+        let selector = model.as_deref();
+        if let Err(msg) = run_login_flow(&renderer, &config, selector).await {
+            renderer.error(&msg);
+            std::process::exit(1);
+        }
+        return;
+    }
+
     // Validate minimum config.
     if config.api.base_url.is_empty() {
         renderer.error(
-            "No API base URL configured. Set api.base_url in buddy.toml or BUDDY_BASE_URL env var.",
+            "No API base URL configured. Set models.<name>.api_base_url in buddy.toml or BUDDY_BASE_URL env var.",
         );
+        std::process::exit(1);
+    }
+
+    if let Err(msg) = ensure_active_auth_ready(&config) {
+        renderer.error(&msg);
         std::process::exit(1);
     }
 
@@ -118,6 +146,9 @@ async fn main() {
     if args.container.is_some() || args.ssh.is_some() || args.tmux.is_some() {
         renderer.section("execution");
         renderer.field("target", &execution.summary());
+        if let Some(info) = execution.tmux_attach_info() {
+            renderer.field("attach to session", &execution_tmux_attach_command(&info));
+        }
         eprintln!();
     }
     let capture_pane_enabled = execution.capture_pane_available();
@@ -139,7 +170,7 @@ async fn main() {
 
     // Build tool registry from config.
     let mut tools = ToolRegistry::new();
-    let interactive_mode = args.prompt.is_none();
+    let interactive_mode = !matches!(args.command.as_ref(), Some(cli::Command::Exec { .. }));
     let (shell_approval_broker, mut shell_approval_rx) =
         if config.tools.shell_enabled && config.tools.shell_confirm && interactive_mode {
             let (broker, rx) = ShellApprovalBroker::channel();
@@ -183,7 +214,7 @@ async fn main() {
     // Create agent.
     let mut agent = Agent::new(config.clone(), tools);
 
-    if let Some(prompt) = &args.prompt {
+    if let Some(cli::Command::Exec { prompt }) = args.command.as_ref() {
         // One-shot mode: send prompt, print response, exit.
         match agent.send(prompt).await {
             Ok(response) => {
@@ -578,6 +609,30 @@ async fn main() {
                             .await;
                         }
                     }
+                    repl::SlashCommandAction::Model(selector) => {
+                        if has_background_tasks {
+                            renderer.warn(BACKGROUND_TASK_WARNING);
+                        } else {
+                            handle_model_command(
+                                &renderer,
+                                &mut config,
+                                &agent,
+                                &mut repl_state,
+                                args.ssh.as_deref(),
+                                selector.as_deref(),
+                            )
+                            .await;
+                        }
+                    }
+                    repl::SlashCommandAction::Login(selector) => {
+                        if has_background_tasks {
+                            renderer.warn(BACKGROUND_TASK_WARNING);
+                        } else if let Err(msg) =
+                            run_login_flow(&renderer, &config, selector.as_deref()).await
+                        {
+                            renderer.warn(&msg);
+                        }
+                    }
                     repl::SlashCommandAction::Help => {
                         if has_background_tasks {
                             renderer.warn(BACKGROUND_TASK_WARNING);
@@ -766,6 +821,307 @@ async fn handle_session_command(
     }
 }
 
+async fn handle_model_command(
+    renderer: &Renderer,
+    config: &mut Config,
+    agent: &Arc<Mutex<Agent>>,
+    repl_state: &mut repl::ReplState,
+    ssh_target: Option<&str>,
+    selector: Option<&str>,
+) {
+    if config.models.is_empty() {
+        renderer.warn("No configured model profiles. Add `[models.<name>]` entries to buddy.toml.");
+        return;
+    }
+
+    let names = configured_model_profile_names(config);
+    render_model_profiles(renderer, config, &names);
+    if names.len() == 1 {
+        renderer.warn("Only one model profile is configured.");
+        return;
+    }
+
+    let selected_input = if let Some(selector) = selector {
+        selector.trim().to_string()
+    } else {
+        let context_percent = agent
+            .try_lock()
+            .ok()
+            .and_then(|guard| context_used_percent(&guard));
+        let outcome = repl::read_repl_line_with_interrupt(
+            config.display.color,
+            repl_state,
+            ssh_target,
+            context_percent,
+            repl::PromptMode::Normal,
+            None,
+            || repl::ReadPoll::default(),
+        );
+        match outcome {
+            Ok(repl::ReadOutcome::Line(line)) => line.trim().to_string(),
+            Ok(repl::ReadOutcome::Eof)
+            | Ok(repl::ReadOutcome::Cancelled)
+            | Ok(repl::ReadOutcome::Interrupted) => return,
+            Err(e) => {
+                renderer.warn(&format!("failed to read model selection: {e}"));
+                return;
+            }
+        }
+    };
+
+    if selected_input.is_empty() {
+        return;
+    }
+
+    let profile_name = match resolve_model_profile_selector(config, &names, &selected_input) {
+        Ok(name) => name,
+        Err(msg) => {
+            renderer.warn(&msg);
+            return;
+        }
+    };
+
+    if profile_name == config.agent.model {
+        renderer.section(&format!("model profile already active: {profile_name}"));
+        eprintln!();
+        return;
+    }
+
+    let mut next_config = config.clone();
+    if let Err(e) = select_model_profile(&mut next_config, &profile_name) {
+        renderer.warn(&format!(
+            "failed to select model profile `{profile_name}`: {e}"
+        ));
+        return;
+    }
+
+    if let Err(msg) = ensure_active_auth_ready(&next_config) {
+        renderer.warn(&msg);
+        return;
+    }
+
+    *config = next_config;
+
+    {
+        let mut guard = agent.lock().await;
+        guard.switch_api_config(config.api.clone());
+    }
+
+    renderer.section(&format!("switched model profile: {profile_name}"));
+    renderer.field("model", &config.api.model);
+    renderer.field("base_url", &config.api.base_url);
+    renderer.field(
+        "context_limit",
+        &config
+            .api
+            .context_limit
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "auto".to_string()),
+    );
+    eprintln!();
+}
+
+fn configured_model_profile_names(config: &Config) -> Vec<String> {
+    config.models.keys().cloned().collect()
+}
+
+fn render_model_profiles(renderer: &Renderer, config: &Config, names: &[String]) {
+    renderer.section("model profiles");
+    renderer.field("active", &config.agent.model);
+    for (idx, name) in names.iter().enumerate() {
+        let Some(profile) = config.models.get(name) else {
+            continue;
+        };
+        let marker = if name == &config.agent.model {
+            "*"
+        } else {
+            " "
+        };
+        let api_model = resolved_profile_api_model(profile, name);
+        let value = format!(
+            "model={} base_url={} api={:?} auth={:?}",
+            api_model,
+            profile.api_base_url.trim(),
+            profile.api,
+            profile.auth
+        );
+        renderer.field(&format!("{}.{marker} {name}", idx + 1), &value);
+    }
+    renderer.field("pick", "use /model <name|index> (or type one now)");
+    eprintln!();
+}
+
+fn resolved_profile_api_model(profile: &buddy::config::ModelConfig, profile_name: &str) -> String {
+    profile
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(profile_name)
+        .to_string()
+}
+
+fn resolve_model_profile_selector(
+    config: &Config,
+    names: &[String],
+    selector: &str,
+) -> Result<String, String> {
+    let trimmed = normalize_model_selector(selector);
+    if trimmed.is_empty() {
+        return Err("Usage: /model <name|index>".to_string());
+    }
+
+    if let Ok(index) = trimmed.parse::<usize>() {
+        if index == 0 || index > names.len() {
+            return Err(format!(
+                "Model index out of range: {index}. Choose 1-{}.",
+                names.len()
+            ));
+        }
+        return Ok(names[index - 1].clone());
+    }
+
+    if config.models.contains_key(trimmed) {
+        return Ok(trimmed.to_string());
+    }
+
+    let normalized = trimmed.to_ascii_lowercase();
+    let mut matches = config
+        .models
+        .keys()
+        .filter(|name| name.to_ascii_lowercase() == normalized)
+        .cloned()
+        .collect::<Vec<_>>();
+    if matches.len() == 1 {
+        return Ok(matches.remove(0));
+    }
+
+    Err(format!(
+        "Unknown model profile `{trimmed}`. Use /models to list configured profiles."
+    ))
+}
+
+fn normalize_model_selector(selector: &str) -> &str {
+    let trimmed = selector.trim();
+    if !trimmed.starts_with('/') {
+        return trimmed;
+    }
+
+    let mut parts = trimmed.split_whitespace();
+    let Some(command) = parts.next() else {
+        return trimmed;
+    };
+    if command.eq_ignore_ascii_case("/model") || command.eq_ignore_ascii_case("/models") {
+        return parts.next().unwrap_or("");
+    }
+    trimmed
+}
+
+fn ensure_active_auth_ready(config: &Config) -> Result<(), String> {
+    if !config.api.uses_login() {
+        return Ok(());
+    }
+    if !supports_openai_login(&config.api.base_url) {
+        return Err(format!(
+            "profile `{}` uses `auth = \"login\"`, but base URL `{}` is not an OpenAI login endpoint",
+            config.api.profile, config.api.base_url
+        ));
+    }
+
+    let Some(provider) = login_provider_key_for_base_url(&config.api.base_url) else {
+        return Err(format!(
+            "profile `{}` uses `auth = \"login\"`, but provider for base URL `{}` is unsupported",
+            config.api.profile, config.api.base_url
+        ));
+    };
+
+    match load_provider_tokens(provider) {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => Err(format!(
+            "provider `{}` requires login auth, but no saved login was found. Run `buddy login` (or `/login` inside REPL).",
+            provider
+        )),
+        Err(err) => Err(format!(
+            "failed to load login credentials for provider `{}`: {err}",
+            provider
+        )),
+    }
+}
+
+async fn run_login_flow(
+    renderer: &Renderer,
+    config: &Config,
+    selector: Option<&str>,
+) -> Result<(), String> {
+    if config.models.is_empty() {
+        return Err(
+            "No configured model profiles. Add `[models.<name>]` entries to buddy.toml."
+                .to_string(),
+        );
+    }
+
+    let names = configured_model_profile_names(config);
+    let profile_name = if let Some(selector) = selector {
+        resolve_model_profile_selector(config, &names, selector)?
+    } else {
+        config.agent.model.clone()
+    };
+
+    let Some(profile) = config.models.get(&profile_name) else {
+        return Err(format!("unknown profile `{profile_name}`"));
+    };
+    if !supports_openai_login(&profile.api_base_url) {
+        return Err(format!(
+            "profile `{profile_name}` points to `{}`. Login auth currently supports OpenAI endpoints only.",
+            profile.api_base_url
+        ));
+    }
+
+    let Some(provider) = login_provider_key_for_base_url(&profile.api_base_url) else {
+        return Err(format!(
+            "profile `{profile_name}` points to `{}`. Login auth currently supports OpenAI endpoints only.",
+            profile.api_base_url
+        ));
+    };
+
+    let login = start_openai_device_login()
+        .await
+        .map_err(|err| format!("failed to start login flow: {err}"))?;
+
+    renderer.section("login");
+    renderer.field("profile", &profile_name);
+    renderer.field("url", &login.verification_url);
+    renderer.field("code", &login.user_code);
+    if try_open_browser(&login.verification_url) {
+        renderer.field("browser", "opened");
+    } else {
+        renderer.field("browser", "not available (open URL manually)");
+    }
+    eprintln!();
+
+    let tokens = {
+        let _progress = renderer.progress("waiting for authorization");
+        complete_openai_device_login(&login)
+            .await
+            .map_err(|err| format!("login failed: {err}"))?
+    };
+    save_provider_tokens(provider, tokens)
+        .map_err(|err| format!("failed to save login credentials: {err}"))?;
+
+    renderer.section("login successful");
+    renderer.field("profile", &profile_name);
+    renderer.field("provider", provider);
+    if profile.auth != AuthMode::Login {
+        renderer.field(
+            "note",
+            "this profile currently uses auth=api-key; set auth=login to use saved login tokens",
+        );
+    }
+    eprintln!();
+
+    Ok(())
+}
+
 fn render_sessions(renderer: &Renderer, active_session: &str, sessions: &[SessionSummary]) {
     renderer.section("sessions");
     renderer.field("current", active_session);
@@ -812,8 +1168,11 @@ fn render_status(
     capture_pane_enabled: bool,
 ) {
     renderer.section("status");
+    renderer.field("model_profile", &config.agent.model);
     renderer.field("model", &config.api.model);
     renderer.field("base_url", &config.api.base_url);
+    renderer.field("api", &format!("{:?}", config.api.protocol));
+    renderer.field("auth", &format!("{:?}", config.api.auth));
     renderer.field("max_iterations", &config.agent.max_iterations.to_string());
     renderer.field("tools", &enabled_tools(config, capture_pane_enabled));
     renderer.field("background_tasks", &background_tasks.len().to_string());
@@ -1393,6 +1752,21 @@ fn session_startup_message(state: SessionStartupState, session_name: &str) -> St
     }
 }
 
+fn execution_tmux_attach_command(info: &TmuxAttachInfo) -> String {
+    match &info.target {
+        TmuxAttachTarget::Local => format!("tmux attach -t {}", info.session),
+        TmuxAttachTarget::Ssh { target } => {
+            format!("ssh -t {target} tmux attach -t {}", info.session)
+        }
+        TmuxAttachTarget::Container { engine, container } => {
+            format!(
+                "{engine} exec -it {container} tmux attach -t {}",
+                info.session
+            )
+        }
+    }
+}
+
 fn is_missing_session_error(err: &str) -> bool {
     let lowered = err.to_ascii_lowercase();
     lowered.contains("no such file")
@@ -1654,9 +2028,29 @@ fn truncate_preview(text: &str, max_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use buddy::config::ApiProtocol;
 
     fn dummy_handle() -> JoinHandle<Result<String, buddy::error::AgentError>> {
         tokio::spawn(async { Ok::<String, buddy::error::AgentError>(String::new()) })
+    }
+
+    #[test]
+    fn ensure_active_auth_ready_skips_api_key_mode() {
+        let mut cfg = Config::default();
+        cfg.api.auth = AuthMode::ApiKey;
+        cfg.api.api_key = "sk-test".to_string();
+        assert!(ensure_active_auth_ready(&cfg).is_ok());
+    }
+
+    #[test]
+    fn ensure_active_auth_ready_rejects_non_openai_login_endpoint() {
+        let mut cfg = Config::default();
+        cfg.api.auth = AuthMode::Login;
+        cfg.api.protocol = ApiProtocol::Responses;
+        cfg.api.api_key.clear();
+        cfg.api.base_url = "https://openrouter.ai/api/v1".to_string();
+        let err = ensure_active_auth_ready(&cfg).unwrap_err();
+        assert!(err.contains("not an OpenAI login endpoint"));
     }
 
     #[test]
@@ -1741,6 +2135,64 @@ mod tests {
     #[test]
     fn parse_shell_tool_result_rejects_unexpected_shape() {
         assert!(parse_shell_tool_result("not shell output").is_none());
+    }
+
+    #[test]
+    fn execution_tmux_attach_command_formats_local_target() {
+        let cmd = execution_tmux_attach_command(&TmuxAttachInfo {
+            session: "buddy-ef1d".to_string(),
+            window: "buddy-shared",
+            target: TmuxAttachTarget::Local,
+        });
+        assert_eq!(cmd, "tmux attach -t buddy-ef1d");
+    }
+
+    #[test]
+    fn resolve_model_profile_selector_accepts_index_and_name() {
+        let mut cfg = Config::default();
+        cfg.models.insert(
+            "kimi".to_string(),
+            buddy::config::ModelConfig {
+                api_base_url: "https://api.moonshot.ai/v1".to_string(),
+                model: Some("moonshot-v1".to_string()),
+                ..buddy::config::ModelConfig::default()
+            },
+        );
+        let names = configured_model_profile_names(&cfg);
+
+        let by_name = resolve_model_profile_selector(&cfg, &names, "kimi").unwrap();
+        assert_eq!(by_name, "kimi");
+
+        let by_index = resolve_model_profile_selector(&cfg, &names, "2").unwrap();
+        assert_eq!(by_index, names[1]);
+    }
+
+    #[test]
+    fn resolve_model_profile_selector_accepts_slash_prefixed_input() {
+        let mut cfg = Config::default();
+        cfg.models.insert(
+            "kimi".to_string(),
+            buddy::config::ModelConfig {
+                api_base_url: "https://api.moonshot.ai/v1".to_string(),
+                model: Some("moonshot-v1".to_string()),
+                ..buddy::config::ModelConfig::default()
+            },
+        );
+        let names = configured_model_profile_names(&cfg);
+
+        let by_prefixed_name = resolve_model_profile_selector(&cfg, &names, "/model kimi").unwrap();
+        assert_eq!(by_prefixed_name, "kimi");
+
+        let by_prefixed_index = resolve_model_profile_selector(&cfg, &names, "/models 2").unwrap();
+        assert_eq!(by_prefixed_index, names[1]);
+    }
+
+    #[test]
+    fn resolve_model_profile_selector_rejects_unknown() {
+        let cfg = Config::default();
+        let names = configured_model_profile_names(&cfg);
+        let err = resolve_model_profile_selector(&cfg, &names, "missing").unwrap_err();
+        assert!(err.contains("Unknown model profile"));
     }
 
     #[tokio::test]

@@ -3,7 +3,7 @@
 - Crate: `buddy` (lib + bin). Entry: `src/main.rs`, core loop: `src/agent.rs`.
 - Config load precedence (effective): env vars override TOML; CLI flags override loaded config in `main.rs`.
 - Startup now ensures `~/.config/buddy/buddy.toml` exists (materialized from compiled `src/templates/buddy.toml`).
-- API protocol: OpenAI-compatible `POST /chat/completions` (`src/api.rs`, `src/types.rs`).
+- API protocol: OpenAI-compatible Chat Completions + Responses API (per-profile `api = "completions" | "responses"` in `src/config.rs`; wire handling in `src/api/` modules).
 - Tool loop:
   1. push user msg
   2. call API with full history + tool defs
@@ -13,15 +13,40 @@
 
 ## Important recent changes
 
+- Responses/login/subcommand upgrade:
+  - `src/api/` is now split by concern:
+    - `src/api/client.rs` (shared auth + dispatch),
+    - `src/api/completions.rs` (`/chat/completions`),
+    - `src/api/responses.rs` (`/responses` payload/parsing/SSE handling),
+    - `src/api/policy.rs` (provider-specific runtime rules).
+  - OpenAI login-backed Responses requests now force `store = false` and `stream = true`, then internally consume SSE until `response.completed` so the rest of the agent loop stays non-streaming.
+  - Added profile fields in `src/config.rs`:
+    - `api` (`completions` / `responses`)
+    - `auth` (`api-key` / `login`)
+  - Added secure login token storage in `src/auth.rs`:
+    - file path: `~/.config/buddy/auth.json`
+    - Unix perms: `0600`
+    - Provider-scoped storage key (for example `openai`), with legacy profile-scoped token fallback migration.
+    - OpenAI device-code login + refresh flow.
+  - CLI now uses subcommands (`src/cli.rs`):
+    - `buddy` (REPL)
+    - `buddy exec <prompt>`
+    - `buddy login [model-profile]`
+    - `buddy help`
+  - Added REPL slash command `/login [name|index]` (`src/tui/commands.rs`, `src/main.rs`).
+  - Startup/model-switch auth checks now fail fast with actionable guidance when `auth = "login"` is set but the profile has no saved login.
+
 - Config/template/bootstrap refresh:
-  - Added API key source options in `[api]`: `api_key`, `api_key_env`, `api_key_file` (`src/config.rs`), with strict mutual exclusivity validation.
+  - Config schema migrated from single `[api]` to profile map `[models.<name>]` (also accepts `[model.<name>]` alias), with active profile selected by `[agent].model`.
+  - Added runtime model profile switch via REPL slash commands: `/model <name|index>` and `/models`.
+  - API key source options are per profile: `api_key`, `api_key_env`, `api_key_file` (`src/config.rs`), with strict mutual exclusivity validation.
   - API key resolution order now:
     1. `BUDDY_API_KEY` / `AGENT_API_KEY`
-    2. `api_key_env` (named env var; empty if unset)
-    3. `api_key_file` (file content, trailing newline trimmed)
-    4. `api_key`
-  - Default API model in `ApiConfig::default()` and template config moved to `gpt-5.2-codex`.
-  - Default generated config template now sets `api_key_env = "OPENAI_API_KEY"`.
+    2. selected profile `api_key_env` (named env var; empty if unset)
+    3. selected profile `api_key_file` (file content, trailing newline trimmed)
+    4. selected profile `api_key`
+  - Default generated config template now uses `[models.gpt-codex]` (`gpt-5.3-codex`) and `[models.gpt-spark]` (`gpt-5.3-spark`), both with `api = "responses"` and `auth = "login"`.
+  - Default active profile is now `agent.model = "gpt-codex"`.
   - `main.rs` now calls `ensure_default_global_config()` before `load_config(...)`.
   - Repository sample config moved from repo root to `src/templates/buddy.toml` and is embedded via `include_str!`.
   - System prompt template moved from `src/prompts/system_prompt.template` to `src/templates/system_prompt.template`; `src/prompts/` removed.
@@ -30,10 +55,14 @@
     - `make build` -> `cargo build --release`
     - `make install` -> installs `buddy` to `~/.local/bin`
 
-- Local tmux bootstrap robustness fix:
-  - `ensure_tmux_pane_script()` now creates missing shared windows with `tmux new-window -d -t "$SESSION:" -n "$WINDOW"` (explicit `session:` target-window form) instead of `-t "$SESSION"`.
-  - This avoids tmux target ambiguity that can produce errors like `create window failed: index 3 in use` on some local tmux setups.
-  - Local `--tmux` now rejects startup when the current pane window name is `buddy-shared`, with guidance to run buddy from a different terminal/pane.
+- tmux startup/session UX updates:
+  - `ensure_tmux_pane_script()` creates new sessions directly with `buddy-shared` as the initial window (`tmux new-session -d -s "$SESSION" -n "$WINDOW"`), avoiding the extra default window.
+  - Missing `buddy-shared` windows are created with `tmux new-window -d -t "$SESSION" -n "$WINDOW"` (no explicit `session:` target), avoiding index-collision errors like `create window failed: index 3 in use`.
+  - Managed setup now assumes a single shared pane in `buddy-shared` (operators can add panes/windows manually).
+  - `ExecutionContext::tmux_attach_info()` exposes attach metadata; `main.rs` now renders a single concise `execution` section with `attach to session: ...` (no separate tmux section).
+  - Prompt-layout initialization (`BUDDY_PROMPT_LAYOUT`, etc.) runs only when the managed pane is newly created; existing panes are reused without re-init.
+  - After first-time prompt setup, buddy sends `clear` so first attach lands on a fresh screen.
+  - Local `--tmux` still rejects startup when the current pane window name is `buddy-shared`, with guidance to run buddy from a different terminal/pane.
 
 - Output preview/tint rendering upgraded:
   - Tool output for `run_shell` and `read_file` now renders as clipped snippet blocks (first 10 lines) with `...N more lines...` continuation markers.

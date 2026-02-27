@@ -14,10 +14,10 @@ Usable as both a standalone CLI binary and a Rust library crate.
 
 - **Rust** 1.70+ (install via [rustup](https://rustup.rs/))
 - An OpenAI-compatible API endpoint. Any of:
-  - [OpenAI](https://platform.openai.com/) — set `BUDDY_API_KEY`
+  - [OpenAI](https://platform.openai.com/) — API key auth or `buddy login`
   - [Ollama](https://ollama.ai/) — runs locally, no API key needed
   - [OpenRouter](https://openrouter.ai/) — multi-model gateway
-  - [LM Studio](https://lmstudio.ai/), [vLLM](https://vllm.ai/), or any server implementing `POST /v1/chat/completions`
+  - [LM Studio](https://lmstudio.ai/), [vLLM](https://vllm.ai/), or any server implementing OpenAI-compatible `/v1/chat/completions` or `/v1/responses`
 
 ## Quickstart
 
@@ -55,11 +55,15 @@ $EDITOR ~/.config/buddy/buddy.toml
 buddy
 
 # One-shot mode
-buddy "how much free disk space do I have?"
+buddy exec "how much free disk space do I have?"
 
-# Run with tmux and attach to the tmux session (use pane 'buddy-shared')
+# Login for the active/default profile
+buddy login
+
+# Run with tmux (buddy prints attach instructions on startup)
 buddy --tmux
-tmux attach -t buddy
+# example:
+tmux attach -t buddy-1a2b
 
 # Operate a remote ssh host
 buddy --ssh user@hostname
@@ -102,6 +106,7 @@ If a background task reaches a shell confirmation point, input is interrupted an
 Background task activity (reasoning traces and tool results) is forwarded to the foreground loop and rendered cleanly without breaking keyboard input.
 A live liveness line (spinner + task state) is rendered above the prompt while background tasks are active.
 When running in a tmux-backed execution target, use `run_shell` with `wait: false` to dispatch long-running/interactive commands, then poll with `capture-pane`. Use `send-keys` for control input (for example Ctrl-C, Ctrl-Z, Enter, arrows) when interacting with full-screen TUIs or stuck jobs.
+On tmux-backed startup, buddy shows a friendly `tmux attach` command (local/SSH/container) and works in a shared window named `buddy-shared`.
 
 - `/status` shows model, endpoint, enabled tools, and session stats.
 - `/context` shows estimated context usage and recent token counts.
@@ -140,7 +145,7 @@ Tests cover config parsing, API type serialization/deserialization, token estima
 **Run from source**
 
 ```bash
-cargo run -- "your prompt here"
+cargo run -- exec "your prompt here"
 cargo run                          # interactive mode
 ```
 
@@ -229,18 +234,27 @@ Legacy compatibility:
 ### Full config reference
 
 ```toml
-[api]
-base_url = "https://api.openai.com/v1"   # API endpoint
+[models.gpt-codex]
+api_base_url = "https://api.openai.com/v1" # API endpoint
+api = "responses"                           # responses | completions
+auth = "login"                              # login | api-key
 # Only one may be set: api_key, api_key_env, api_key_file.
-api_key_env = "OPENAI_API_KEY"             # env var name containing the key
-# api_key = "sk-..."                       # inline key
-# api_key_file = "/path/to/key.txt"        # file containing key bytes
-model = "gpt-5.2-codex"                    # model name (or BUDDY_MODEL env)
-# context_limit = 128000                  # optional override; otherwise from models.toml catalog
+# api_key_env = "OPENAI_API_KEY"            # env var name containing the key
+# api_key = "sk-..."                        # inline key
+# api_key_file = "/path/to/key.txt"         # file containing key bytes
+model = "gpt-5.3-codex"                     # concrete provider model id
+# context_limit = 128000                    # optional override; otherwise from models.toml catalog
+
+[models.gpt-spark]
+api_base_url = "https://api.openai.com/v1"
+api = "responses"
+auth = "login"
+model = "gpt-5.3-spark"
 
 [agent]
+model = "gpt-codex"                         # active profile key from [models.<name>]
 # system_prompt = "Optional additional operator instructions appended to the built-in template."
-max_iterations = 20                        # safety cap on tool-use loops
+max_iterations = 20                         # safety cap on tool-use loops
 # temperature = 0.7
 # top_p = 1.0
 
@@ -260,14 +274,16 @@ show_tool_calls = true                     # show tool invocations inline
 ### CLI flags
 
 ```
-buddy [OPTIONS] [PROMPT]
+buddy [OPTIONS] [COMMAND]
 
-Arguments:
-  [PROMPT]  Prompt to send (one-shot mode if provided)
+Commands:
+  exec <PROMPT>           Execute one prompt and exit
+  login [MODEL_PROFILE]   Login to provider for profile (defaults to [agent].model; shared per provider)
+  help                    Print command help
 
 Options:
   -c, --config <CONFIG>      Path to config file
-  -m, --model <MODEL>        Override model name
+  -m, --model <MODEL>        Override model profile key (if configured) or raw API model id
       --base-url <BASE_URL>  Override API base URL
       --container <ID/NAME>  Run shell/files tools with docker/podman exec in this container
       --ssh <USER@HOST>      Run shell/files tools on this host over persistent ssh
@@ -297,6 +313,9 @@ At startup, the system prompt is rendered from one compiled template with runtim
 | Command | Description |
 |---------|-------------|
 | `/status` | Show current model, base URL, enabled tools, and session counters. |
+| `/model <name\|index>` | Switch the active configured model profile. |
+| `/models` | List configured model profiles and pick one interactively. |
+| `/login [name\|index]` | Start login flow for a configured profile. |
 | `/context` | Show estimated context usage (`messages` estimate / context window) and token stats. |
 | `/ps` | Show running background tasks with IDs and elapsed time. |
 | `/kill <id>` | Cancel a running background task by task ID. |
@@ -319,8 +338,12 @@ The catalog is a local snapshot of common model IDs/families and their
 
 **OpenAI**
 ```bash
+# API-key auth
 export BUDDY_API_KEY="sk-..."
 cargo run
+
+# or login auth (when profile uses auth = "login")
+buddy login gpt-codex
 ```
 
 **Ollama**
@@ -342,6 +365,7 @@ cargo run
 ## Links and references
 
 - [OpenAI Chat Completions API](https://platform.openai.com/docs/api-reference/chat) — the protocol this agent speaks
+- [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses/create) — supported per-profile with `api = "responses"`
 - [OpenAI Function Calling guide](https://platform.openai.com/docs/guides/function-calling) — how tool use works in the API
 - [Ollama OpenAI compatibility](https://ollama.ai/blog/openai-compatibility) — running models locally
 - [OpenRouter docs](https://openrouter.ai/docs) — multi-provider API gateway

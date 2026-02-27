@@ -24,7 +24,7 @@ append user message to history
 │  + tool definitions)                │
 │            │                        │
 │            ▼                        │
-│  POST /chat/completions             │ ◄── cancellable
+│  POST /responses or /chat/completions │ ◄── cancellable
 │            │                        │
 │            ▼                        │
 │  assistant message with tool_calls? │
@@ -48,7 +48,7 @@ The agent owns everything needed to run a conversation:
 
 ```rust
 pub struct Agent {
-    client: ApiClient,        // HTTP client for /chat/completions
+    client: ApiClient,        // HTTP client for /responses or /chat/completions
     config: Config,           // Model name, temperature, limits, ...
     tools: ToolRegistry,      // All registered tools
     messages: Vec<Message>,   // Full conversation history
@@ -106,7 +106,7 @@ Each iteration constructs a fresh `ChatRequest`:
 
 ```rust
 ChatRequest {
-    model: "gpt-5.2-codex",
+    model: "gpt-5.3-codex",
     messages: self.messages.clone(),   // full history
     tools: Some(self.tools.definitions()),
     temperature: ...,
@@ -245,7 +245,7 @@ for role/framing overhead.
 
 Context limits are resolved in order:
 
-1. Explicit `[api].context_limit` in `buddy.toml`
+1. Explicit `[models.<name>].context_limit` for the active `agent.model` profile in `buddy.toml`
 2. `src/templates/models.toml` catalog (exact name, prefix, or substring match)
 3. Conservative fallback of 8192 tokens
 
@@ -333,7 +333,7 @@ User: "What's the disk usage of /var?"
   context check: 3% used, OK
 
   Iteration 1:
-    POST /chat/completions
+    POST /responses (or /chat/completions)
     ← assistant { tool_calls: [{ id: "tc1", name: "run_shell",
                                   args: {"command":"du -sh /var"} }] }
     Push: assistant (with tool_call)
@@ -342,7 +342,7 @@ User: "What's the disk usage of /var?"
     Push: tool_result(id="tc1", "exit code: 0\nstdout:\n512M\t/var\n...")
 
   Iteration 2:
-    POST /chat/completions  (history: system, user, assistant, tool)
+    POST /responses (or /chat/completions)  (history: system, user, assistant, tool)
     ← assistant { content: "The disk usage of /var is 512 MB." }
     Push: assistant (final)
 

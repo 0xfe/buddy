@@ -10,7 +10,7 @@ pub struct SlashCommand {
 }
 
 /// Built-in slash commands for interactive mode.
-pub const SLASH_COMMANDS: [SlashCommand; 11] = [
+pub const SLASH_COMMANDS: [SlashCommand; 14] = [
     SlashCommand {
         name: "/status",
         description: "Show model, endpoint, tools, and session details.",
@@ -38,6 +38,18 @@ pub const SLASH_COMMANDS: [SlashCommand; 11] = [
     SlashCommand {
         name: "/session",
         description: "Session ops: list, resume, create.",
+    },
+    SlashCommand {
+        name: "/model",
+        description: "Switch active model profile: /model <name|index>.",
+    },
+    SlashCommand {
+        name: "/models",
+        description: "List and choose configured model profiles.",
+    },
+    SlashCommand {
+        name: "/login",
+        description: "Login for a model profile: /login [name|index].",
     },
     SlashCommand {
         name: "/help",
@@ -74,6 +86,8 @@ pub enum SlashCommandAction {
         verb: Option<String>,
         name: Option<String>,
     },
+    Model(Option<String>),
+    Login(Option<String>),
     Help,
     Unknown(String),
 }
@@ -111,6 +125,12 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommandAction> {
             verb: trimmed.split_whitespace().nth(1).map(str::to_string),
             name: trimmed.split_whitespace().nth(2).map(str::to_string),
         },
+        "/model" | "/models" => {
+            SlashCommandAction::Model(trimmed.split_whitespace().nth(1).map(str::to_string))
+        }
+        "/login" => {
+            SlashCommandAction::Login(trimmed.split_whitespace().nth(1).map(str::to_string))
+        }
         other => SlashCommandAction::Unknown(other.to_string()),
     };
 
@@ -184,6 +204,22 @@ mod tests {
                 verb: Some("resume".to_string()),
                 name: Some("last".to_string())
             })
+        );
+        assert_eq!(
+            parse_slash_command("/model kimi"),
+            Some(SlashCommandAction::Model(Some("kimi".to_string())))
+        );
+        assert_eq!(
+            parse_slash_command("/models 2"),
+            Some(SlashCommandAction::Model(Some("2".to_string())))
+        );
+        assert_eq!(
+            parse_slash_command("/login"),
+            Some(SlashCommandAction::Login(None))
+        );
+        assert_eq!(
+            parse_slash_command("/login kimi"),
+            Some(SlashCommandAction::Login(Some("kimi".to_string())))
         );
         assert_eq!(parse_slash_command("/q"), Some(SlashCommandAction::Quit));
         assert_eq!(parse_slash_command("hello"), None);

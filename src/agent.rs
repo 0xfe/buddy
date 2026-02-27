@@ -6,7 +6,7 @@
 //! cap is reached).
 
 use crate::api::ApiClient;
-use crate::config::Config;
+use crate::config::{ApiConfig, Config};
 use crate::error::AgentError;
 use crate::render::Renderer;
 use crate::tokens::{self, TokenTracker};
@@ -125,6 +125,18 @@ impl Agent {
             live_output_sink: None,
             cancellation_rx: None,
         }
+    }
+
+    /// Replace the active API/model settings without resetting conversation state.
+    ///
+    /// Used by runtime model switching (`/model` / `/models`).
+    pub fn switch_api_config(&mut self, api: ApiConfig) {
+        let context_limit = api
+            .context_limit
+            .unwrap_or_else(|| tokens::default_context_limit(&api.model));
+        self.client = ApiClient::new(&api);
+        self.config.api = api;
+        self.tracker.context_limit = context_limit;
     }
 
     /// Snapshot in-memory conversation state for persistent sessions.
@@ -564,5 +576,25 @@ mod tests {
         }));
         assert_eq!(agent.tracker.last_prompt_tokens, 11);
         assert_eq!(agent.tracker.last_completion_tokens, 7);
+    }
+
+    #[test]
+    fn switch_api_config_updates_model_and_context_limit() {
+        let mut agent = Agent::new(Config::default(), ToolRegistry::new());
+        let replacement = ApiConfig {
+            base_url: "https://example.com/v1".to_string(),
+            api_key: "secret".to_string(),
+            model: "moonshot-v1".to_string(),
+            protocol: crate::config::ApiProtocol::Completions,
+            auth: crate::config::AuthMode::ApiKey,
+            profile: "test".to_string(),
+            context_limit: Some(42_000),
+        };
+
+        agent.switch_api_config(replacement);
+
+        assert_eq!(agent.config.api.base_url, "https://example.com/v1");
+        assert_eq!(agent.config.api.model, "moonshot-v1");
+        assert_eq!(agent.tracker.context_limit, 42_000);
     }
 }

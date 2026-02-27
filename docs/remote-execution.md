@@ -84,7 +84,7 @@ command -v tmux >/dev/null 2>&1
 If tmux is present, it creates (or reattaches to) a named session:
 
 ```bash
-tmux has-session -t <session> 2>/dev/null || tmux new-session -d -s <session>
+tmux has-session -t <session> 2>/dev/null || tmux new-session -d -s <session> -n buddy-shared
 ```
 
 **Default session name:** Derived from a 4-hex-digit hash of the target
@@ -101,13 +101,13 @@ rather than silently falling back to direct SSH.
 ## The Shared Pane — `ensure_tmux_pane`
 
 The agent works in a fixed window named `buddy-shared` inside the tmux session.
-This keeps the agent's pane distinct from any other windows the operator may
-have open.
+That window has a single shared pane by default; operators can add additional
+panes/windows manually if desired.
 
 ```bash
 # Ensure the window exists
 if ! tmux list-windows -t "$SESSION" -F '#{window_name}' | grep -Fx -- "$WINDOW"; then
-  tmux new-window -d -t "$SESSION:" -n "$WINDOW"
+  tmux new-window -d -t "$SESSION" -n "$WINDOW"
 fi
 
 # Get the first pane id

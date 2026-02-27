@@ -105,6 +105,22 @@ impl Default for SendKeysOptions {
     }
 }
 
+/// Attach metadata for tmux-backed execution targets.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TmuxAttachInfo {
+    pub session: String,
+    pub window: &'static str,
+    pub target: TmuxAttachTarget,
+}
+
+/// Concrete execution target for tmux attach instructions.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TmuxAttachTarget {
+    Local,
+    Ssh { target: String },
+    Container { engine: String, container: String },
+}
+
 struct ContainerContext {
     engine: ContainerEngine,
     container: String,
@@ -143,6 +159,12 @@ struct SshContext {
     configured_tmux_pane: Mutex<Option<String>>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct EnsuredTmuxPane {
+    pane_id: String,
+    created: bool,
+}
+
 impl SshContext {
     /// Run a command on the remote host, forcing tmux execution when a tmux
     /// session is configured for this connection.
@@ -179,13 +201,15 @@ impl SshContext {
     }
 
     async fn ensure_prompt_ready(&self, tmux_session: &str) -> Result<String, ToolError> {
-        let pane_id = ensure_tmux_pane(&self.target, &self.control_path, tmux_session).await?;
+        let ensured = ensure_tmux_pane(&self.target, &self.control_path, tmux_session).await?;
         let mut configured = self.configured_tmux_pane.lock().await;
-        if configured.as_deref() != Some(pane_id.as_str()) {
-            ensure_tmux_prompt_setup(&self.target, &self.control_path, &pane_id).await?;
-            *configured = Some(pane_id.clone());
+        if ensured.created {
+            ensure_tmux_prompt_setup(&self.target, &self.control_path, &ensured.pane_id).await?;
         }
-        Ok(pane_id)
+        if configured.as_deref() != Some(ensured.pane_id.as_str()) {
+            *configured = Some(ensured.pane_id.clone());
+        }
+        Ok(ensured.pane_id)
     }
 }
 
@@ -201,13 +225,15 @@ impl LocalTmuxContext {
     }
 
     async fn ensure_prompt_ready(&self) -> Result<String, ToolError> {
-        let pane_id = ensure_local_tmux_pane(&self.tmux_session).await?;
+        let ensured = ensure_local_tmux_pane(&self.tmux_session).await?;
         let mut configured = self.configured_tmux_pane.lock().await;
-        if configured.as_deref() != Some(pane_id.as_str()) {
-            ensure_local_tmux_prompt_setup(&pane_id).await?;
-            *configured = Some(pane_id.clone());
+        if ensured.created {
+            ensure_local_tmux_prompt_setup(&ensured.pane_id).await?;
         }
-        Ok(pane_id)
+        if configured.as_deref() != Some(ensured.pane_id.as_str()) {
+            *configured = Some(ensured.pane_id.clone());
+        }
+        Ok(ensured.pane_id)
     }
 }
 
@@ -223,13 +249,15 @@ impl ContainerTmuxContext {
     }
 
     async fn ensure_prompt_ready(&self) -> Result<String, ToolError> {
-        let pane_id = ensure_container_tmux_pane(self, &self.tmux_session).await?;
+        let ensured = ensure_container_tmux_pane(self, &self.tmux_session).await?;
         let mut configured = self.configured_tmux_pane.lock().await;
-        if configured.as_deref() != Some(pane_id.as_str()) {
-            ensure_container_tmux_prompt_setup(self, &pane_id).await?;
-            *configured = Some(pane_id.clone());
+        if ensured.created {
+            ensure_container_tmux_prompt_setup(self, &ensured.pane_id).await?;
         }
-        Ok(pane_id)
+        if configured.as_deref() != Some(ensured.pane_id.as_str()) {
+            *configured = Some(ensured.pane_id.clone());
+        }
+        Ok(ensured.pane_id)
     }
 }
 
@@ -264,13 +292,15 @@ impl ExecutionContext {
 
         let tmux_session = requested_tmux_session.unwrap_or_else(default_local_tmux_session_name);
         ensure_not_in_managed_local_tmux_pane().await?;
-        let pane_id = ensure_local_tmux_pane(&tmux_session).await?;
-        ensure_local_tmux_prompt_setup(&pane_id).await?;
+        let ensured = ensure_local_tmux_pane(&tmux_session).await?;
+        if ensured.created {
+            ensure_local_tmux_prompt_setup(&ensured.pane_id).await?;
+        }
 
         Ok(Self {
             inner: Arc::new(ExecutionBackend::LocalTmux(LocalTmuxContext {
                 tmux_session,
-                configured_tmux_pane: Mutex::new(Some(pane_id)),
+                configured_tmux_pane: Mutex::new(Some(ensured.pane_id)),
             })),
         })
     }
@@ -331,11 +361,13 @@ impl ExecutionContext {
                 context.container
             )));
         }
-        let pane_id = ensure_container_tmux_pane(&context, &context.tmux_session).await?;
-        ensure_container_tmux_prompt_setup(&context, &pane_id).await?;
+        let ensured = ensure_container_tmux_pane(&context, &context.tmux_session).await?;
+        if ensured.created {
+            ensure_container_tmux_prompt_setup(&context, &ensured.pane_id).await?;
+        }
         {
             let mut configured = context.configured_tmux_pane.lock().await;
-            *configured = Some(pane_id);
+            *configured = Some(ensured.pane_id);
         }
 
         Ok(Self {
@@ -429,14 +461,16 @@ impl ExecutionContext {
 
         let configured_tmux_pane = if let Some(session) = tmux_session.as_deref() {
             match ensure_tmux_pane(&target, &control_path, session).await {
-                Ok(pane_id) => {
-                    if let Err(err) =
-                        ensure_tmux_prompt_setup(&target, &control_path, &pane_id).await
-                    {
-                        close_ssh_control_connection(&target, &control_path);
-                        return Err(err);
+                Ok(ensured) => {
+                    if ensured.created {
+                        if let Err(err) =
+                            ensure_tmux_prompt_setup(&target, &control_path, &ensured.pane_id).await
+                        {
+                            close_ssh_control_connection(&target, &control_path);
+                            return Err(err);
+                        }
                     }
-                    Some(pane_id)
+                    Some(ensured.pane_id)
                 }
                 Err(err) => {
                     close_ssh_control_connection(&target, &control_path);
@@ -494,6 +528,35 @@ impl ExecutionContext {
                 }
                 base
             }
+        }
+    }
+
+    /// Return tmux attach metadata when this context is backed by a managed
+    /// tmux session.
+    pub fn tmux_attach_info(&self) -> Option<TmuxAttachInfo> {
+        match self.inner.as_ref() {
+            ExecutionBackend::Local => None,
+            ExecutionBackend::LocalTmux(ctx) => Some(TmuxAttachInfo {
+                session: ctx.tmux_session.clone(),
+                window: TMUX_WINDOW_NAME,
+                target: TmuxAttachTarget::Local,
+            }),
+            ExecutionBackend::Container(_) => None,
+            ExecutionBackend::ContainerTmux(ctx) => Some(TmuxAttachInfo {
+                session: ctx.tmux_session.clone(),
+                window: TMUX_WINDOW_NAME,
+                target: TmuxAttachTarget::Container {
+                    engine: ctx.engine.command.to_string(),
+                    container: ctx.container.clone(),
+                },
+            }),
+            ExecutionBackend::Ssh(ctx) => ctx.tmux_session.as_ref().map(|session| TmuxAttachInfo {
+                session: session.clone(),
+                window: TMUX_WINDOW_NAME,
+                target: TmuxAttachTarget::Ssh {
+                    target: ctx.target.clone(),
+                },
+            }),
         }
     }
 
@@ -1250,16 +1313,23 @@ fn ensure_tmux_pane_script(tmux_session: &str) -> String {
         "set -e\n\
 SESSION={session_q}\n\
 WINDOW={window_q}\n\
-tmux has-session -t \"$SESSION\" 2>/dev/null || tmux new-session -d -s \"$SESSION\"\n\
+CREATED=0\n\
+if tmux has-session -t \"$SESSION\" 2>/dev/null; then\n\
+  :\n\
+else\n\
+  tmux new-session -d -s \"$SESSION\" -n \"$WINDOW\"\n\
+  CREATED=1\n\
+fi\n\
 if ! tmux list-windows -t \"$SESSION\" -F '#{{window_name}}' | grep -Fx -- \"$WINDOW\" >/dev/null 2>&1; then\n\
-  tmux new-window -d -t \"$SESSION:\" -n \"$WINDOW\"\n\
+  tmux new-window -d -t \"$SESSION\" -n \"$WINDOW\"\n\
+  CREATED=1\n\
 fi\n\
 PANE=\"$(tmux list-panes -t \"$SESSION:$WINDOW\" -F '#{{pane_id}}' | head -n1)\"\n\
 if [ -z \"$PANE\" ]; then\n\
-  tmux split-window -d -t \"$SESSION:$WINDOW\"\n\
-  PANE=\"$(tmux list-panes -t \"$SESSION:$WINDOW\" -F '#{{pane_id}}' | head -n1)\"\n\
+  echo \"failed to resolve tmux pane target for $SESSION:$WINDOW\" >&2\n\
+  exit 1\n\
 fi\n\
-printf '%s' \"$PANE\"\n"
+printf '%s\n%s' \"$PANE\" \"$CREATED\"\n"
     )
 }
 
@@ -1267,49 +1337,34 @@ async fn ensure_tmux_pane(
     target: &str,
     control_path: &Path,
     tmux_session: &str,
-) -> Result<String, ToolError> {
+) -> Result<EnsuredTmuxPane, ToolError> {
     let script = ensure_tmux_pane_script(tmux_session);
     let output = run_ssh_raw_process(target, control_path, &script, None).await?;
     let output = ensure_success(output, "failed to prepare tmux session pane".into())?;
-    let pane = output.stdout.trim().to_string();
-    if pane.is_empty() {
-        return Err(ToolError::ExecutionFailed(
-            "failed to resolve tmux pane target".into(),
-        ));
-    }
-    Ok(pane)
+    parse_ensured_tmux_pane(&output.stdout)
+        .ok_or_else(|| ToolError::ExecutionFailed("failed to resolve tmux pane target".into()))
 }
 
-async fn ensure_local_tmux_pane(tmux_session: &str) -> Result<String, ToolError> {
+async fn ensure_local_tmux_pane(tmux_session: &str) -> Result<EnsuredTmuxPane, ToolError> {
     let script = ensure_tmux_pane_script(tmux_session);
     let output = run_sh_process("sh", &script, None).await?;
     let output = ensure_success(output, "failed to prepare local tmux session pane".into())?;
-    let pane = output.stdout.trim().to_string();
-    if pane.is_empty() {
-        return Err(ToolError::ExecutionFailed(
-            "failed to resolve tmux pane target".into(),
-        ));
-    }
-    Ok(pane)
+    parse_ensured_tmux_pane(&output.stdout)
+        .ok_or_else(|| ToolError::ExecutionFailed("failed to resolve tmux pane target".into()))
 }
 
 async fn ensure_container_tmux_pane(
     ctx: &ContainerTmuxContext,
     tmux_session: &str,
-) -> Result<String, ToolError> {
+) -> Result<EnsuredTmuxPane, ToolError> {
     let script = ensure_tmux_pane_script(tmux_session);
     let output = run_container_tmux_sh_process(ctx, &script, None).await?;
     let output = ensure_success(
         output,
         "failed to prepare container tmux session pane".into(),
     )?;
-    let pane = output.stdout.trim().to_string();
-    if pane.is_empty() {
-        return Err(ToolError::ExecutionFailed(
-            "failed to resolve tmux pane target".into(),
-        ));
-    }
-    Ok(pane)
+    parse_ensured_tmux_pane(&output.stdout)
+        .ok_or_else(|| ToolError::ExecutionFailed("failed to resolve tmux pane target".into()))
 }
 
 fn tmux_prompt_setup_script() -> &'static str {
@@ -1349,12 +1404,16 @@ async fn ensure_tmux_prompt_setup(
     let configure_prompt = tmux_prompt_setup_script();
 
     send_tmux_line(target, control_path, pane_id, configure_prompt).await?;
+    wait_for_tmux_any_prompt(target, control_path, pane_id).await?;
+    send_tmux_line(target, control_path, pane_id, "clear").await?;
     wait_for_tmux_any_prompt(target, control_path, pane_id).await
 }
 
 async fn ensure_local_tmux_prompt_setup(pane_id: &str) -> Result<(), ToolError> {
     let configure_prompt = tmux_prompt_setup_script();
     send_local_tmux_line(pane_id, configure_prompt).await?;
+    wait_for_local_tmux_any_prompt(pane_id).await?;
+    send_local_tmux_line(pane_id, "clear").await?;
     wait_for_local_tmux_any_prompt(pane_id).await
 }
 
@@ -1364,7 +1423,27 @@ async fn ensure_container_tmux_prompt_setup(
 ) -> Result<(), ToolError> {
     let configure_prompt = tmux_prompt_setup_script();
     send_container_tmux_line(ctx, pane_id, configure_prompt).await?;
+    wait_for_container_tmux_any_prompt(ctx, pane_id).await?;
+    send_container_tmux_line(ctx, pane_id, "clear").await?;
     wait_for_container_tmux_any_prompt(ctx, pane_id).await
+}
+
+fn parse_ensured_tmux_pane(output: &str) -> Option<EnsuredTmuxPane> {
+    let mut lines = output.lines();
+    let pane_id = lines.next()?.trim();
+    let created_raw = lines.next()?.trim();
+    if pane_id.is_empty() {
+        return None;
+    }
+    let created = match created_raw {
+        "0" => false,
+        "1" => true,
+        _ => return None,
+    };
+    Some(EnsuredTmuxPane {
+        pane_id: pane_id.to_string(),
+        created,
+    })
 }
 
 async fn send_tmux_line(
@@ -1997,7 +2076,31 @@ mod tests {
     #[test]
     fn ensure_tmux_pane_script_uses_explicit_session_window_target() {
         let script = ensure_tmux_pane_script("buddy");
-        assert!(script.contains("tmux new-window -d -t \"$SESSION:\" -n \"$WINDOW\""));
+        assert!(script.contains("CREATED=0"));
+        assert!(script.contains("CREATED=1"));
+        assert!(script.contains("tmux new-session -d -s \"$SESSION\" -n \"$WINDOW\""));
+        assert!(script.contains("tmux new-window -d -t \"$SESSION\" -n \"$WINDOW\""));
+        assert!(!script.contains("tmux split-window -d -t \"$SESSION:$WINDOW\""));
+    }
+
+    #[test]
+    fn parse_ensured_tmux_pane_reads_pane_and_created_flag() {
+        assert_eq!(
+            parse_ensured_tmux_pane("%3\n1"),
+            Some(EnsuredTmuxPane {
+                pane_id: "%3".to_string(),
+                created: true,
+            })
+        );
+        assert_eq!(
+            parse_ensured_tmux_pane("%7\n0"),
+            Some(EnsuredTmuxPane {
+                pane_id: "%7".to_string(),
+                created: false,
+            })
+        );
+        assert!(parse_ensured_tmux_pane("").is_none());
+        assert!(parse_ensured_tmux_pane("%3\n2").is_none());
     }
 
     #[test]
@@ -2010,6 +2113,14 @@ mod tests {
         };
         assert_eq!(ctx.summary(), "local (tmux:buddy-dev)");
         assert!(ctx.capture_pane_available());
+        assert_eq!(
+            ctx.tmux_attach_info(),
+            Some(TmuxAttachInfo {
+                session: "buddy-dev".to_string(),
+                window: "buddy-shared",
+                target: TmuxAttachTarget::Local,
+            })
+        );
     }
 
     #[test]
@@ -2030,6 +2141,41 @@ mod tests {
             "container:devbox (tmux:buddy-dev) (via docker)"
         );
         assert!(ctx.capture_pane_available());
+        assert_eq!(
+            ctx.tmux_attach_info(),
+            Some(TmuxAttachInfo {
+                session: "buddy-dev".to_string(),
+                window: "buddy-shared",
+                target: TmuxAttachTarget::Container {
+                    engine: "docker".to_string(),
+                    container: "devbox".to_string(),
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn ssh_tmux_summary_and_attach_metadata() {
+        let ctx = ExecutionContext {
+            inner: Arc::new(ExecutionBackend::Ssh(SshContext {
+                target: "dev@host".to_string(),
+                control_path: PathBuf::from("/tmp/buddy-ssh.sock"),
+                tmux_session: Some("buddy-4a2f".to_string()),
+                configured_tmux_pane: Mutex::new(None),
+            })),
+        };
+        assert_eq!(ctx.summary(), "ssh:dev@host (tmux:buddy-4a2f)");
+        assert!(ctx.capture_pane_available());
+        assert_eq!(
+            ctx.tmux_attach_info(),
+            Some(TmuxAttachInfo {
+                session: "buddy-4a2f".to_string(),
+                window: "buddy-shared",
+                target: TmuxAttachTarget::Ssh {
+                    target: "dev@host".to_string(),
+                },
+            })
+        );
     }
 
     #[test]

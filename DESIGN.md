@@ -13,7 +13,7 @@ main.rs + cli.rs + tui/  CLI entry point, argument parsing, REPL loop + slash au
     agent.rs              Core orchestration — the agentic loop
    /    |    \
   v     v     v
-api.rs  tools/  tui/      HTTP client, tool dispatch, terminal output
+api/    tools/  tui/      HTTP client, tool dispatch, terminal output
   |       |
   v       v
 types.rs  error.rs          Shared data model and error types
@@ -26,16 +26,25 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
 
 ## Features
 
-- OpenAI-compatible chat-completions client (`POST /chat/completions`) that works with OpenAI, Ollama, OpenRouter, and similar providers.
+- OpenAI-compatible model client with per-profile wire protocol:
+  - Chat Completions (`POST /chat/completions`)
+  - Responses API (`POST /responses`)
+- Works with OpenAI, Ollama, OpenRouter, and similar providers.
 - Dual runtime modes:
   - Interactive REPL mode.
-  - One-shot mode via positional prompt argument.
+  - One-shot mode via `buddy exec <prompt>`.
+- CLI subcommands:
+  - `buddy` (REPL)
+  - `buddy exec <prompt>`
+  - `buddy login [model-profile]`
+  - `buddy help`
 - Configurable model/API settings with precedence:
   - Environment variable overrides.
   - CLI overrides.
   - Local/global TOML config.
   - Built-in defaults.
   - On startup, `~/.config/buddy/buddy.toml` is auto-created (if missing) from a compiled template (`src/templates/buddy.toml`).
+  - Built-in template includes OpenAI `responses` profiles for `gpt-codex` (`gpt-5.3-codex`) and `gpt-spark` (`gpt-5.3-spark`), with `gpt-codex` selected by default.
   - Primary naming uses `BUDDY_*` env vars + `buddy.toml`, with legacy `AGENT_*` and `agent.toml` compatibility fallbacks.
 - Built-in tool-calling agent loop:
   - Sends tool definitions to the model.
@@ -54,6 +63,8 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
   - Container execution with `--container`.
   - Remote SSH execution with `--ssh`.
   - Optional tmux session control with `--tmux [session]` (default auto session `buddy-xxxx` per local/container/SSH target), including persistent session/pane reuse and prompt-marker based output capture.
+  - On tmux-backed startup, buddy prints friendly attach instructions (local, SSH, or container) including the resolved session name.
+  - Managed tmux setup uses a single shared window (`buddy-shared`) with one pane by default.
   - Local `--tmux` startup refuses to run from the managed `buddy-shared` pane to avoid self-injection loops; run buddy from a different terminal/pane.
   - `capture-pane` is only enabled when tmux pane capture is available for the active execution target.
   - In tmux-backed targets, `run_shell` supports non-blocking dispatch (`wait: false`) and timeout-bound waits (`wait: "10m"` style) for interactive workflows.
@@ -65,7 +76,7 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
   - Prompt format:
     - local: `> `
     - ssh target: `(ssh user@host)> `
-  - Slash-command autocomplete and built-in slash commands (`/status`, `/context`, `/ps`, `/kill`, `/timeout`, `/approve`, `/session`, `/help`, `/quit`, `/exit`, `/q`).
+  - Slash-command autocomplete and built-in slash commands (`/status`, `/context`, `/ps`, `/kill`, `/timeout`, `/approve`, `/session`, `/model`, `/models`, `/login`, `/help`, `/quit`, `/exit`, `/q`).
   - Command history navigation (`Up/Down`, `Ctrl-P/N`).
   - Multiline editing with `Alt+Enter`.
   - Common cursor/edit shortcuts (`Ctrl-A/E/B/F/K/U/W`, arrows, home/end, delete/backspace).
@@ -109,10 +120,11 @@ Key types:
 
 ### `config.rs` — Configuration
 
-Configuration is defined as four nested structs with `#[serde(default)]` on every level:
+Configuration is defined with model profiles and runtime resolution:
 
-- **`ApiConfig`** — `base_url`, `api_key`, `api_key_env`, `api_key_file`, `model`, optional `context_limit`
-- **`AgentConfig`** — `system_prompt`, `max_iterations`, optional `temperature`/`top_p`
+- **`ModelConfig`** — profile fields under `[models.<name>]`: `api_base_url`, `api` (`completions|responses`), `auth` (`api-key|login`), `api_key`, `api_key_env`, `api_key_file`, optional `model`, optional `context_limit`
+- **`ApiConfig`** — resolved active runtime API settings (`base_url`, resolved `api_key`, concrete `model`, resolved `protocol`, resolved `auth`, active `profile`, optional `context_limit`)
+- **`AgentConfig`** — `model` (active profile key), `system_prompt`, `max_iterations`, optional `temperature`/`top_p`
 - **`ToolsConfig`** — boolean flags for each built-in tool, plus `shell_confirm`
 - **`DisplayConfig`** — `color`, `show_tokens`, `show_tool_calls`
 
@@ -124,28 +136,30 @@ Every field has a default, so a completely empty config file (or no config file 
 4. `$XDG_CONFIG_HOME/buddy/buddy.toml` (or `~/.config/buddy/buddy.toml`)
 5. legacy `~/.config/agent/agent.toml` fallback
 
-Startup ensures `~/.config/buddy/buddy.toml` exists by writing the compiled default template when the file is missing.
+Startup ensures `~/.config/buddy/buddy.toml` exists by writing the compiled default template when the file is missing. Login auth stores provider-scoped tokens in `~/.config/buddy/auth.json` (mode `0600` on Unix), so one login is reused across model profiles that target the same provider.
 
-API key resolution supports exactly one configured source: `api_key`, `api_key_env`, or `api_key_file`. The key source order is:
+API key resolution supports exactly one configured source per model profile: `api_key`, `api_key_env`, or `api_key_file`. The key source order is:
 1. `BUDDY_API_KEY` (legacy `AGENT_API_KEY` fallback)
-2. `api.api_key_env` (named environment variable; empty if unset)
-3. `api.api_key_file` (file contents, with trailing newline trimmed)
-4. `api.api_key` literal
+2. `models.<name>.api_key_env` (named environment variable; empty if unset)
+3. `models.<name>.api_key_file` (file contents, with trailing newline trimmed)
+4. `models.<name>.api_key` literal
 
 `BUDDY_BASE_URL` and `BUDDY_MODEL` (legacy `AGENT_*` fallback) continue to override parsed config values.
 
-### `api.rs` — HTTP client
+### `api/` — HTTP client
 
-A thin wrapper around `reqwest::Client`. The `ApiClient` struct holds a reqwest client, the base URL (trailing slash stripped), and the API key.
+A thin wrapper around `reqwest::Client`. `ApiClient` lives in `src/api/client.rs`, with protocol-specific modules split into `src/api/completions.rs` and `src/api/responses.rs`, plus provider policy rules in `src/api/policy.rs`.
 
-The single public method `chat()`:
-1. Builds the URL as `{base_url}/chat/completions`
-2. POSTs the `ChatRequest` as JSON
-3. Adds an `Authorization: Bearer {key}` header — but only if the key is non-empty. This is important for local providers like Ollama that don't use authentication.
-4. Checks the HTTP status code. Non-2xx responses are captured as `ApiError::Status` with the status code and response body for debugging.
-5. Deserializes the response JSON into `ChatResponse`.
-
-There is deliberately no streaming support in v1. Streaming complicates the agentic loop significantly (partial JSON for tool calls, incremental rendering) and can be added later as a separate `chat_stream()` method without changing the architecture.
+The public method `chat()`:
+1. Resolves auth header:
+   - API key when provided (`Authorization: Bearer ...`)
+   - Login token from `~/.config/buddy/auth.json` when `auth = "login"` (refreshes tokens when near expiry)
+2. Chooses endpoint protocol per profile:
+   - `api = "completions"` -> `{base_url}/chat/completions`
+   - `api = "responses"` -> `{base_url}/responses`
+3. For OpenAI login-backed Responses requests (`auth = "login"` without API key), sends `store = false` and `stream = true` to match ChatGPT Codex backend requirements.
+4. Normalizes Responses API output back into the internal chat/tool-call structures used by the agent loop. For mandatory streaming paths, it consumes SSE and resolves the final `response.completed` payload.
+5. Captures non-2xx responses as `ApiError::Status`.
 
 ### `tools/` — Tool system
 
@@ -243,7 +257,7 @@ All rendering is handled by the `Renderer` struct, which takes a `color: bool` f
 **Key design decision**: Status/chrome output (prompts, tool calls, token usage, warnings, errors) goes to **stderr** via `eprintln!`. The assistant's final response goes to **stdout** via `println!`. This means in one-shot mode, you can pipe just the response:
 
 ```bash
-buddy "Generate a UUID" | pbcopy
+buddy exec "Generate a UUID" | pbcopy
 ```
 
 Colors use crossterm's `Stylize` trait:
@@ -267,16 +281,17 @@ Four error enums in a hierarchy:
 
 - **`ToolError`** — `InvalidArguments` (bad JSON from model) or `ExecutionFailed` (tool runtime error)
 - **`ConfigError`** — `Io` (file not found) or `Toml` (parse error)
-- **`ApiError`** — `Http` (network error) or `Status` (non-2xx response with body)
+- **`ApiError`** — network/status errors plus login-required and invalid-response cases
 - **`AgentError`** — wraps all three above, plus `EmptyResponse` and `MaxIterationsReached`
 
 All error types implement `Display` and `Error` manually (no `thiserror`). `From` conversions allow `?` propagation from inner errors to `AgentError`. The binary (`main.rs`) is the only place that calls `process::exit()`.
 
 ### `cli.rs` — Argument parsing
 
-Uses clap with derive macros. The positional `prompt` argument determines the mode:
-- Present: one-shot mode (send, print response, exit)
-- Absent: interactive REPL
+Uses clap with derive macros and subcommands:
+- `buddy` -> interactive REPL
+- `buddy exec <prompt>` -> one-shot mode (send, print response, exit)
+- `buddy login [profile]` -> provider login flow for configured model profile
 
 CLI flags override config file values. This happens in `main.rs` after config loading.
 
@@ -289,7 +304,7 @@ Wires everything together:
 3. Validate minimum config (base_url must be set)
 4. Build the tool registry based on config flags
 5. Create the agent
-6. Branch: one-shot or interactive
+6. Branch: login / one-shot / interactive
 
 The interactive REPL reads input via `tui/input.rs`, which runs in raw mode and supports:
 - prompt `> ` (or `(ssh user@host)> ` when using `--ssh`)
@@ -302,9 +317,12 @@ The interactive REPL reads input via `tui/input.rs`, which runs in raw mode and 
 - foreground shell approval when background tasks hit a `run_shell` confirmation point (`y/yes` approve; `n/no` deny), rendered as an inline one-line approval prompt
 - approval policy controls for shell confirmations (`/approve ask|all|none|<duration>`)
 - persistent named sessions stored locally under `.buddyx/` (`/session`, `/session resume <name|last>`, `/session new <name>`)
+- model-profile switching from config via `/model <name|index>` and `/models` picker flow
 
 Supported slash commands:
 - `/status` — current model, endpoint, enabled tools, and session counters
+- `/model <name|index>` — switch the active configured model profile
+- `/models` — list configured model profiles and select one interactively
 - `/context` — estimated context window usage + token stats
 - `/ps` — list running background tasks
 - `/kill <id>` — cancel a running background task by task ID
@@ -320,7 +338,7 @@ Ctrl-D (EOF) also exits cleanly.
 
 ## Design decisions
 
-**Why no streaming?** Streaming complicates tool call handling (the model sends partial JSON for tool call arguments that must be assembled before execution). The non-streaming path is simpler, correct, and sufficient for a first version. Adding streaming later only requires a new method on `ApiClient` — the rest of the architecture is unaffected.
+**Why mostly non-streaming?** Tool call handling is simpler when each turn resolves to one final response object. Buddy keeps that architecture, but it also supports provider-mandated streaming transport for OpenAI login-backed Codex endpoints by consuming SSE internally and using the final `response.completed` object.
 
 **Why async tools?** Tools like `fetch_url` and `web_search` are naturally async (network I/O). Making the trait async avoids blocking the tokio runtime. The shell tool uses `tokio::process::Command` and the file tools use `tokio::fs`, keeping everything non-blocking.
 
@@ -350,7 +368,7 @@ agent.rs: check context limit — ok
 agent.rs: build ChatRequest { messages: [system, user], tools: [run_shell, ...] }
      |
      v
-api.rs: POST /chat/completions → 200 OK
+api/client.rs: POST /responses (or /chat/completions) → 200 OK
      |
      v
 agent.rs: response has tool_calls: [{ id: "call_1", function: { name: "run_shell", arguments: '{"command":"ls /tmp"}' } }]
@@ -373,7 +391,7 @@ agent.rs: push Message::tool_result("call_1", "exit code: 0\n...")
 agent.rs: loop continues — build new ChatRequest { messages: [system, user, assistant+tool_calls, tool_result] }
      |
      v
-api.rs: POST /chat/completions → 200 OK
+api/client.rs: POST /responses (or /chat/completions) → 200 OK
      |
      v
 agent.rs: response has content: "The /tmp directory contains: file1.txt, file2.log, ..."

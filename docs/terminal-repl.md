@@ -181,6 +181,9 @@ are processed by the REPL loop before being sent to the agent.
 | Command | Description |
 |---------|-------------|
 | `/status` | Show model name, base URL, enabled tools, and session token counts |
+| `/model <name\|index>` | Switch active configured model profile |
+| `/models` | List configured model profiles and pick one |
+| `/login [name\|index]` | Start login flow for a profile (opens browser when available) |
 | `/context` | Show estimated context window fill % and message counts |
 | `/ps` | List all running background tasks with IDs and elapsed time |
 | `/kill <id>` | Cooperatively cancel a background task |
@@ -192,7 +195,7 @@ are processed by the REPL loop before being sent to the agent.
 | `/help` | Print all slash commands with descriptions |
 | `/quit`, `/exit`, `/q` | Exit interactive mode |
 
-Commands blocked while tasks are running: `/help`, `/quit`, `/exit`, `/q`.
+Commands blocked while tasks are running: `/help`, `/quit`, `/exit`, `/q`, `/model`, `/models`, `/login`, `/session`.
 The REPL prints a message asking the user to `/kill` tasks first.
 
 ### Approval Policy
@@ -273,7 +276,7 @@ The `Renderer` struct centralises all terminal output. The key design is:
 This lets one-shot mode users pipe the assistant's answer cleanly:
 
 ```bash
-buddy "summarise this file" < input.txt | pandoc -o output.pdf
+buddy exec "summarise this file" < input.txt | pandoc -o output.pdf
 ```
 
 ### Block Rendering
