@@ -32,8 +32,9 @@
 1. Keep this **Status** section at the top and update it as work progresses.
 2. Check off milestones/tasks immediately when complete.
 3. Append a new entry to **Execution Log** for each meaningful implementation step (what changed, tests run, results, next step).
-4. If scope changes, record the rationale in the log and adjust the Task Board/next steps.
-5. Do not delete historical log entries; append only.
+4. Commit between tasks/milestones; include commit IDs in log entries when marking tasks complete.
+5. If scope changes, record the rationale in the log and adjust the Task Board/next steps.
+6. Do not delete historical log entries; append only.
 
 ## Objective
 
@@ -425,3 +426,5 @@ Commit:
   - Added centralized timeout policy for API/fetch via `[network]` config.
   - Added timeout regression tests using local hanging socket fixtures.
   - Runtime milestone status unchanged: `S2` remains active next step.
+- 2026-02-27: Checkpoint commit created after integrated runtime+remediation baseline work.
+  - commit: `ace8000`

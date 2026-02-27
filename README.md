@@ -243,6 +243,9 @@ max_iterations = 20                         # safety cap on tool-use loops
 [tools]
 shell_enabled = true                       # run_shell tool
 fetch_enabled = true                       # fetch_url tool
+fetch_confirm = false                      # optional confirmation before fetch_url
+fetch_allowed_domains = []                 # optional allowlist (empty = no allowlist)
+fetch_blocked_domains = ["localhost"]      # optional denylist (exact + subdomain match)
 files_enabled = true                       # read_file / write_file tools
 search_enabled = true                      # web_search tool (DuckDuckGo)
 shell_confirm = true                       # prompt before running shell commands
@@ -287,7 +290,7 @@ At startup, the system prompt is rendered from one compiled template with runtim
 | Tool | Description |
 |------|-------------|
 | `run_shell` | Execute shell commands. Output truncated to 4K chars. Optional user confirmation. `wait` can be `true` (default), `false` (tmux-backed targets; return immediately), or a timeout duration string like `10m`. Respects `--container`, `--ssh`, and `--tmux`. |
-| `fetch_url` | HTTP GET a URL, return body as text. Truncated to 8K chars. Uses `[network].fetch_timeout_secs`. |
+| `fetch_url` | HTTP GET a URL, return body as text. Truncated to 8K chars. Uses `[network].fetch_timeout_secs`. Blocks localhost/private/link-local targets by default, with optional tools-domain allow/deny policy. |
 | `read_file` | Read a file's contents. Truncated to 8K chars. Respects `--container`, `--ssh`, and `--tmux`. |
 | `write_file` | Write content to a file. Creates or overwrites. Respects `--container`, `--ssh`, and `--tmux`. |
 | `web_search` | Search DuckDuckGo and return top results with titles, URLs, and snippets. No API key needed. |

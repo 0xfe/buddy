@@ -161,7 +161,7 @@ mod tests {
         // Accept one connection and intentionally keep it open so the client
         // must hit its configured timeout.
         let _accept = tokio::spawn(async move {
-            let _ = listener.accept().await;
+            let (_stream, _) = listener.accept().await.expect("accept");
             tokio::time::sleep(Duration::from_secs(5)).await;
         });
 

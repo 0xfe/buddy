@@ -56,6 +56,9 @@ max_iterations = 20
 [tools]
 shell_enabled = true
 fetch_enabled = true
+fetch_confirm = false                         # optional confirmation before fetch_url
+fetch_allowed_domains = []                    # optional allowlist (empty = no allowlist)
+fetch_blocked_domains = ["localhost"]         # optional denylist (exact + subdomain match)
 files_enabled = true
 search_enabled = true
 shell_confirm = true                          # ask before running shell commands

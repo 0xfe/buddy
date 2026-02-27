@@ -186,6 +186,12 @@ impl Default for AgentConfig {
 pub struct ToolsConfig {
     pub shell_enabled: bool,
     pub fetch_enabled: bool,
+    /// Optional confirmation prompt for `fetch_url` tool executions.
+    pub fetch_confirm: bool,
+    /// Domain allowlist for `fetch_url`. When non-empty, only matching domains are allowed.
+    pub fetch_allowed_domains: Vec<String>,
+    /// Domain denylist for `fetch_url`. Matches exact domain and subdomains.
+    pub fetch_blocked_domains: Vec<String>,
     pub files_enabled: bool,
     pub search_enabled: bool,
     /// Whether to prompt the user before running shell commands.
@@ -197,6 +203,9 @@ impl Default for ToolsConfig {
         Self {
             shell_enabled: true,
             fetch_enabled: true,
+            fetch_confirm: false,
+            fetch_allowed_domains: Vec::new(),
+            fetch_blocked_domains: Vec::new(),
             files_enabled: true,
             search_enabled: true,
             shell_confirm: true,
@@ -781,6 +790,26 @@ mod tests {
         assert_eq!(c.api.base_url, "https://api.moonshot.ai/v1");
         assert!(!c.tools.shell_confirm);
         assert!(c.display.color);
+    }
+
+    #[test]
+    fn parse_fetch_security_policy() {
+        let toml = r#"
+            [tools]
+            fetch_confirm = true
+            fetch_allowed_domains = ["example.com", "api.example.com"]
+            fetch_blocked_domains = ["internal.example.com", "localhost"]
+        "#;
+        let c = parse_file_config_for_test(toml).unwrap();
+        assert!(c.tools.fetch_confirm);
+        assert_eq!(
+            c.tools.fetch_allowed_domains,
+            vec!["example.com", "api.example.com"]
+        );
+        assert_eq!(
+            c.tools.fetch_blocked_domains,
+            vec!["internal.example.com", "localhost"]
+        );
     }
 
     #[test]

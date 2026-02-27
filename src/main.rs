@@ -181,13 +181,15 @@ async fn main() {
     // Build tool registry from config.
     let mut tools = ToolRegistry::new();
     let interactive_mode = !matches!(args.command.as_ref(), Some(cli::Command::Exec { .. }));
-    let (shell_approval_broker, mut shell_approval_rx) =
-        if config.tools.shell_enabled && config.tools.shell_confirm && interactive_mode {
-            let (broker, rx) = ShellApprovalBroker::channel();
-            (Some(broker), Some(rx))
-        } else {
-            (None, None)
-        };
+    let needs_approval_broker = interactive_mode
+        && ((config.tools.shell_enabled && config.tools.shell_confirm)
+            || (config.tools.fetch_enabled && config.tools.fetch_confirm));
+    let (shell_approval_broker, mut shell_approval_rx) = if needs_approval_broker {
+        let (broker, rx) = ShellApprovalBroker::channel();
+        (Some(broker), Some(rx))
+    } else {
+        (None, None)
+    };
 
     if config.tools.shell_enabled {
         tools.register(ShellTool {
@@ -206,9 +208,13 @@ async fn main() {
         });
     }
     if config.tools.fetch_enabled {
-        tools.register(FetchTool::new(Duration::from_secs(
-            config.network.fetch_timeout_secs,
-        )));
+        tools.register(FetchTool::new(
+            Duration::from_secs(config.network.fetch_timeout_secs),
+            config.tools.fetch_confirm,
+            config.tools.fetch_allowed_domains.clone(),
+            config.tools.fetch_blocked_domains.clone(),
+            shell_approval_broker.clone(),
+        ));
     }
     if config.tools.files_enabled {
         tools.register(ReadFileTool {

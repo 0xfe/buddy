@@ -37,6 +37,7 @@ Address the issues raised in `docs/plans/claude-feedback-0.md` with an increment
 2. Prioritize fixes that reduce risk immediately (security, panics, hangs) before large refactors.
 3. Add tests before or with behavior changes, especially in high-churn surfaces (`main.rs`, API protocol handling, execution tools).
 4. Keep compatibility where possible, but add explicit deprecation warnings and timelines.
+5. Commit between tasks/milestones, and record the commit ID in the execution log when a task is marked complete.
 
 ## Feedback Alignment and Disagreements
 
@@ -427,3 +428,5 @@ Address lower-priority architecture items after stabilization (`D1`, `D2`, `D3`,
   - `FetchTool` now owns a timeout-configured `reqwest::Client`; `main.rs` wires `fetch_timeout_secs`.
   - Added timeout behavior tests for API client and fetch tool using local hanging socket fixtures.
   - Validation: `cargo test` passed (`219` lib, `31` bin, doc-tests pass).
+- 2026-02-27: Checkpoint commit created for integrated runtime/remediation baseline and Milestone 0/B1/R1 slices.
+  - commit: `ace8000`
