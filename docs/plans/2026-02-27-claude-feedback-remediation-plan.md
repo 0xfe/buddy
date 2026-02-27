@@ -3,7 +3,7 @@
 ## Status
 
 - Program status: Active (integrated with `docs/plans/2026-02-27-streaming-runtime-architecture.md`)
-- Current focus: complete streaming/runtime documentation stabilization (`S5`) and close Milestone 6 UX follow-up checkpoints.
+- Current focus: close Milestone 6 UX follow-up checkpoints now that streaming/runtime `S0`-`S5` is complete.
 - Completed so far:
   1. Streaming/runtime `S0` complete (typed runtime command/event schema).
   2. Streaming/runtime `S1` complete (agent emits runtime events with mockable model client interface).
@@ -18,10 +18,11 @@
   11. Remediation Milestone 3 landed (SSE parser hardening, transient retry/backoff, shared HTTP client reuse, and protocol diagnostics).
   12. Streaming/runtime `S3` landed (`ToolContext` + tool stream events with `run_shell` first).
   13. Streaming/runtime `S4` landed (CLI event-renderer adapter + alternate frontend example parity path).
+  14. Streaming/runtime `S5` landed (runtime docs/stabilization updates across README/DESIGN/ai-state + plan sync).
 - Next steps:
-  1. Complete streaming/runtime `S5` docs + stabilization gate.
-  2. Continue Milestone 6 UX follow-up work on top of the new runtime event boundaries.
-  3. Re-run model regression gate once provider credentials are available for all default profiles.
+  1. Continue Milestone 6 UX follow-up work on top of the new runtime event boundaries.
+  2. Re-run model regression gate once provider credentials are available for all default profiles.
+  3. Start Milestone 4 backlog slices (context budgeting/session robustness) when UX follow-up scope is settled.
 
 ## Integrated Program Board
 
