@@ -286,12 +286,12 @@ async fn main() {
             }
 
             if let Some(approval) = pending_approval.take() {
-                let approval_actor =
-                    approval_prompt_actor(args.ssh.as_deref(), args.container.as_deref());
-                let approval_prompt = repl::ApprovalPrompt {
-                    actor: &approval_actor,
-                    command: &approval.command,
-                };
+                let approval_actor = approval_prompt_actor(
+                    args.ssh.as_deref(),
+                    args.container.as_deref(),
+                    execution.tmux_attach_info().as_ref(),
+                );
+                render_shell_approval_request(&renderer, &approval_actor, &approval.command);
 
                 let approval_input = match repl::read_repl_line_with_interrupt(
                     config.display.color,
@@ -299,10 +299,10 @@ async fn main() {
                     args.ssh.as_deref(),
                     None,
                     repl::PromptMode::Approval,
-                    Some(&approval_prompt),
+                    None,
                     || repl::ReadPoll {
                         interrupt: has_elapsed_timeouts(&background_tasks),
-                        status_line: background_liveness_line(&background_tasks),
+                        status_line: None,
                     },
                 ) {
                     Ok(repl::ReadOutcome::Line(line)) => line,
@@ -1715,14 +1715,48 @@ fn has_elapsed_timeouts(tasks: &[BackgroundTask]) -> bool {
     })
 }
 
-fn approval_prompt_actor(ssh_target: Option<&str>, container: Option<&str>) -> String {
-    if let Some(target) = ssh_target {
-        return target.to_string();
+fn approval_prompt_actor(
+    ssh_target: Option<&str>,
+    container: Option<&str>,
+    tmux_info: Option<&TmuxAttachInfo>,
+) -> String {
+    let mut actor = if let Some(target) = ssh_target {
+        format!("ssh:{target}")
+    } else if let Some(container) = container {
+        format!("container:{container}")
+    } else {
+        "local".to_string()
+    };
+
+    if let Some(info) = tmux_info {
+        actor.push_str(&format!(" (tmux:{})", info.session));
     }
-    if let Some(container) = container {
-        return format!("container:{container}");
+    actor
+}
+
+fn render_shell_approval_request(renderer: &Renderer, actor: &str, command: &str) {
+    renderer.activity(&format!("shell command on {actor}"));
+    renderer.approval_block(&format_approval_command_block(command));
+}
+
+fn format_approval_command_block(command: &str) -> String {
+    if command.trim().is_empty() {
+        return "$".to_string();
     }
-    "local".to_string()
+
+    let mut out = String::new();
+    for (idx, line) in command.lines().enumerate() {
+        if idx > 0 {
+            out.push('\n');
+        }
+        if idx == 0 {
+            out.push_str("$ ");
+        } else {
+            out.push_str("  ");
+        }
+        out.push_str(line);
+    }
+    out
 }
 
 fn session_startup_message(
@@ -2197,11 +2231,33 @@ mod tests {
     #[test]
     fn approval_prompt_actor_prefers_ssh_then_container_then_local() {
         assert_eq!(
-            approval_prompt_actor(Some("dev@host"), Some("box")),
-            "dev@host"
+            approval_prompt_actor(Some("dev@host"), Some("box"), None),
+            "ssh:dev@host"
         );
-        assert_eq!(approval_prompt_actor(None, Some("box")), "container:box");
-        assert_eq!(approval_prompt_actor(None, None), "local");
+        assert_eq!(
+            approval_prompt_actor(None, Some("box"), None),
+            "container:box"
+        );
+        assert_eq!(approval_prompt_actor(None, None, None), "local");
+    }
+
+    #[test]
+    fn approval_prompt_actor_includes_tmux_session_when_available() {
+        let info = TmuxAttachInfo {
+            session: "buddy-a1b2".to_string(),
+            window: "buddy-shared",
+            target: TmuxAttachTarget::Local,
+        };
+        assert_eq!(
+            approval_prompt_actor(None, None, Some(&info)),
+            "local (tmux:buddy-a1b2)"
+        );
+    }
+
+    #[test]
+    fn approval_command_block_formats_multiline_commands() {
+        let block = format_approval_command_block("echo 1\necho 2");
+        assert_eq!(block, "$ echo 1\n  echo 2");
     }
 
     #[test]

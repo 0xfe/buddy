@@ -11,7 +11,7 @@ use crate::error::AgentError;
 use crate::render::Renderer;
 use crate::tokens::{self, TokenTracker};
 use crate::tools::ToolRegistry;
-use crate::types::{ChatRequest, Message};
+use crate::types::{ChatRequest, Message, Role};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{mpsc, watch};
@@ -270,6 +270,7 @@ impl Agent {
     /// they are executed and results are re-submitted automatically until
     /// either a text response is produced or `max_iterations` is reached.
     pub async fn send(&mut self, user_input: &str) -> Result<String, AgentError> {
+        sanitize_conversation_history(&mut self.messages);
         self.messages.push(Message::user(user_input));
 
         if self.cancellation_requested() {
@@ -345,7 +346,8 @@ impl Agent {
                 .next()
                 .ok_or(AgentError::EmptyResponse)?;
 
-            let assistant_msg = choice.message;
+            let mut assistant_msg = choice.message;
+            sanitize_message(&mut assistant_msg);
             let has_tool_calls = assistant_msg
                 .tool_calls
                 .as_ref()
@@ -356,8 +358,10 @@ impl Agent {
                 self.reasoning_trace_live(&field, &trace);
             }
 
-            // Add the assistant message to history.
-            self.messages.push(assistant_msg.clone());
+            // Add meaningful assistant messages to history.
+            if should_keep_message(&assistant_msg) {
+                self.messages.push(assistant_msg.clone());
+            }
 
             if has_tool_calls {
                 // Execute each tool call and push results back.
@@ -455,8 +459,7 @@ fn reasoning_traces(message: &Message) -> Vec<(String, String)> {
             if !is_reasoning_key(key) {
                 return None;
             }
-            let text = reasoning_value_to_text(value);
-            (!text.trim().is_empty()).then_some((key.clone(), text))
+            reasoning_value_to_text(value).map(|text| (key.clone(), text))
         })
         .collect()
 }
@@ -474,11 +477,132 @@ fn is_reasoning_key(key: &str) -> bool {
     k.contains("reasoning") || k.contains("thinking") || k.contains("thought")
 }
 
-fn reasoning_value_to_text(value: &Value) -> String {
-    match value {
-        Value::String(s) => s.clone(),
-        _ => serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string()),
+fn reasoning_value_to_text(value: &Value) -> Option<String> {
+    let mut lines = Vec::<String>::new();
+    collect_reasoning_strings(value, None, &mut lines);
+    let mut unique = Vec::<String>::new();
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if unique.iter().any(|existing| existing == trimmed) {
+            continue;
+        }
+        unique.push(trimmed.to_string());
     }
+    if unique.is_empty() {
+        None
+    } else {
+        Some(unique.join("\n"))
+    }
+}
+
+fn collect_reasoning_strings(value: &Value, key: Option<&str>, out: &mut Vec<String>) {
+    match value {
+        Value::Null => {}
+        Value::String(text) => {
+            if key.is_none_or(is_reasoning_text_key) {
+                out.push(text.clone());
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_reasoning_strings(item, key, out);
+            }
+        }
+        Value::Object(map) => {
+            for (child_key, child_value) in map {
+                collect_reasoning_strings(child_value, Some(child_key.as_str()), out);
+            }
+        }
+        Value::Bool(_) | Value::Number(_) => {}
+    }
+}
+
+fn is_reasoning_text_key(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "reasoning"
+            | "reasoning_text"
+            | "reasoning_content"
+            | "reasoning_stream"
+            | "thinking"
+            | "thought"
+            | "summary"
+            | "summary_text"
+            | "text"
+            | "content"
+            | "content_text"
+            | "output_text"
+            | "input_text"
+            | "details"
+            | "analysis"
+            | "explanation"
+    )
+}
+
+fn sanitize_conversation_history(messages: &mut Vec<Message>) {
+    for message in messages.iter_mut() {
+        sanitize_message(message);
+    }
+    messages.retain(should_keep_message);
+}
+
+fn sanitize_message(message: &mut Message) {
+    if let Some(content) = message.content.as_mut() {
+        let trimmed = content.trim();
+        if trimmed.is_empty() {
+            message.content = None;
+        } else if trimmed.len() != content.len() {
+            *content = trimmed.to_string();
+        }
+    }
+
+    if let Some(tool_calls) = message.tool_calls.as_mut() {
+        tool_calls.retain(|tc| {
+            !tc.id.trim().is_empty()
+                && !tc.function.name.trim().is_empty()
+                && !tc.function.arguments.trim().is_empty()
+        });
+        if tool_calls.is_empty() {
+            message.tool_calls = None;
+        }
+    }
+
+    if let Some(tool_call_id) = message.tool_call_id.as_mut() {
+        let trimmed = tool_call_id.trim();
+        if trimmed.is_empty() {
+            message.tool_call_id = None;
+        } else if trimmed.len() != tool_call_id.len() {
+            *tool_call_id = trimmed.to_string();
+        }
+    }
+
+    message
+        .extra
+        .retain(|_, value| !value.is_null() && !is_empty_json_string(value));
+}
+
+fn should_keep_message(message: &Message) -> bool {
+    match message.role {
+        Role::System | Role::User => message.content.is_some(),
+        Role::Assistant => {
+            message.content.is_some()
+                || message
+                    .tool_calls
+                    .as_ref()
+                    .is_some_and(|calls| !calls.is_empty())
+        }
+        Role::Tool => message.tool_call_id.is_some(),
+    }
+}
+
+fn is_empty_json_string(value: &Value) -> bool {
+    value
+        .as_str()
+        .map(|text| text.trim().is_empty())
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -487,6 +611,7 @@ mod tests {
     use crate::config::Config;
     use crate::tools::ToolRegistry;
     use serde_json::json;
+    use std::collections::BTreeMap;
 
     #[test]
     fn reasoning_key_detection() {
@@ -510,7 +635,53 @@ mod tests {
         assert_eq!(traces[0].0, "reasoning_content");
         assert!(traces[0].1.contains("step one"));
         assert_eq!(traces[1].0, "thinking");
-        assert!(traces[1].1.contains("summary"));
+        assert!(traces[1].1.contains("done"));
+    }
+
+    #[test]
+    fn reasoning_value_to_text_ignores_null_and_metadata_ids() {
+        let value = json!([
+            {
+                "id": "rs_123",
+                "type": "reasoning",
+                "summary": []
+            }
+        ]);
+        assert!(reasoning_value_to_text(&value).is_none());
+    }
+
+    #[test]
+    fn reasoning_value_to_text_extracts_nested_text_fields() {
+        let value = json!({
+            "summary": [
+                { "type": "summary_text", "text": "first step" },
+                { "type": "summary_text", "text": "second step" }
+            ],
+            "id": "ignore-me"
+        });
+        let text = reasoning_value_to_text(&value).expect("text");
+        assert!(text.contains("first step"));
+        assert!(text.contains("second step"));
+        assert!(!text.contains("ignore-me"));
+    }
+
+    #[test]
+    fn sanitize_history_drops_empty_assistant_messages() {
+        let mut messages = vec![
+            Message::system("sys"),
+            Message::user("u"),
+            Message {
+                role: Role::Assistant,
+                content: None,
+                tool_calls: None,
+                tool_call_id: None,
+                name: None,
+                extra: BTreeMap::new(),
+            },
+        ];
+        sanitize_conversation_history(&mut messages);
+        assert_eq!(messages.len(), 2);
+        assert!(messages.iter().all(|m| m.role != Role::Assistant));
     }
 
     #[test]

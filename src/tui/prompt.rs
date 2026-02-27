@@ -36,14 +36,8 @@ pub fn primary_prompt_text(
 
 /// Build the fallback/plain two-line approval prompt.
 pub fn approval_prompt_text(prompt: &ApprovalPrompt<'_>) -> String {
-    format!(
-        "{}$ {}\n{}{} run on {}? ",
-        settings::INDENT_1,
-        prompt.command,
-        settings::INDENT_1,
-        settings::GLYPH_SECTION_BULLET,
-        prompt.actor
-    )
+    let _ = prompt;
+    settings::approval_prompt_text().to_string()
 }
 
 /// Queue a one-line status indicator above the active prompt.
@@ -104,53 +98,22 @@ where
                 stderr.queue(Print(settings::PROMPT_SPACER))?;
             }
             PromptMode::Approval => {
-                if let Some(prompt) = approval_prompt {
-                    stderr.queue(Print(settings::INDENT_1))?;
-                    stderr.queue(PrintStyledContent(
-                        "$".with(settings::COLOR_PROMPT_APPROVAL_COMMAND)
-                            .on(settings::COLOR_PROMPT_APPROVAL_BG),
-                    ))?;
-                    stderr.queue(PrintStyledContent(
-                        " ".with(settings::COLOR_PROMPT_APPROVAL_COMMAND)
-                            .on(settings::COLOR_PROMPT_APPROVAL_BG),
-                    ))?;
-                    stderr.queue(PrintStyledContent(
-                        prompt
-                            .command
-                            .with(settings::COLOR_PROMPT_APPROVAL_COMMAND)
-                            .on(settings::COLOR_PROMPT_APPROVAL_BG),
-                    ))?;
-                    stderr.queue(Print("\r\n"))?;
-                    stderr.queue(Print(settings::INDENT_1))?;
-                    stderr.queue(PrintStyledContent(
-                        settings::GLYPH_SECTION_BULLET
-                            .with(settings::COLOR_SECTION_BULLET)
-                            .on(settings::COLOR_PROMPT_APPROVAL_BG),
-                    ))?;
-                    stderr.queue(PrintStyledContent(
-                        " run on "
-                            .with(settings::COLOR_PROMPT_APPROVAL_COMMAND)
-                            .on(settings::COLOR_PROMPT_APPROVAL_BG),
-                    ))?;
-                    stderr.queue(PrintStyledContent(
-                        prompt
-                            .actor
-                            .with(settings::COLOR_PROMPT_HOST)
-                            .on(settings::COLOR_PROMPT_APPROVAL_BG),
-                    ))?;
-                    stderr.queue(PrintStyledContent(
-                        "?".with(settings::COLOR_PROMPT_APPROVAL_QUERY)
-                            .on(settings::COLOR_PROMPT_APPROVAL_BG)
-                            .bold(),
-                    ))?;
-                    stderr.queue(Print(settings::PROMPT_SPACER))?;
-                } else {
-                    stderr.queue(PrintStyledContent(
-                        settings::PROMPT_LOCAL_APPROVAL
-                            .with(settings::COLOR_PROMPT_APPROVAL_COMMAND)
-                            .on(settings::COLOR_PROMPT_APPROVAL_BG),
-                    ))?;
-                }
+                let _ = approval_prompt;
+                stderr.queue(PrintStyledContent(
+                    settings::GLYPH_SECTION_BULLET
+                        .with(settings::COLOR_SECTION_BULLET)
+                        .bold(),
+                ))?;
+                stderr.queue(Print(settings::PROMPT_SPACER))?;
+                stderr.queue(PrintStyledContent(
+                    "approve?"
+                        .with(settings::COLOR_PROMPT_APPROVAL_QUERY)
+                        .bold(),
+                ))?;
+                stderr.queue(PrintStyledContent(
+                    " [y/n]".with(settings::COLOR_PROMPT_APPROVAL_COMMAND),
+                ))?;
+                stderr.queue(Print(settings::PROMPT_SPACER))?;
             }
         }
     } else {
@@ -216,7 +179,7 @@ mod tests {
         };
         assert_eq!(
             approval_prompt_text(&prompt),
-            "  $ top\n  • run on mo@bee? "
+            settings::PROMPT_LOCAL_APPROVAL
         );
     }
 }

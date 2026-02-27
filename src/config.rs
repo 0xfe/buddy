@@ -477,6 +477,19 @@ fn default_models_map() -> BTreeMap<String, ModelConfig> {
             context_limit: None,
         },
     );
+    models.insert(
+        "kimi".to_string(),
+        ModelConfig {
+            api_base_url: "https://api.moonshot.ai/v1".to_string(),
+            api: ApiProtocol::Completions,
+            auth: AuthMode::ApiKey,
+            api_key: String::new(),
+            api_key_env: Some("MOONSHOT_API_KEY".to_string()),
+            api_key_file: None,
+            model: Some("kimi-k2.5".to_string()),
+            context_limit: None,
+        },
+    );
     models
 }
 
@@ -602,6 +615,11 @@ mod tests {
         assert_eq!(c.agent.max_iterations, 20);
         assert!(c.tools.shell_enabled);
         assert!(c.display.color);
+        assert!(c.models.contains_key("gpt-codex"));
+        assert!(c.models.contains_key("gpt-spark"));
+        assert!(c.models.contains_key("openrouter-deepseek"));
+        assert!(c.models.contains_key("openrouter-glm"));
+        assert!(c.models.contains_key("kimi"));
     }
 
     #[test]
