@@ -456,3 +456,8 @@ Commit:
   - Added alternate frontend example (`examples/alternate_frontend.rs`) that drives Buddy via runtime commands/events.
   - Validation: `cargo test` and `cargo build --examples` passed.
   - commit: `324b0d2`
+- 2026-02-27: Completed streaming/runtime milestone `S5` (docs + stabilization):
+  - Updated `README.md`, `DESIGN.md`, and `ai-state.md` with runtime streaming/tool-context contracts and alternate frontend usage notes.
+  - Updated integrated remediation/streaming plan statuses to reflect `S0`-`S5` completion.
+  - Validation: `cargo test -q` passed.
+  - commit: `6858f9c`

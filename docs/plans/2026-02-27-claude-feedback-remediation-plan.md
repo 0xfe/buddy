@@ -481,3 +481,8 @@ Address lower-priority architecture items after stabilization (`D1`, `D2`, `D3`,
   - Added alternate frontend parity example (`examples/alternate_frontend.rs`) consuming runtime command/event APIs directly.
   - Validation: `cargo test` and `cargo build --examples` passed.
   - commit: `324b0d2`
+- 2026-02-27: Completed streaming/runtime `S5` stabilization handoff:
+  - Synced runtime/tool-stream architecture docs across `README.md`, `DESIGN.md`, and `ai-state.md`.
+  - Updated integrated remediation/streaming plan statuses for completed `S0`-`S5` runtime track.
+  - Validation: `cargo test -q` passed.
+  - commit: `6858f9c`
