@@ -12,6 +12,7 @@ use super::execution::{ExecutionContext, ShellWait};
 use super::Tool;
 use crate::error::ToolError;
 use crate::render::Renderer;
+use crate::textutil::truncate_with_suffix_by_bytes;
 use crate::types::{FunctionDefinition, ToolDefinition};
 
 /// Maximum characters of command output to return.
@@ -219,11 +220,7 @@ fn parse_duration_arg(input: &str) -> Option<Duration> {
 }
 
 fn truncate_output(s: &str, max: usize) -> String {
-    if s.len() > max {
-        format!("{}...[truncated]", &s[..max])
-    } else {
-        s.to_string()
-    }
+    truncate_with_suffix_by_bytes(s, max, "...[truncated]")
 }
 
 #[cfg(test)]
@@ -244,6 +241,12 @@ mod tests {
     fn truncate_long_string_adds_marker() {
         let result = truncate_output("xxxxxxxxxx", 5);
         assert_eq!(result, "xxxxx...[truncated]");
+    }
+
+    #[test]
+    fn truncate_handles_utf8_without_panicking() {
+        let result = truncate_output("🙂🙂🙂", 5);
+        assert_eq!(result, "🙂...[truncated]");
     }
 
     #[test]

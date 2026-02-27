@@ -10,6 +10,7 @@ use std::time::Duration;
 use super::execution::{CapturePaneOptions, ExecutionContext};
 use super::Tool;
 use crate::error::ToolError;
+use crate::textutil::safe_prefix_by_bytes;
 use crate::types::{FunctionDefinition, ToolDefinition};
 
 /// Maximum characters returned to the model from one pane capture.
@@ -188,10 +189,18 @@ fn parse_delay_duration(raw: &str) -> Result<Duration, String> {
 fn truncate_output_tail(text: &str, max_len: usize) -> String {
     if text.len() > max_len {
         let skipped = text.len().saturating_sub(max_len);
-        format!(
-            "[truncated {skipped} chars from start]\n{}",
-            &text[text.len() - max_len..]
-        )
+        let mut start = text.len().saturating_sub(max_len);
+        while start < text.len() && !text.is_char_boundary(start) {
+            start += 1;
+        }
+        let suffix = if start >= text.len() {
+            // Fall back to a short, safe prefix when the tail boundary cannot be
+            // advanced to a valid character boundary.
+            safe_prefix_by_bytes(text, max_len)
+        } else {
+            &text[start..]
+        };
+        format!("[truncated {skipped} chars from start]\n{}", suffix)
     } else {
         text.to_string()
     }
@@ -248,5 +257,12 @@ mod tests {
         let out = truncate_output_tail("x".repeat(MAX_CAPTURE_LEN + 1).as_str(), MAX_CAPTURE_LEN);
         assert!(out.starts_with("[truncated "), "got: {out}");
         assert!(out.ends_with('x'), "got: {out}");
+    }
+
+    #[test]
+    fn truncate_output_tail_handles_utf8_boundaries() {
+        let input = "🙂".repeat(MAX_CAPTURE_LEN + 2);
+        let out = truncate_output_tail(&input, MAX_CAPTURE_LEN + 1);
+        assert!(out.starts_with("[truncated "), "got: {out}");
     }
 }

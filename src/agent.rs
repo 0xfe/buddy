@@ -5,10 +5,14 @@
 //! and loops until the model produces a final text response (or the iteration
 //! cap is reached).
 
-use crate::api::ApiClient;
+use crate::api::{ApiClient, ModelClient};
 use crate::config::{ApiConfig, Config};
 use crate::error::AgentError;
 use crate::render::Renderer;
+use crate::runtime::{
+    MetricsEvent, ModelEvent, RuntimeEvent, RuntimeEventEnvelope, TaskEvent, TaskRef, ToolEvent,
+    WarningEvent,
+};
 use crate::tokens::{self, TokenTracker};
 use crate::tools::ToolRegistry;
 use crate::types::{ChatRequest, Message, Role};
@@ -89,9 +93,24 @@ pub enum AgentUiEvent {
     },
 }
 
+/// Stream-capable runner facade around [`Agent`].
+///
+/// This is a migration-friendly entry point for callers that want an explicit
+/// "runner" object while the legacy `Agent::send` API remains available.
+pub struct AgentRunner<'a> {
+    agent: &'a mut Agent,
+}
+
+impl<'a> AgentRunner<'a> {
+    /// Run one prompt through the full agent loop.
+    pub async fn run_prompt(&mut self, user_input: &str) -> Result<String, AgentError> {
+        self.agent.send(user_input).await
+    }
+}
+
 /// The core agent that orchestrates the conversation and tool-use loop.
 pub struct Agent {
-    client: ApiClient,
+    client: Box<dyn ModelClient>,
     config: Config,
     tools: ToolRegistry,
     messages: Vec<Message>,
@@ -99,13 +118,25 @@ pub struct Agent {
     renderer: Renderer,
     suppress_live_output: bool,
     live_output_sink: Option<(u64, mpsc::UnboundedSender<AgentUiEvent>)>,
+    runtime_event_sink: Option<(u64, mpsc::UnboundedSender<RuntimeEventEnvelope>)>,
+    runtime_event_seq: u64,
     cancellation_rx: Option<watch::Receiver<bool>>,
 }
 
 impl Agent {
     /// Create an agent from configuration with tools pre-registered.
     pub fn new(config: Config, tools: ToolRegistry) -> Self {
-        let client = ApiClient::new(&config.api);
+        let client = Box::new(ApiClient::new(
+            &config.api,
+            std::time::Duration::from_secs(config.network.api_timeout_secs),
+        ));
+        Self::with_client(config, tools, client)
+    }
+
+    /// Create an agent with an explicit model client implementation.
+    ///
+    /// Used for deterministic testing and alternative backends.
+    pub fn with_client(config: Config, tools: ToolRegistry, client: Box<dyn ModelClient>) -> Self {
         let context_limit = config
             .api
             .context_limit
@@ -123,6 +154,8 @@ impl Agent {
             renderer,
             suppress_live_output: false,
             live_output_sink: None,
+            runtime_event_sink: None,
+            runtime_event_seq: 0,
             cancellation_rx: None,
         }
     }
@@ -134,9 +167,17 @@ impl Agent {
         let context_limit = api
             .context_limit
             .unwrap_or_else(|| tokens::default_context_limit(&api.model));
-        self.client = ApiClient::new(&api);
+        self.client = Box::new(ApiClient::new(
+            &api,
+            std::time::Duration::from_secs(self.config.network.api_timeout_secs),
+        ));
         self.config.api = api;
         self.tracker.context_limit = context_limit;
+    }
+
+    /// Return a runner facade that can execute prompts.
+    pub fn runner(&mut self) -> AgentRunner<'_> {
+        AgentRunner { agent: self }
     }
 
     /// Snapshot in-memory conversation state for persistent sessions.
@@ -177,6 +218,18 @@ impl Agent {
         self.live_output_sink = sink;
     }
 
+    /// Route normalized runtime events to a dedicated stream consumer.
+    ///
+    /// This is a migration bridge while the CLI still consumes `AgentUiEvent`.
+    /// Events forwarded here are adapted into `RuntimeEventEnvelope`.
+    pub fn set_runtime_event_sink(
+        &mut self,
+        sink: Option<(u64, mpsc::UnboundedSender<RuntimeEventEnvelope>)>,
+    ) {
+        self.runtime_event_sink = sink;
+        self.runtime_event_seq = 0;
+    }
+
     /// Register a cancellation signal for the current in-flight request.
     pub fn set_cancellation_receiver(&mut self, rx: Option<watch::Receiver<bool>>) {
         self.cancellation_rx = rx;
@@ -186,16 +239,52 @@ impl Agent {
         self.cancellation_rx.as_ref().is_some_and(|rx| *rx.borrow())
     }
 
-    fn emit_ui_event(&self, make_event: impl FnOnce(u64) -> AgentUiEvent) -> bool {
-        let Some((task_id, tx)) = &self.live_output_sink else {
-            return false;
-        };
-        tx.send(make_event(*task_id)).is_ok()
+    fn current_task_id(&self) -> Option<u64> {
+        self.live_output_sink
+            .as_ref()
+            .map(|(task_id, _)| *task_id)
+            .or_else(|| {
+                self.runtime_event_sink
+                    .as_ref()
+                    .map(|(task_id, _)| *task_id)
+            })
     }
 
-    fn warn_live(&self, msg: &str) {
+    fn current_task_ref(&self) -> Option<TaskRef> {
+        self.runtime_event_sink
+            .as_ref()
+            .map(|(task_id, _)| TaskRef::from_task_id(*task_id))
+    }
+
+    fn emit_ui_event(&mut self, event: AgentUiEvent) -> bool {
+        self.live_output_sink
+            .as_ref()
+            .is_some_and(|(_, tx)| tx.send(event).is_ok())
+    }
+
+    fn emit_runtime_event(&mut self, event: RuntimeEvent) -> bool {
+        let Some((_, tx)) = &self.runtime_event_sink else {
+            return false;
+        };
+        let envelope = RuntimeEventEnvelope::new(self.runtime_event_seq, event);
+        self.runtime_event_seq = self.runtime_event_seq.saturating_add(1);
+        tx.send(envelope).is_ok()
+    }
+
+    fn warn_live(&mut self, msg: &str) {
+        if let Some(task) = self.current_task_ref() {
+            let _ = self.emit_runtime_event(RuntimeEvent::Warning(WarningEvent {
+                task: Some(task),
+                message: msg.to_string(),
+            }));
+        }
+
         if self.suppress_live_output {
-            let sent = self.emit_ui_event(|task_id| AgentUiEvent::Warning {
+            let Some(task_id) = self.current_task_id() else {
+                self.renderer.warn(msg);
+                return;
+            };
+            let sent = self.emit_ui_event(AgentUiEvent::Warning {
                 task_id,
                 message: msg.to_string(),
             });
@@ -206,9 +295,13 @@ impl Agent {
         self.renderer.warn(msg);
     }
 
-    fn token_usage_live(&self, prompt: u32, completion: u32, session_total: u32) {
+    fn token_usage_live(&mut self, prompt: u32, completion: u32, session_total: u32) {
         if self.suppress_live_output {
-            let sent = self.emit_ui_event(|task_id| AgentUiEvent::TokenUsage {
+            let Some(task_id) = self.current_task_id() else {
+                self.renderer.token_usage(prompt, completion, session_total);
+                return;
+            };
+            let sent = self.emit_ui_event(AgentUiEvent::TokenUsage {
                 task_id,
                 prompt_tokens: prompt,
                 completion_tokens: completion,
@@ -221,9 +314,21 @@ impl Agent {
         self.renderer.token_usage(prompt, completion, session_total);
     }
 
-    fn reasoning_trace_live(&self, field: &str, trace: &str) {
+    fn reasoning_trace_live(&mut self, field: &str, trace: &str) {
+        if let Some(task) = self.current_task_ref() {
+            let _ = self.emit_runtime_event(RuntimeEvent::Model(ModelEvent::ReasoningDelta {
+                task,
+                field: field.to_string(),
+                delta: trace.to_string(),
+            }));
+        }
+
         if self.suppress_live_output {
-            let sent = self.emit_ui_event(|task_id| AgentUiEvent::ReasoningTrace {
+            let Some(task_id) = self.current_task_id() else {
+                self.renderer.reasoning_trace(field, trace);
+                return;
+            };
+            let sent = self.emit_ui_event(AgentUiEvent::ReasoningTrace {
                 task_id,
                 field: field.to_string(),
                 trace: trace.to_string(),
@@ -235,9 +340,13 @@ impl Agent {
         self.renderer.reasoning_trace(field, trace);
     }
 
-    fn tool_call_live(&self, name: &str, args: &str) {
+    fn tool_call_live(&mut self, name: &str, args: &str) {
         if self.suppress_live_output {
-            let sent = self.emit_ui_event(|task_id| AgentUiEvent::ToolCall {
+            let Some(task_id) = self.current_task_id() else {
+                self.renderer.tool_call(name, args);
+                return;
+            };
+            let sent = self.emit_ui_event(AgentUiEvent::ToolCall {
                 task_id,
                 name: name.to_string(),
                 args: args.to_string(),
@@ -249,9 +358,13 @@ impl Agent {
         self.renderer.tool_call(name, args);
     }
 
-    fn tool_result_live(&self, name: &str, args: &str, result: &str) {
+    fn tool_result_live(&mut self, name: &str, args: &str, result: &str) {
         if self.suppress_live_output {
-            let sent = self.emit_ui_event(|task_id| AgentUiEvent::ToolResult {
+            let Some(task_id) = self.current_task_id() else {
+                self.renderer.tool_result(result);
+                return;
+            };
+            let sent = self.emit_ui_event(AgentUiEvent::ToolResult {
                 task_id,
                 name: name.to_string(),
                 args: args.to_string(),
@@ -272,8 +385,14 @@ impl Agent {
     pub async fn send(&mut self, user_input: &str) -> Result<String, AgentError> {
         sanitize_conversation_history(&mut self.messages);
         self.messages.push(Message::user(user_input));
+        if let Some(task) = self.current_task_ref() {
+            let _ = self.emit_runtime_event(RuntimeEvent::Task(TaskEvent::Started { task }));
+        }
 
         if self.cancellation_requested() {
+            if let Some(task) = self.current_task_ref() {
+                let _ = self.emit_runtime_event(RuntimeEvent::Task(TaskEvent::Completed { task }));
+            }
             return Ok(CANCELLED_BY_USER_PROMPT_RESPONSE.to_string());
         }
 
@@ -287,6 +406,12 @@ impl Agent {
         loop {
             iterations += 1;
             if iterations > self.config.agent.max_iterations {
+                if let Some(task) = self.current_task_ref() {
+                    let _ = self.emit_runtime_event(RuntimeEvent::Task(TaskEvent::Failed {
+                        task,
+                        message: AgentError::MaxIterationsReached.to_string(),
+                    }));
+                }
                 return Err(AgentError::MaxIterationsReached);
             }
 
@@ -304,9 +429,15 @@ impl Agent {
                 temperature: self.config.agent.temperature,
                 top_p: self.config.agent.top_p,
             };
+            if let Some(task) = self.current_task_ref() {
+                let _ = self.emit_runtime_event(RuntimeEvent::Model(ModelEvent::RequestStarted {
+                    task,
+                    model: request.model.clone(),
+                }));
+            }
 
             // Call the API.
-            let response = {
+            let response_result = {
                 let phase = if iterations == 1 {
                     format!("calling model {}", self.config.api.model)
                 } else {
@@ -317,12 +448,27 @@ impl Agent {
                     let mut cancel_rx = cancel_rx.clone();
                     tokio::select! {
                         _ = wait_for_cancellation(&mut cancel_rx) => {
+                            if let Some(task) = self.current_task_ref() {
+                                let _ = self.emit_runtime_event(RuntimeEvent::Task(TaskEvent::Completed { task }));
+                            }
                             return Ok(CANCELLED_BY_USER_PROMPT_RESPONSE.to_string());
                         }
-                        response = self.client.chat(&request) => response?,
+                        response = self.client.chat(&request) => response,
                     }
                 } else {
-                    self.client.chat(&request).await?
+                    self.client.chat(&request).await
+                }
+            };
+            let response = match response_result {
+                Ok(response) => response,
+                Err(err) => {
+                    if let Some(task) = self.current_task_ref() {
+                        let _ = self.emit_runtime_event(RuntimeEvent::Task(TaskEvent::Failed {
+                            task,
+                            message: err.to_string(),
+                        }));
+                    }
+                    return Err(err.into());
                 }
             };
 
@@ -330,6 +476,15 @@ impl Agent {
             if let Some(usage) = &response.usage {
                 self.tracker
                     .record(usage.prompt_tokens, usage.completion_tokens);
+                if let Some(task) = self.current_task_ref() {
+                    let _ =
+                        self.emit_runtime_event(RuntimeEvent::Metrics(MetricsEvent::TokenUsage {
+                            task,
+                            prompt_tokens: usage.prompt_tokens,
+                            completion_tokens: usage.completion_tokens,
+                            session_total_tokens: self.tracker.session_total(),
+                        }));
+                }
                 if self.config.display.show_tokens {
                     self.token_usage_live(
                         usage.prompt_tokens,
@@ -368,6 +523,14 @@ impl Agent {
                 let tool_calls = assistant_msg.tool_calls.unwrap();
                 let mut cancelled = false;
                 for (idx, tc) in tool_calls.iter().enumerate() {
+                    if let Some(task) = self.current_task_ref() {
+                        let _ =
+                            self.emit_runtime_event(RuntimeEvent::Tool(ToolEvent::CallRequested {
+                                task,
+                                name: tc.function.name.clone(),
+                                arguments_json: tc.function.arguments.clone(),
+                            }));
+                    }
                     if self.config.display.show_tool_calls {
                         self.tool_call_live(&tc.function.name, &tc.function.arguments);
                     }
@@ -406,6 +569,14 @@ impl Agent {
                         }
                     };
 
+                    if let Some(task) = self.current_task_ref() {
+                        let _ = self.emit_runtime_event(RuntimeEvent::Tool(ToolEvent::Result {
+                            task,
+                            name: tc.function.name.clone(),
+                            arguments_json: tc.function.arguments.clone(),
+                            result: result.clone(),
+                        }));
+                    }
                     if self.config.display.show_tool_calls {
                         self.tool_result_live(&tc.function.name, &tc.function.arguments, &result);
                     }
@@ -419,6 +590,12 @@ impl Agent {
                                 CANCELLED_BY_USER_TOOL_RESULT,
                             ));
                         }
+                        if let Some(task) = self.current_task_ref() {
+                            let _ =
+                                self.emit_runtime_event(RuntimeEvent::Task(TaskEvent::Completed {
+                                    task,
+                                }));
+                        }
                         return Ok(CANCELLED_BY_USER_PROMPT_RESPONSE.to_string());
                     }
                 }
@@ -429,6 +606,13 @@ impl Agent {
 
             // No tool calls — this is the final text response.
             let content = assistant_msg.content.unwrap_or_default();
+            if let Some(task) = self.current_task_ref() {
+                let _ = self.emit_runtime_event(RuntimeEvent::Model(ModelEvent::MessageFinal {
+                    task: task.clone(),
+                    content: content.clone(),
+                }));
+                let _ = self.emit_runtime_event(RuntimeEvent::Task(TaskEvent::Completed { task }));
+            }
             return Ok(content);
         }
     }
@@ -608,10 +792,22 @@ fn is_empty_json_string(value: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::ModelClient;
     use crate::config::Config;
+    use crate::error::{ApiError, ToolError};
+    use crate::runtime::{
+        MetricsEvent, ModelEvent, RuntimeEvent, TaskEvent, ToolEvent, WarningEvent,
+    };
     use crate::tools::ToolRegistry;
+    use crate::types::{
+        ChatRequest, ChatResponse, Choice, FunctionCall, FunctionDefinition, Message, Role,
+        ToolCall, ToolDefinition, Usage,
+    };
+    use async_trait::async_trait;
     use serde_json::json;
     use std::collections::BTreeMap;
+    use std::collections::VecDeque;
+    use std::sync::Mutex as StdMutex;
 
     #[test]
     fn reasoning_key_detection() {
@@ -703,6 +899,25 @@ mod tests {
     }
 
     #[test]
+    fn suppressed_warning_is_forwarded_to_runtime_sink() {
+        let mut agent = Agent::new(Config::default(), ToolRegistry::new());
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        agent.set_live_output_suppressed(true);
+        agent.set_runtime_event_sink(Some((12, tx)));
+        agent.warn_live("runtime warning");
+
+        let envelope = rx.try_recv().expect("expected runtime envelope");
+        assert_eq!(envelope.seq, 0);
+        assert_eq!(
+            envelope.event,
+            RuntimeEvent::Warning(WarningEvent {
+                task: Some(crate::runtime::TaskRef::from_task_id(12)),
+                message: "runtime warning".to_string(),
+            })
+        );
+    }
+
+    #[test]
     fn suppressed_reasoning_is_forwarded_to_ui_sink() {
         let mut agent = Agent::new(Config::default(), ToolRegistry::new());
         let (tx, mut rx) = mpsc::unbounded_channel();
@@ -767,5 +982,151 @@ mod tests {
         assert_eq!(agent.config.api.base_url, "https://example.com/v1");
         assert_eq!(agent.config.api.model, "moonshot-v1");
         assert_eq!(agent.tracker.context_limit, 42_000);
+    }
+
+    struct MockClient {
+        responses: StdMutex<VecDeque<ChatResponse>>,
+    }
+
+    impl MockClient {
+        fn new(responses: Vec<ChatResponse>) -> Self {
+            Self {
+                responses: StdMutex::new(responses.into()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ModelClient for MockClient {
+        async fn chat(&self, _request: &ChatRequest) -> Result<ChatResponse, ApiError> {
+            self.responses
+                .lock()
+                .expect("lock")
+                .pop_front()
+                .ok_or_else(|| ApiError::InvalidResponse("no mock response queued".to_string()))
+        }
+    }
+
+    struct EchoTool;
+
+    #[async_trait]
+    impl crate::tools::Tool for EchoTool {
+        fn name(&self) -> &'static str {
+            "echo_tool"
+        }
+
+        fn definition(&self) -> ToolDefinition {
+            ToolDefinition {
+                tool_type: "function".to_string(),
+                function: FunctionDefinition {
+                    name: "echo_tool".to_string(),
+                    description: "echo".to_string(),
+                    parameters: json!({
+                        "type": "object",
+                        "properties": {
+                            "value": { "type": "string" }
+                        }
+                    }),
+                },
+            }
+        }
+
+        async fn execute(&self, _arguments: &str) -> Result<String, ToolError> {
+            Ok("tool-ok".to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn runtime_stream_emits_ordered_events_for_tool_round_trip() {
+        let first = ChatResponse {
+            id: "r1".to_string(),
+            choices: vec![Choice {
+                index: 0,
+                message: Message {
+                    role: Role::Assistant,
+                    content: None,
+                    tool_calls: Some(vec![ToolCall {
+                        id: "call_1".to_string(),
+                        call_type: "function".to_string(),
+                        function: FunctionCall {
+                            name: "echo_tool".to_string(),
+                            arguments: "{\"value\":\"x\"}".to_string(),
+                        },
+                    }]),
+                    tool_call_id: None,
+                    name: None,
+                    extra: BTreeMap::new(),
+                },
+                finish_reason: Some("tool_calls".to_string()),
+            }],
+            usage: Some(Usage {
+                prompt_tokens: 5,
+                completion_tokens: 2,
+                total_tokens: 7,
+            }),
+        };
+        let second = ChatResponse {
+            id: "r2".to_string(),
+            choices: vec![Choice {
+                index: 0,
+                message: Message {
+                    role: Role::Assistant,
+                    content: Some("final answer".to_string()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                    name: None,
+                    extra: BTreeMap::new(),
+                },
+                finish_reason: Some("stop".to_string()),
+            }],
+            usage: Some(Usage {
+                prompt_tokens: 4,
+                completion_tokens: 3,
+                total_tokens: 7,
+            }),
+        };
+
+        let mock = Box::new(MockClient::new(vec![first, second]));
+        let mut config = Config::default();
+        config.display.show_tokens = false;
+        config.display.show_tool_calls = false;
+
+        let mut tools = ToolRegistry::new();
+        tools.register(EchoTool);
+        let mut agent = Agent::with_client(config, tools, mock);
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        agent.set_runtime_event_sink(Some((55, tx)));
+
+        let out = agent.send("run it").await.expect("send");
+        assert_eq!(out, "final answer");
+
+        let mut labels = Vec::new();
+        while let Ok(envelope) = rx.try_recv() {
+            let label = match envelope.event {
+                RuntimeEvent::Task(TaskEvent::Started { .. }) => "task_started",
+                RuntimeEvent::Model(ModelEvent::RequestStarted { .. }) => "model_request_started",
+                RuntimeEvent::Metrics(MetricsEvent::TokenUsage { .. }) => "token_usage",
+                RuntimeEvent::Tool(ToolEvent::CallRequested { .. }) => "tool_call",
+                RuntimeEvent::Tool(ToolEvent::Result { .. }) => "tool_result",
+                RuntimeEvent::Model(ModelEvent::MessageFinal { .. }) => "message_final",
+                RuntimeEvent::Task(TaskEvent::Completed { .. }) => "task_completed",
+                _ => "other",
+            };
+            labels.push(label.to_string());
+        }
+
+        let expected = vec![
+            "task_started",
+            "model_request_started",
+            "token_usage",
+            "tool_call",
+            "tool_result",
+            "model_request_started",
+            "token_usage",
+            "message_final",
+            "task_completed",
+        ];
+        assert_eq!(labels, expected);
     }
 }

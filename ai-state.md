@@ -1,6 +1,43 @@
 # AI State (dense)
 
 - Crate: `buddy` (lib + bin). Entry: `src/main.rs`, core loop: `src/agent.rs`.
+- Current broad remediation roadmap for Claude review findings:
+  - `docs/plans/2026-02-27-claude-feedback-remediation-plan.md`
+  - Source review document: `docs/plans/claude-feedback-0.md`
+- Streaming/runtime architecture plan for frontend-parity event API:
+  - `docs/plans/2026-02-27-streaming-runtime-architecture.md`
+- Remediation tracking snapshot (issue IDs from `claude-feedback-0.md`):
+  - Done / partially done:
+    - `T1` foundation: API trait seam exists (`ModelClient`), runtime event tests added.
+    - `U1` foundation: responses ingestion supports streaming events internally; full incremental CLI render still pending.
+    - `C1` partial: runtime actor scaffolding exists but `main.rs` interactive path is still mostly monolithic.
+    - `B1` done: UTF-8-safe truncation helpers (`src/textutil.rs`) now back shell/files/fetch/capture/tui/preview truncation paths.
+    - `R1` done: centralized request timeouts with `[network]` config (`api_timeout_secs`, `fetch_timeout_secs`) now applied in API and fetch clients.
+  - Not done yet (active backlog):
+    - `S1`, `S2`, `S3`, `S4`
+    - `B1`, `B2`, `B3`, `B4`, `B5`
+    - `R1`, `R2`, `R3`, `R4`, `R5`
+    - `T2`, `T3`, `T4`
+    - `D1`, `D2`, `D3`, `D4`
+    - `U2`, `U3`, `U4`, `U5`
+    - `C2`, `C3`
+  - Repro/runbook:
+    - `docs/playbook-remediation.md` contains reproducible commands and baseline checks.
+- Runtime schema scaffolding added in `src/runtime.rs`:
+  - `RuntimeCommand`, `RuntimeEvent`, `RuntimeEventEnvelope`
+  - adapter helpers from `AgentUiEvent` for incremental migration
+- Shared text safety helper module:
+  - `src/textutil.rs` centralizes UTF-8-safe truncation by byte and by char count.
+- `Agent` now has a runtime event sink bridge:
+  - `set_runtime_event_sink(...)` forwards suppressed live events into `RuntimeEventEnvelope` stream with monotonic per-agent sequence IDs.
+- `Agent` core streaming upgrades:
+  - `ModelClient` trait (`src/api/mod.rs`) abstracts model backend for deterministic tests/mocks.
+  - `Agent::with_client(...)` supports dependency injection; `AgentRunner` facade added for stream-capable execution entry point.
+  - `Agent::send(...)` now emits direct runtime lifecycle/model/tool/metrics events to runtime sink (independent of UI display flags).
+- Runtime actor scaffolding now exists in `src/runtime.rs`:
+  - `spawn_runtime(...)` / `spawn_runtime_with_agent(...)` return command handle + event stream.
+  - Handles submit/cancel/model-switch/session commands and forwards prompt-task events.
+  - `buddy exec` now uses runtime actor flow; interactive CLI (`main.rs`) is still largely legacy orchestration.
 - Config load precedence (effective): env vars override TOML; CLI flags override loaded config in `main.rs`.
 - Startup auto-creates `~/.config/buddy/buddy.toml` when missing (materialized from compiled `src/templates/buddy.toml`).
 - Explicit init flow exists via `buddy init` (`--force` writes `buddy.toml.<unix-seconds>.bak` then overwrites).
@@ -43,6 +80,10 @@
   - Config schema migrated from single `[api]` to profile map `[models.<name>]` (also accepts `[model.<name>]` alias), with active profile selected by `[agent].model`.
   - Runtime model profile switch now uses one command: `/model [name|index]` (`/model` with no args opens arrow-key picker and Esc cancels).
   - API key source options are per profile: `api_key`, `api_key_env`, `api_key_file` (`src/config.rs`), with strict mutual exclusivity validation.
+  - Network timeout policy is configurable under `[network]`:
+    - `api_timeout_secs` (model API HTTP timeout)
+    - `fetch_timeout_secs` (`fetch_url` HTTP timeout)
+    - env overrides: `BUDDY_API_TIMEOUT_SECS`, `BUDDY_FETCH_TIMEOUT_SECS` (legacy `AGENT_*` aliases accepted).
   - API key resolution order now:
     1. `BUDDY_API_KEY` / `AGENT_API_KEY`
     2. selected profile `api_key_env` (named env var; empty if unset)

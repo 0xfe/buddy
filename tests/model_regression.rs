@@ -83,7 +83,7 @@ async fn run_profile_probe(config: &mut Config, profile_name: &str) -> Result<()
         .map_err(|err| format!("failed selecting profile: {err}"))?;
     profile_auth_preflight(config, profile_name)?;
 
-    let client = ApiClient::new(&config.api);
+    let client = ApiClient::new(&config.api, Duration::from_secs(config.network.api_timeout_secs));
     let request = ChatRequest {
         model: config.api.model.clone(),
         messages: vec![

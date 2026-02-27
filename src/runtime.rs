@@ -1,0 +1,1249 @@
+//! Streaming runtime command/event schema.
+//!
+//! This module defines the public control-plane (`RuntimeCommand`) and data-plane
+//! (`RuntimeEvent`) contracts used by stream-capable frontends. The goal is to
+//! let alternate CLIs (or GUIs) drive Buddy and render progress without relying
+//! on terminal-coupled internals.
+
+use crate::agent::Agent;
+use crate::agent::AgentUiEvent;
+use crate::auth::{load_provider_tokens, login_provider_key_for_base_url, supports_openai_login};
+use crate::config::{select_model_profile, Config};
+use crate::session::SessionStore;
+use crate::textutil::truncate_with_suffix_by_chars;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::{mpsc, watch, Mutex};
+
+/// Logical reference for work attached to a specific task.
+///
+/// `session_id` and `iteration` are optional because some current event sources
+/// only know `task_id`. As runtime wiring improves, those fields can be filled
+/// consistently without changing the event shape.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct TaskRef {
+    pub task_id: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub iteration: Option<u32>,
+}
+
+impl TaskRef {
+    /// Build a task ref with only the required task id.
+    pub fn from_task_id(task_id: u64) -> Self {
+        Self {
+            task_id,
+            session_id: None,
+            iteration: None,
+        }
+    }
+}
+
+/// Control-plane commands for a runtime actor.
+///
+/// These are frontend-originated requests (submit prompt, approve command,
+/// cancel running task, switch session/model, shutdown).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum RuntimeCommand {
+    SubmitPrompt {
+        prompt: String,
+        metadata: PromptMetadata,
+    },
+    Approve {
+        approval_id: String,
+        decision: ApprovalDecision,
+    },
+    CancelTask {
+        task_id: u64,
+    },
+    SetApprovalPolicy {
+        policy: RuntimeApprovalPolicy,
+    },
+    SwitchModel {
+        profile: String,
+    },
+    SessionNew,
+    SessionResume {
+        session_id: String,
+    },
+    SessionResumeLast,
+    Shutdown,
+}
+
+/// Optional metadata attached to a submitted prompt.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PromptMetadata {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
+}
+
+/// Decision for a pending approval request.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ApprovalDecision {
+    Approve,
+    Deny,
+}
+
+/// Runtime-level approval policy.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case", tag = "mode")]
+pub enum RuntimeApprovalPolicy {
+    Ask,
+    All,
+    None,
+    Until {
+        /// Absolute unix timestamp in milliseconds when auto-approve expires.
+        expires_at_unix_ms: u64,
+    },
+}
+
+/// Monotonic envelope for runtime events.
+///
+/// `seq` is assigned by the runtime/event source; `ts_unix_ms` is wall-clock
+/// capture time used for diagnostics, tracing, and playback.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RuntimeEventEnvelope {
+    pub seq: u64,
+    pub ts_unix_ms: u64,
+    pub event: RuntimeEvent,
+}
+
+impl RuntimeEventEnvelope {
+    /// Build a new envelope around an event.
+    pub fn new(seq: u64, event: RuntimeEvent) -> Self {
+        Self {
+            seq,
+            ts_unix_ms: now_unix_millis(),
+            event,
+        }
+    }
+}
+
+/// Typed runtime event families.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", content = "payload")]
+pub enum RuntimeEvent {
+    Lifecycle(LifecycleEvent),
+    Session(SessionEvent),
+    Task(TaskEvent),
+    Model(ModelEvent),
+    Tool(ToolEvent),
+    Metrics(MetricsEvent),
+    Warning(WarningEvent),
+    Error(ErrorEvent),
+}
+
+/// Runtime lifecycle milestones.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LifecycleEvent {
+    RuntimeStarted,
+    RuntimeStopped,
+    ConfigLoaded,
+}
+
+/// Session-scoped events.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionEvent {
+    Created { session_id: String },
+    Resumed { session_id: String },
+    Saved { session_id: String },
+    Compacted { session_id: String },
+}
+
+/// Task state transitions.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskEvent {
+    Queued {
+        task: TaskRef,
+        kind: String,
+        details: String,
+    },
+    Started {
+        task: TaskRef,
+    },
+    WaitingApproval {
+        task: TaskRef,
+        approval_id: String,
+        command: String,
+    },
+    Cancelling {
+        task: TaskRef,
+    },
+    Completed {
+        task: TaskRef,
+    },
+    Failed {
+        task: TaskRef,
+        message: String,
+    },
+}
+
+/// Model-side incremental/final output events.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelEvent {
+    ProfileSwitched {
+        profile: String,
+        model: String,
+        base_url: String,
+    },
+    RequestStarted {
+        task: TaskRef,
+        model: String,
+    },
+    TextDelta {
+        task: TaskRef,
+        delta: String,
+    },
+    ReasoningDelta {
+        task: TaskRef,
+        field: String,
+        delta: String,
+    },
+    MessageFinal {
+        task: TaskRef,
+        content: String,
+    },
+}
+
+/// Tool invocation/result events.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolEvent {
+    CallRequested {
+        task: TaskRef,
+        name: String,
+        arguments_json: String,
+    },
+    Result {
+        task: TaskRef,
+        name: String,
+        arguments_json: String,
+        result: String,
+    },
+}
+
+/// Runtime metrics updates.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum MetricsEvent {
+    TokenUsage {
+        task: TaskRef,
+        prompt_tokens: u32,
+        completion_tokens: u32,
+        session_total_tokens: u32,
+    },
+    ContextUsage {
+        task: TaskRef,
+        estimated_tokens: u64,
+        context_limit: u64,
+        used_percent: f32,
+    },
+    PhaseDuration {
+        task: TaskRef,
+        phase: String,
+        elapsed_ms: u64,
+    },
+}
+
+/// Non-fatal warning surfaced to frontends.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WarningEvent {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<TaskRef>,
+    pub message: String,
+}
+
+/// Error surfaced to frontends.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ErrorEvent {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<TaskRef>,
+    pub message: String,
+}
+
+/// Adapter helper for migrating from the existing background UI side-channel.
+pub fn runtime_event_from_agent_ui(event: AgentUiEvent) -> RuntimeEvent {
+    match event {
+        AgentUiEvent::Warning { task_id, message } => RuntimeEvent::Warning(WarningEvent {
+            task: Some(TaskRef::from_task_id(task_id)),
+            message,
+        }),
+        AgentUiEvent::TokenUsage {
+            task_id,
+            prompt_tokens,
+            completion_tokens,
+            session_total,
+        } => RuntimeEvent::Metrics(MetricsEvent::TokenUsage {
+            task: TaskRef::from_task_id(task_id),
+            prompt_tokens,
+            completion_tokens,
+            session_total_tokens: session_total,
+        }),
+        AgentUiEvent::ReasoningTrace {
+            task_id,
+            field,
+            trace,
+        } => RuntimeEvent::Model(ModelEvent::ReasoningDelta {
+            task: TaskRef::from_task_id(task_id),
+            field,
+            delta: trace,
+        }),
+        AgentUiEvent::ToolCall {
+            task_id,
+            name,
+            args,
+        } => RuntimeEvent::Tool(ToolEvent::CallRequested {
+            task: TaskRef::from_task_id(task_id),
+            name,
+            arguments_json: args,
+        }),
+        AgentUiEvent::ToolResult {
+            task_id,
+            name,
+            args,
+            result,
+        } => RuntimeEvent::Tool(ToolEvent::Result {
+            task: TaskRef::from_task_id(task_id),
+            name,
+            arguments_json: args,
+            result,
+        }),
+    }
+}
+
+/// Convert an existing `AgentUiEvent` into a timestamped runtime envelope.
+pub fn runtime_envelope_from_agent_ui(seq: u64, event: AgentUiEvent) -> RuntimeEventEnvelope {
+    RuntimeEventEnvelope::new(seq, runtime_event_from_agent_ui(event))
+}
+
+/// Handle for sending commands to a spawned runtime actor.
+#[derive(Clone)]
+pub struct BuddyRuntimeHandle {
+    pub commands: mpsc::Sender<RuntimeCommand>,
+}
+
+impl BuddyRuntimeHandle {
+    /// Send one command to the runtime actor.
+    pub async fn send(&self, command: RuntimeCommand) -> Result<(), String> {
+        self.commands
+            .send(command)
+            .await
+            .map_err(|_| "runtime command channel closed".to_string())
+    }
+}
+
+/// Event stream receiver returned by [`spawn_runtime`].
+pub type RuntimeEventStream = mpsc::UnboundedReceiver<RuntimeEventEnvelope>;
+
+/// Bootstrap inputs for the runtime actor.
+pub struct RuntimeSpawnConfig {
+    pub config: Config,
+    pub tools: crate::tools::ToolRegistry,
+    pub session_store: Option<SessionStore>,
+    pub active_session: Option<String>,
+}
+
+/// Spawn a runtime actor from config + tool registry.
+pub fn spawn_runtime(config: RuntimeSpawnConfig) -> (BuddyRuntimeHandle, RuntimeEventStream) {
+    let agent = Agent::new(config.config.clone(), config.tools);
+    spawn_runtime_with_agent(
+        agent,
+        config.config,
+        config.session_store,
+        config.active_session,
+    )
+}
+
+/// Spawn a runtime actor from an existing agent instance.
+///
+/// This entry point is primarily for tests and advanced embedding where the
+/// caller wants to inject a preconfigured/mocked agent.
+pub fn spawn_runtime_with_agent(
+    agent: Agent,
+    config: Config,
+    session_store: Option<SessionStore>,
+    active_session: Option<String>,
+) -> (BuddyRuntimeHandle, RuntimeEventStream) {
+    let (command_tx, mut command_rx) = mpsc::channel::<RuntimeCommand>(64);
+    let (event_tx, event_rx) = mpsc::unbounded_channel::<RuntimeEventEnvelope>();
+
+    tokio::spawn(async move {
+        let agent = Arc::new(Mutex::new(agent));
+        let (agent_event_tx, mut agent_event_rx) =
+            mpsc::unbounded_channel::<RuntimeEventEnvelope>();
+        let (task_done_tx, mut task_done_rx) = mpsc::unbounded_channel::<TaskDone>();
+
+        let mut seq: u64 = 0;
+        let mut next_task_id: u64 = 1;
+        let mut active_task: Option<ActiveTask> = None;
+        let mut state = RuntimeActorState {
+            config,
+            session_store,
+            active_session,
+            approval_policy: RuntimeApprovalPolicy::Ask,
+        };
+
+        emit_event(
+            &event_tx,
+            &mut seq,
+            RuntimeEvent::Lifecycle(LifecycleEvent::RuntimeStarted),
+        );
+        emit_event(
+            &event_tx,
+            &mut seq,
+            RuntimeEvent::Lifecycle(LifecycleEvent::ConfigLoaded),
+        );
+
+        loop {
+            tokio::select! {
+                Some(command) = command_rx.recv() => {
+                    let should_stop = handle_runtime_command(
+                        command,
+                        &agent,
+                        &mut state,
+                        &mut active_task,
+                        &mut next_task_id,
+                        &event_tx,
+                        &mut seq,
+                        &agent_event_tx,
+                        &task_done_tx,
+                    ).await;
+                    if should_stop {
+                        emit_event(
+                            &event_tx,
+                            &mut seq,
+                            RuntimeEvent::Lifecycle(LifecycleEvent::RuntimeStopped),
+                        );
+                        break;
+                    }
+                }
+                Some(agent_envelope) = agent_event_rx.recv() => {
+                    emit_event(&event_tx, &mut seq, agent_envelope.event);
+                }
+                Some(done) = task_done_rx.recv() => {
+                    if active_task.as_ref().is_some_and(|active| active.task_id == done.task_id) {
+                        active_task = None;
+                    }
+
+                    persist_active_session_snapshot(&agent, &state, &event_tx, &mut seq).await;
+
+                    if let Err(err) = done.result {
+                        emit_event(
+                            &event_tx,
+                            &mut seq,
+                            RuntimeEvent::Task(TaskEvent::Failed {
+                                task: TaskRef::from_task_id(done.task_id),
+                                message: err.to_string(),
+                            }),
+                        );
+                    }
+                }
+                else => break,
+            }
+        }
+    });
+
+    (
+        BuddyRuntimeHandle {
+            commands: command_tx,
+        },
+        event_rx,
+    )
+}
+
+struct RuntimeActorState {
+    config: Config,
+    session_store: Option<SessionStore>,
+    active_session: Option<String>,
+    approval_policy: RuntimeApprovalPolicy,
+}
+
+struct ActiveTask {
+    task_id: u64,
+    cancel_tx: watch::Sender<bool>,
+}
+
+struct TaskDone {
+    task_id: u64,
+    result: Result<String, crate::error::AgentError>,
+}
+
+fn emit_event(
+    tx: &mpsc::UnboundedSender<RuntimeEventEnvelope>,
+    seq: &mut u64,
+    event: RuntimeEvent,
+) {
+    let _ = tx.send(RuntimeEventEnvelope::new(*seq, event));
+    *seq = seq.saturating_add(1);
+}
+
+async fn handle_runtime_command(
+    command: RuntimeCommand,
+    agent: &Arc<Mutex<Agent>>,
+    state: &mut RuntimeActorState,
+    active_task: &mut Option<ActiveTask>,
+    next_task_id: &mut u64,
+    event_tx: &mpsc::UnboundedSender<RuntimeEventEnvelope>,
+    seq: &mut u64,
+    agent_event_tx: &mpsc::UnboundedSender<RuntimeEventEnvelope>,
+    task_done_tx: &mpsc::UnboundedSender<TaskDone>,
+) -> bool {
+    match command {
+        RuntimeCommand::SubmitPrompt { prompt, .. } => {
+            if active_task.is_some() {
+                emit_event(
+                    event_tx,
+                    seq,
+                    RuntimeEvent::Error(ErrorEvent {
+                        task: None,
+                        message: "a prompt task is already running".to_string(),
+                    }),
+                );
+                return false;
+            }
+
+            let task_id = *next_task_id;
+            *next_task_id = next_task_id.saturating_add(1);
+            emit_event(
+                event_tx,
+                seq,
+                RuntimeEvent::Task(TaskEvent::Queued {
+                    task: TaskRef::from_task_id(task_id),
+                    kind: "prompt".to_string(),
+                    details: truncate_preview(&prompt, 80),
+                }),
+            );
+
+            let (cancel_tx, cancel_rx) = watch::channel(false);
+            *active_task = Some(ActiveTask { task_id, cancel_tx });
+            spawn_prompt_task(
+                Arc::clone(agent),
+                task_id,
+                prompt,
+                cancel_rx,
+                agent_event_tx.clone(),
+                task_done_tx.clone(),
+            );
+        }
+        RuntimeCommand::CancelTask { task_id } => {
+            let Some(active) = active_task.as_ref() else {
+                emit_event(
+                    event_tx,
+                    seq,
+                    RuntimeEvent::Error(ErrorEvent {
+                        task: Some(TaskRef::from_task_id(task_id)),
+                        message: format!("no running task with id #{task_id}"),
+                    }),
+                );
+                return false;
+            };
+            if active.task_id != task_id {
+                emit_event(
+                    event_tx,
+                    seq,
+                    RuntimeEvent::Error(ErrorEvent {
+                        task: Some(TaskRef::from_task_id(task_id)),
+                        message: format!("task #{task_id} is not active"),
+                    }),
+                );
+                return false;
+            }
+            let _ = active.cancel_tx.send(true);
+            emit_event(
+                event_tx,
+                seq,
+                RuntimeEvent::Task(TaskEvent::Cancelling {
+                    task: TaskRef::from_task_id(task_id),
+                }),
+            );
+        }
+        RuntimeCommand::SetApprovalPolicy { policy } => {
+            state.approval_policy = policy;
+            emit_event(
+                event_tx,
+                seq,
+                RuntimeEvent::Warning(WarningEvent {
+                    task: None,
+                    message: "approval policy updated".to_string(),
+                }),
+            );
+        }
+        RuntimeCommand::SwitchModel { profile } => {
+            if active_task.is_some() {
+                emit_event(
+                    event_tx,
+                    seq,
+                    RuntimeEvent::Error(ErrorEvent {
+                        task: None,
+                        message: "cannot switch model while a task is running".to_string(),
+                    }),
+                );
+                return false;
+            }
+
+            let mut next = state.config.clone();
+            if let Err(err) = select_model_profile(&mut next, &profile) {
+                emit_event(
+                    event_tx,
+                    seq,
+                    RuntimeEvent::Error(ErrorEvent {
+                        task: None,
+                        message: format!("failed to select model profile `{profile}`: {err}"),
+                    }),
+                );
+                return false;
+            }
+            if let Err(err) = ensure_active_auth_ready(&next) {
+                emit_event(
+                    event_tx,
+                    seq,
+                    RuntimeEvent::Error(ErrorEvent {
+                        task: None,
+                        message: err,
+                    }),
+                );
+                return false;
+            }
+
+            state.config = next.clone();
+            {
+                let mut guard = agent.lock().await;
+                guard.switch_api_config(next.api.clone());
+            }
+
+            emit_event(
+                event_tx,
+                seq,
+                RuntimeEvent::Model(ModelEvent::ProfileSwitched {
+                    profile: next.api.profile.clone(),
+                    model: next.api.model.clone(),
+                    base_url: next.api.base_url.clone(),
+                }),
+            );
+        }
+        RuntimeCommand::SessionNew => {
+            if let Err(err) = runtime_session_new(agent, state, event_tx, seq).await {
+                emit_event(
+                    event_tx,
+                    seq,
+                    RuntimeEvent::Error(ErrorEvent {
+                        task: None,
+                        message: err,
+                    }),
+                );
+            }
+        }
+        RuntimeCommand::SessionResume { session_id } => {
+            if let Err(err) = runtime_session_resume(agent, state, &session_id, event_tx, seq).await
+            {
+                emit_event(
+                    event_tx,
+                    seq,
+                    RuntimeEvent::Error(ErrorEvent {
+                        task: None,
+                        message: err,
+                    }),
+                );
+            }
+        }
+        RuntimeCommand::SessionResumeLast => {
+            let Some(store) = state.session_store.as_ref() else {
+                emit_event(
+                    event_tx,
+                    seq,
+                    RuntimeEvent::Error(ErrorEvent {
+                        task: None,
+                        message: "session store is unavailable".to_string(),
+                    }),
+                );
+                return false;
+            };
+            match store.resolve_last() {
+                Ok(Some(last)) => {
+                    if let Err(err) =
+                        runtime_session_resume(agent, state, &last, event_tx, seq).await
+                    {
+                        emit_event(
+                            event_tx,
+                            seq,
+                            RuntimeEvent::Error(ErrorEvent {
+                                task: None,
+                                message: err,
+                            }),
+                        );
+                    }
+                }
+                Ok(None) => emit_event(
+                    event_tx,
+                    seq,
+                    RuntimeEvent::Error(ErrorEvent {
+                        task: None,
+                        message: "no saved sessions found".to_string(),
+                    }),
+                ),
+                Err(err) => emit_event(
+                    event_tx,
+                    seq,
+                    RuntimeEvent::Error(ErrorEvent {
+                        task: None,
+                        message: format!("failed to resolve last session: {err}"),
+                    }),
+                ),
+            }
+        }
+        RuntimeCommand::Approve { .. } => {
+            emit_event(
+                event_tx,
+                seq,
+                RuntimeEvent::Warning(WarningEvent {
+                    task: None,
+                    message: "explicit approval commands are not wired in runtime actor yet"
+                        .to_string(),
+                }),
+            );
+        }
+        RuntimeCommand::Shutdown => {
+            if let Some(active) = active_task.as_ref() {
+                let _ = active.cancel_tx.send(true);
+            }
+            return true;
+        }
+    }
+    false
+}
+
+fn spawn_prompt_task(
+    agent: Arc<Mutex<Agent>>,
+    task_id: u64,
+    prompt: String,
+    cancel_rx: watch::Receiver<bool>,
+    event_tx: mpsc::UnboundedSender<RuntimeEventEnvelope>,
+    done_tx: mpsc::UnboundedSender<TaskDone>,
+) {
+    tokio::spawn(async move {
+        let mut agent = agent.lock().await;
+        agent.set_live_output_suppressed(true);
+        agent.set_live_output_sink(None);
+        agent.set_runtime_event_sink(Some((task_id, event_tx)));
+        agent.set_cancellation_receiver(Some(cancel_rx));
+        let result = agent.send(&prompt).await;
+        agent.set_cancellation_receiver(None);
+        agent.set_runtime_event_sink(None);
+        agent.set_live_output_suppressed(false);
+        drop(agent);
+        let _ = done_tx.send(TaskDone { task_id, result });
+    });
+}
+
+async fn runtime_session_new(
+    agent: &Arc<Mutex<Agent>>,
+    state: &mut RuntimeActorState,
+    event_tx: &mpsc::UnboundedSender<RuntimeEventEnvelope>,
+    seq: &mut u64,
+) -> Result<(), String> {
+    let Some(store) = state.session_store.as_ref() else {
+        return Err("session store is unavailable".to_string());
+    };
+
+    if let Some(active_id) = state.active_session.as_deref() {
+        let snapshot = agent.lock().await.snapshot_session();
+        store
+            .save(active_id, &snapshot)
+            .map_err(|e| format!("failed to persist session {active_id}: {e}"))?;
+    }
+
+    let snapshot = {
+        let mut guard = agent.lock().await;
+        guard.reset_session();
+        guard.snapshot_session()
+    };
+    let new_id = store
+        .create_new_session(&snapshot)
+        .map_err(|e| format!("failed to create new session: {e}"))?;
+    state.active_session = Some(new_id.clone());
+    emit_event(
+        event_tx,
+        seq,
+        RuntimeEvent::Session(SessionEvent::Created { session_id: new_id }),
+    );
+    Ok(())
+}
+
+async fn runtime_session_resume(
+    agent: &Arc<Mutex<Agent>>,
+    state: &mut RuntimeActorState,
+    session_id: &str,
+    event_tx: &mpsc::UnboundedSender<RuntimeEventEnvelope>,
+    seq: &mut u64,
+) -> Result<(), String> {
+    let Some(store) = state.session_store.as_ref() else {
+        return Err("session store is unavailable".to_string());
+    };
+
+    if let Some(active_id) = state.active_session.as_deref() {
+        let snapshot = agent.lock().await.snapshot_session();
+        store
+            .save(active_id, &snapshot)
+            .map_err(|e| format!("failed to persist session {active_id}: {e}"))?;
+    }
+
+    let snapshot = store
+        .load(session_id)
+        .map_err(|e| format!("failed to load session {session_id}: {e}"))?;
+    {
+        let mut guard = agent.lock().await;
+        guard.restore_session(snapshot.clone());
+    }
+    store
+        .save(session_id, &snapshot)
+        .map_err(|e| format!("failed to refresh session {session_id}: {e}"))?;
+    state.active_session = Some(session_id.to_string());
+    emit_event(
+        event_tx,
+        seq,
+        RuntimeEvent::Session(SessionEvent::Resumed {
+            session_id: session_id.to_string(),
+        }),
+    );
+    Ok(())
+}
+
+async fn persist_active_session_snapshot(
+    agent: &Arc<Mutex<Agent>>,
+    state: &RuntimeActorState,
+    event_tx: &mpsc::UnboundedSender<RuntimeEventEnvelope>,
+    seq: &mut u64,
+) {
+    let Some(store) = state.session_store.as_ref() else {
+        return;
+    };
+    let Some(active_session) = state.active_session.as_deref() else {
+        return;
+    };
+
+    let snapshot = agent.lock().await.snapshot_session();
+    if store.save(active_session, &snapshot).is_ok() {
+        emit_event(
+            event_tx,
+            seq,
+            RuntimeEvent::Session(SessionEvent::Saved {
+                session_id: active_session.to_string(),
+            }),
+        );
+    }
+}
+
+fn truncate_preview(text: &str, max_len: usize) -> String {
+    let flat: String = text
+        .chars()
+        .map(|c| if c == '\n' { ' ' } else { c })
+        .collect();
+    truncate_with_suffix_by_chars(&flat, max_len, "...")
+}
+
+fn ensure_active_auth_ready(config: &Config) -> Result<(), String> {
+    if !config.api.uses_login() {
+        return Ok(());
+    }
+    if !supports_openai_login(&config.api.base_url) {
+        return Err(format!(
+            "profile `{}` uses `auth = \"login\"`, but base URL `{}` is not an OpenAI login endpoint",
+            config.api.profile, config.api.base_url
+        ));
+    }
+
+    let Some(provider) = login_provider_key_for_base_url(&config.api.base_url) else {
+        return Err(format!(
+            "profile `{}` uses `auth = \"login\"`, but provider for base URL `{}` is unsupported",
+            config.api.profile, config.api.base_url
+        ));
+    };
+
+    match load_provider_tokens(provider) {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => Err(format!(
+            "provider `{}` requires login auth, but no saved login was found. Run `buddy login`.",
+            provider
+        )),
+        Err(err) => Err(format!(
+            "failed to load login credentials for provider `{}`: {err}",
+            provider
+        )),
+    }
+}
+
+fn now_unix_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::ModelClient;
+    use crate::config::Config;
+    use crate::error::ApiError;
+    use crate::types::{ChatRequest, ChatResponse, Choice, Message, Role, Usage};
+    use async_trait::async_trait;
+    use serde_json::{json, Value};
+    use std::collections::{BTreeMap, VecDeque};
+    use std::sync::Mutex as StdMutex;
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    #[test]
+    fn envelope_serializes_with_required_fields() {
+        let envelope =
+            RuntimeEventEnvelope::new(7, RuntimeEvent::Lifecycle(LifecycleEvent::RuntimeStarted));
+        let value = serde_json::to_value(&envelope).expect("serialize");
+        assert_eq!(value["seq"], json!(7));
+        assert!(value["ts_unix_ms"].as_u64().is_some());
+        assert_eq!(value["event"]["type"], json!("Lifecycle"));
+    }
+
+    #[test]
+    fn runtime_command_round_trip_json() {
+        let cmd = RuntimeCommand::SubmitPrompt {
+            prompt: "list files".to_string(),
+            metadata: PromptMetadata {
+                source: Some("cli".to_string()),
+                correlation_id: Some("abc-123".to_string()),
+            },
+        };
+
+        let raw = serde_json::to_string(&cmd).expect("serialize");
+        let parsed: RuntimeCommand = serde_json::from_str(&raw).expect("deserialize");
+        assert_eq!(parsed, cmd);
+    }
+
+    #[test]
+    fn adapter_maps_warning_event() {
+        let event = AgentUiEvent::Warning {
+            task_id: 3,
+            message: "hello".to_string(),
+        };
+        let mapped = runtime_event_from_agent_ui(event);
+        assert_eq!(
+            mapped,
+            RuntimeEvent::Warning(WarningEvent {
+                task: Some(TaskRef::from_task_id(3)),
+                message: "hello".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn adapter_maps_token_usage_event() {
+        let event = AgentUiEvent::TokenUsage {
+            task_id: 9,
+            prompt_tokens: 12,
+            completion_tokens: 7,
+            session_total: 120,
+        };
+        let mapped = runtime_event_from_agent_ui(event);
+        assert_eq!(
+            mapped,
+            RuntimeEvent::Metrics(MetricsEvent::TokenUsage {
+                task: TaskRef::from_task_id(9),
+                prompt_tokens: 12,
+                completion_tokens: 7,
+                session_total_tokens: 120,
+            })
+        );
+    }
+
+    #[test]
+    fn adapter_maps_tool_events() {
+        let call = AgentUiEvent::ToolCall {
+            task_id: 1,
+            name: "run_shell".to_string(),
+            args: "{\"command\":\"ls\"}".to_string(),
+        };
+        let mapped_call = runtime_event_from_agent_ui(call);
+        assert_eq!(
+            mapped_call,
+            RuntimeEvent::Tool(ToolEvent::CallRequested {
+                task: TaskRef::from_task_id(1),
+                name: "run_shell".to_string(),
+                arguments_json: "{\"command\":\"ls\"}".to_string(),
+            })
+        );
+
+        let result = AgentUiEvent::ToolResult {
+            task_id: 1,
+            name: "run_shell".to_string(),
+            args: "{}".to_string(),
+            result: "exit code: 0".to_string(),
+        };
+        let mapped_result = runtime_event_from_agent_ui(result);
+        assert_eq!(
+            mapped_result,
+            RuntimeEvent::Tool(ToolEvent::Result {
+                task: TaskRef::from_task_id(1),
+                name: "run_shell".to_string(),
+                arguments_json: "{}".to_string(),
+                result: "exit code: 0".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn adapter_maps_reasoning_event() {
+        let event = AgentUiEvent::ReasoningTrace {
+            task_id: 42,
+            field: "reasoning_stream".to_string(),
+            trace: "step-1".to_string(),
+        };
+        let mapped = runtime_event_from_agent_ui(event);
+        assert_eq!(
+            mapped,
+            RuntimeEvent::Model(ModelEvent::ReasoningDelta {
+                task: TaskRef::from_task_id(42),
+                field: "reasoning_stream".to_string(),
+                delta: "step-1".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn envelope_builder_preserves_sequence_and_wraps_event() {
+        let envelope = runtime_envelope_from_agent_ui(
+            11,
+            AgentUiEvent::Warning {
+                task_id: 8,
+                message: "check".to_string(),
+            },
+        );
+        assert_eq!(envelope.seq, 11);
+        assert!(envelope.ts_unix_ms > 0);
+        assert_eq!(
+            envelope.event,
+            RuntimeEvent::Warning(WarningEvent {
+                task: Some(TaskRef::from_task_id(8)),
+                message: "check".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn warning_event_omits_task_when_absent() {
+        let event = RuntimeEvent::Warning(WarningEvent {
+            task: None,
+            message: "plain warning".to_string(),
+        });
+        let value = serde_json::to_value(&event).expect("serialize");
+        let payload: &Value = value.get("payload").expect("payload");
+        assert!(payload.get("task").is_none());
+    }
+
+    struct MockClient {
+        responses: StdMutex<VecDeque<ChatResponse>>,
+        delay: Option<Duration>,
+    }
+
+    impl MockClient {
+        fn new(responses: Vec<ChatResponse>) -> Self {
+            Self {
+                responses: StdMutex::new(responses.into()),
+                delay: None,
+            }
+        }
+
+        fn with_delay(responses: Vec<ChatResponse>, delay: Duration) -> Self {
+            Self {
+                responses: StdMutex::new(responses.into()),
+                delay: Some(delay),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ModelClient for MockClient {
+        async fn chat(&self, _request: &ChatRequest) -> Result<ChatResponse, ApiError> {
+            if let Some(delay) = self.delay {
+                tokio::time::sleep(delay).await;
+            }
+            self.responses
+                .lock()
+                .expect("lock")
+                .pop_front()
+                .ok_or_else(|| ApiError::InvalidResponse("no mock response queued".to_string()))
+        }
+    }
+
+    fn chat_response_text(id: &str, text: &str) -> ChatResponse {
+        ChatResponse {
+            id: id.to_string(),
+            choices: vec![Choice {
+                index: 0,
+                message: Message {
+                    role: Role::Assistant,
+                    content: Some(text.to_string()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                    name: None,
+                    extra: BTreeMap::new(),
+                },
+                finish_reason: Some("stop".to_string()),
+            }],
+            usage: Some(Usage {
+                prompt_tokens: 3,
+                completion_tokens: 2,
+                total_tokens: 5,
+            }),
+        }
+    }
+
+    async fn recv_event(rx: &mut RuntimeEventStream) -> RuntimeEvent {
+        timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("event timeout")
+            .expect("event channel closed")
+            .event
+    }
+
+    #[tokio::test]
+    async fn runtime_actor_submit_prompt_emits_expected_events() {
+        let agent = Agent::with_client(
+            Config::default(),
+            crate::tools::ToolRegistry::new(),
+            Box::new(MockClient::new(vec![chat_response_text("r1", "ok")])),
+        );
+        let (handle, mut events) = spawn_runtime_with_agent(agent, Config::default(), None, None);
+
+        // startup lifecycle events
+        assert!(matches!(
+            recv_event(&mut events).await,
+            RuntimeEvent::Lifecycle(LifecycleEvent::RuntimeStarted)
+        ));
+        assert!(matches!(
+            recv_event(&mut events).await,
+            RuntimeEvent::Lifecycle(LifecycleEvent::ConfigLoaded)
+        ));
+
+        handle
+            .send(RuntimeCommand::SubmitPrompt {
+                prompt: "ping".to_string(),
+                metadata: PromptMetadata::default(),
+            })
+            .await
+            .expect("send");
+
+        let mut labels = Vec::new();
+        for _ in 0..8 {
+            let event = recv_event(&mut events).await;
+            let label = match event {
+                RuntimeEvent::Task(TaskEvent::Queued { .. }) => "queued",
+                RuntimeEvent::Task(TaskEvent::Started { .. }) => "started",
+                RuntimeEvent::Model(ModelEvent::RequestStarted { .. }) => "request",
+                RuntimeEvent::Metrics(MetricsEvent::TokenUsage { .. }) => "tokens",
+                RuntimeEvent::Model(ModelEvent::MessageFinal { .. }) => "final",
+                RuntimeEvent::Task(TaskEvent::Completed { .. }) => {
+                    labels.push("completed".to_string());
+                    break;
+                }
+                _ => "other",
+            };
+            labels.push(label.to_string());
+        }
+
+        assert_eq!(
+            labels,
+            vec![
+                "queued",
+                "started",
+                "request",
+                "tokens",
+                "final",
+                "completed"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_actor_cancel_task_emits_cancelling() {
+        let agent = Agent::with_client(
+            Config::default(),
+            crate::tools::ToolRegistry::new(),
+            Box::new(MockClient::with_delay(
+                vec![chat_response_text("r1", "slow")],
+                Duration::from_millis(300),
+            )),
+        );
+        let (handle, mut events) = spawn_runtime_with_agent(agent, Config::default(), None, None);
+        let _ = recv_event(&mut events).await;
+        let _ = recv_event(&mut events).await;
+
+        handle
+            .send(RuntimeCommand::SubmitPrompt {
+                prompt: "slow".to_string(),
+                metadata: PromptMetadata::default(),
+            })
+            .await
+            .expect("send submit");
+        handle
+            .send(RuntimeCommand::CancelTask { task_id: 1 })
+            .await
+            .expect("send cancel");
+
+        let mut saw_cancelling = false;
+        let mut saw_completed = false;
+        for _ in 0..10 {
+            match recv_event(&mut events).await {
+                RuntimeEvent::Task(TaskEvent::Cancelling { task }) => {
+                    saw_cancelling = task.task_id == 1;
+                }
+                RuntimeEvent::Task(TaskEvent::Completed { task }) => {
+                    if task.task_id == 1 {
+                        saw_completed = true;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        assert!(saw_cancelling);
+        assert!(saw_completed);
+    }
+
+    #[tokio::test]
+    async fn runtime_actor_switch_model_emits_profile_switched() {
+        let mut cfg = Config::default();
+        cfg.display.show_tokens = false;
+        let agent = Agent::with_client(
+            cfg.clone(),
+            crate::tools::ToolRegistry::new(),
+            Box::new(MockClient::new(vec![chat_response_text("r1", "ok")])),
+        );
+        let (handle, mut events) = spawn_runtime_with_agent(agent, cfg, None, None);
+        let _ = recv_event(&mut events).await;
+        let _ = recv_event(&mut events).await;
+
+        handle
+            .send(RuntimeCommand::SwitchModel {
+                profile: "openrouter-deepseek".to_string(),
+            })
+            .await
+            .expect("send switch");
+
+        let event = recv_event(&mut events).await;
+        match event {
+            RuntimeEvent::Model(ModelEvent::ProfileSwitched { profile, .. }) => {
+                assert_eq!(profile, "openrouter-deepseek");
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+}

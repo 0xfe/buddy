@@ -14,7 +14,11 @@ use buddy::config::select_model_profile;
 use buddy::config::{AuthMode, Config, GlobalConfigInitResult};
 use buddy::prompt::{render_system_prompt, ExecutionTarget, SystemPromptParams};
 use buddy::render::Renderer;
+use buddy::runtime::{
+    spawn_runtime_with_agent, ModelEvent, PromptMetadata, RuntimeCommand, RuntimeEvent, TaskEvent,
+};
 use buddy::session::{SessionStore, SessionSummary};
+use buddy::textutil::truncate_with_suffix_by_chars;
 use buddy::tokens::TokenTracker;
 use buddy::tools::capture_pane::CapturePaneTool;
 use buddy::tools::execution::{ExecutionContext, TmuxAttachInfo, TmuxAttachTarget};
@@ -202,7 +206,9 @@ async fn main() {
         });
     }
     if config.tools.fetch_enabled {
-        tools.register(FetchTool);
+        tools.register(FetchTool::new(Duration::from_secs(
+            config.network.fetch_timeout_secs,
+        )));
     }
     if config.tools.files_enabled {
         tools.register(ReadFileTool {
@@ -221,15 +227,49 @@ async fn main() {
     let mut agent = Agent::new(config.clone(), tools);
 
     if let Some(cli::Command::Exec { prompt }) = args.command.as_ref() {
-        // One-shot mode: send prompt, print response, exit.
-        match agent.send(prompt).await {
-            Ok(response) => {
-                renderer.assistant_message(&response);
+        // One-shot mode: run through the runtime actor command/event interface.
+        let (runtime, mut events) = spawn_runtime_with_agent(agent, config.clone(), None, None);
+        if let Err(e) = runtime
+            .send(RuntimeCommand::SubmitPrompt {
+                prompt: prompt.clone(),
+                metadata: PromptMetadata {
+                    source: Some("cli-exec".to_string()),
+                    correlation_id: None,
+                },
+            })
+            .await
+        {
+            renderer.error(&format!("failed to submit prompt: {e}"));
+            std::process::exit(1);
+        }
+
+        let mut final_response: Option<String> = None;
+        let mut failure_message: Option<String> = None;
+        while let Some(envelope) = events.recv().await {
+            match envelope.event {
+                RuntimeEvent::Model(ModelEvent::MessageFinal { content, .. }) => {
+                    final_response = Some(content);
+                }
+                RuntimeEvent::Task(TaskEvent::Failed { message, .. }) => {
+                    failure_message = Some(message);
+                }
+                RuntimeEvent::Task(TaskEvent::Completed { .. }) => {
+                    break;
+                }
+                _ => {}
             }
-            Err(e) => {
-                renderer.error(&e.to_string());
-                std::process::exit(1);
-            }
+        }
+        let _ = runtime.send(RuntimeCommand::Shutdown).await;
+
+        if let Some(message) = failure_message {
+            renderer.error(&message);
+            std::process::exit(1);
+        }
+        if let Some(response) = final_response {
+            renderer.assistant_message(&response);
+        } else {
+            renderer.error("runtime finished without a final assistant message");
+            std::process::exit(1);
         }
     } else {
         // Interactive REPL.
@@ -2212,11 +2252,7 @@ fn truncate_preview(text: &str, max_len: usize) -> String {
         .chars()
         .map(|c| if c == '\n' { ' ' } else { c })
         .collect();
-    if flat.len() > max_len {
-        format!("{}...", &flat[..max_len])
-    } else {
-        flat
-    }
+    truncate_with_suffix_by_chars(&flat, max_len, "...")
 }
 
 #[cfg(test)]

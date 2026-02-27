@@ -189,13 +189,14 @@ impl Tool for MyTool {
 Configuration is loaded with this precedence (highest wins):
 
 1. **CLI flags** — `--config`, `--model`, `--base-url`, `--container`, `--ssh`, `--tmux`, `--no-color`
-2. **Environment variables** — `BUDDY_API_KEY`, `BUDDY_BASE_URL`, `BUDDY_MODEL`
+2. **Environment variables** — `BUDDY_API_KEY`, `BUDDY_BASE_URL`, `BUDDY_MODEL`, `BUDDY_API_TIMEOUT_SECS`, `BUDDY_FETCH_TIMEOUT_SECS`
 3. **Local config** — `./buddy.toml` in the current directory
 4. **Global config** — `~/.config/buddy/buddy.toml` (create with `buddy init`; startup also auto-creates if missing)
 5. **Built-in defaults**
 
 Legacy compatibility:
 - `AGENT_API_KEY`, `AGENT_BASE_URL`, and `AGENT_MODEL` are still accepted.
+- `AGENT_API_TIMEOUT_SECS` and `AGENT_FETCH_TIMEOUT_SECS` are also accepted.
 - If `buddy.toml` is not present, `agent.toml` is still loaded.
 
 ### Full config reference
@@ -246,6 +247,10 @@ files_enabled = true                       # read_file / write_file tools
 search_enabled = true                      # web_search tool (DuckDuckGo)
 shell_confirm = true                       # prompt before running shell commands
 
+[network]
+api_timeout_secs = 120                     # model API request timeout (seconds)
+fetch_timeout_secs = 20                    # fetch_url timeout (seconds)
+
 [display]
 color = true                               # ANSI color output
 show_tokens = false                        # show token usage after each turn
@@ -282,7 +287,7 @@ At startup, the system prompt is rendered from one compiled template with runtim
 | Tool | Description |
 |------|-------------|
 | `run_shell` | Execute shell commands. Output truncated to 4K chars. Optional user confirmation. `wait` can be `true` (default), `false` (tmux-backed targets; return immediately), or a timeout duration string like `10m`. Respects `--container`, `--ssh`, and `--tmux`. |
-| `fetch_url` | HTTP GET a URL, return body as text. Truncated to 8K chars. |
+| `fetch_url` | HTTP GET a URL, return body as text. Truncated to 8K chars. Uses `[network].fetch_timeout_secs`. |
 | `read_file` | Read a file's contents. Truncated to 8K chars. Respects `--container`, `--ssh`, and `--tmux`. |
 | `write_file` | Write content to a file. Creates or overwrites. Respects `--container`, `--ssh`, and `--tmux`. |
 | `web_search` | Search DuckDuckGo and return top results with titles, URLs, and snippets. No API key needed. |

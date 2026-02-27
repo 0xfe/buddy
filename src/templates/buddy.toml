@@ -60,6 +60,10 @@ files_enabled = true
 search_enabled = true
 shell_confirm = true                          # ask before running shell commands
 
+[network]
+api_timeout_secs = 120
+fetch_timeout_secs = 20
+
 [display]
 color = true
 show_tokens = false

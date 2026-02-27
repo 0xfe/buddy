@@ -492,6 +492,7 @@ fn read_u32(value: &Value, keys: &[&str]) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testsupport::{sse_done_block, sse_event_block};
     use crate::types::{FunctionDefinition, ToolDefinition};
 
     #[test]
@@ -603,14 +604,19 @@ mod tests {
 
     #[test]
     fn parse_streaming_responses_payload_extracts_completed_response() {
-        let sse = concat!(
-            "event: response.output_text.delta\n",
-            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hel\"}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hello\"}]}],\"usage\":{\"input_tokens\":2,\"output_tokens\":1,\"total_tokens\":3}}}\n\n",
-            "data: [DONE]\n\n"
+        let sse = format!(
+            "{}{}{}",
+            sse_event_block(
+                "response.output_text.delta",
+                r#"{"type":"response.output_text.delta","delta":"hel"}"#
+            ),
+            sse_event_block(
+                "response.completed",
+                r#"{"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}],"usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3}}}"#
+            ),
+            sse_done_block()
         );
-        let parsed = parse_streaming_responses_payload(sse).expect("parse");
+        let parsed = parse_streaming_responses_payload(&sse).expect("parse");
         assert_eq!(parsed.id, "resp_1");
         assert_eq!(parsed.choices[0].message.content.as_deref(), Some("hello"));
         assert_eq!(parsed.usage.as_ref().map(|u| u.total_tokens), Some(3));
@@ -618,16 +624,23 @@ mod tests {
 
     #[test]
     fn parse_streaming_responses_payload_captures_reasoning_deltas() {
-        let sse = concat!(
-            "event: response.reasoning_summary_text.delta\n",
-            "data: {\"type\":\"response.reasoning_summary_text.delta\",\"summary_index\":0,\"delta\":\"plan\"}\n\n",
-            "event: response.reasoning_text.delta\n",
-            "data: {\"type\":\"response.reasoning_text.delta\",\"content_index\":0,\"delta\":\"step-1\"}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_2\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]}]}}\n\n",
-            "data: [DONE]\n\n"
+        let sse = format!(
+            "{}{}{}{}",
+            sse_event_block(
+                "response.reasoning_summary_text.delta",
+                r#"{"type":"response.reasoning_summary_text.delta","summary_index":0,"delta":"plan"}"#
+            ),
+            sse_event_block(
+                "response.reasoning_text.delta",
+                r#"{"type":"response.reasoning_text.delta","content_index":0,"delta":"step-1"}"#
+            ),
+            sse_event_block(
+                "response.completed",
+                r#"{"type":"response.completed","response":{"id":"resp_2","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}}"#
+            ),
+            sse_done_block()
         );
-        let parsed = parse_streaming_responses_payload(sse).expect("parse");
+        let parsed = parse_streaming_responses_payload(&sse).expect("parse");
         let msg = &parsed.choices[0].message;
         assert_eq!(msg.content.as_deref(), Some("ok"));
         let reasoning = msg
@@ -641,14 +654,19 @@ mod tests {
 
     #[test]
     fn parse_streaming_responses_payload_captures_reasoning_items() {
-        let sse = concat!(
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"thinking\"}]}}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_3\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]}]}}\n\n",
-            "data: [DONE]\n\n"
+        let sse = format!(
+            "{}{}{}",
+            sse_event_block(
+                "response.output_item.done",
+                r#"{"type":"response.output_item.done","item":{"type":"reasoning","summary":[{"type":"summary_text","text":"thinking"}]}}"#
+            ),
+            sse_event_block(
+                "response.completed",
+                r#"{"type":"response.completed","response":{"id":"resp_3","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}}"#
+            ),
+            sse_done_block()
         );
-        let parsed = parse_streaming_responses_payload(sse).expect("parse");
+        let parsed = parse_streaming_responses_payload(&sse).expect("parse");
         let msg = &parsed.choices[0].message;
         assert!(msg.extra.contains_key("reasoning"));
     }

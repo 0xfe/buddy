@@ -1,5 +1,7 @@
 //! Shared text formatting helpers used by terminal rendering.
 
+use crate::textutil::truncate_with_suffix_by_chars;
+
 /// A clipped text preview used for compact block rendering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SnippetPreview<'a> {
@@ -15,11 +17,7 @@ pub fn visible_width(s: &str) -> usize {
 /// Truncate text for single-line display and replace newlines with spaces.
 pub fn truncate_single_line(s: &str, max_len: usize) -> String {
     let flat: String = s.chars().map(|c| if c == '\n' { ' ' } else { c }).collect();
-    if flat.len() > max_len {
-        format!("{}...", &flat[..max_len])
-    } else {
-        flat
-    }
+    truncate_with_suffix_by_chars(&flat, max_len, "...")
 }
 
 /// Return up to `max_lines` lines from `text` and count the lines omitted.
@@ -111,6 +109,12 @@ mod tests {
     fn truncate_flattens_and_clips() {
         let out = truncate_single_line("hello\nworld", 8);
         assert_eq!(out, "hello wo...");
+    }
+
+    #[test]
+    fn truncate_single_line_handles_utf8_without_panicking() {
+        let out = truncate_single_line("🙂🙂🙂", 2);
+        assert_eq!(out, "🙂🙂...");
     }
 
     #[test]

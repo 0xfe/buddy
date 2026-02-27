@@ -9,6 +9,7 @@ use serde::Deserialize;
 use super::execution::ExecutionContext;
 use super::Tool;
 use crate::error::ToolError;
+use crate::textutil::truncate_with_suffix_by_bytes;
 use crate::types::{FunctionDefinition, ToolDefinition};
 
 /// Maximum characters to return when reading a file.
@@ -62,7 +63,11 @@ impl Tool for ReadFileTool {
         let content = self.execution.read_file(&args.path).await?;
 
         if content.len() > MAX_READ_LEN {
-            Ok(format!("{}...[truncated]", &content[..MAX_READ_LEN]))
+            Ok(truncate_with_suffix_by_bytes(
+                &content,
+                MAX_READ_LEN,
+                "...[truncated]",
+            ))
         } else {
             Ok(content)
         }
@@ -132,10 +137,7 @@ impl Tool for WriteFileTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn tmp(name: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(name)
-    }
+    use crate::testsupport::TestTempDir;
 
     #[test]
     fn read_tool_name() {
@@ -183,7 +185,8 @@ mod tests {
 
     #[tokio::test]
     async fn read_file_returns_contents() {
-        let path = tmp("agent_test_read_file.txt");
+        let fixture = TestTempDir::new("read-file");
+        let path = fixture.path().join("file.txt");
         tokio::fs::write(&path, "file content").await.unwrap();
         let args = format!(r#"{{"path": "{}"}}"#, path.display());
         let result = ReadFileTool {
@@ -193,12 +196,12 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(result, "file content");
-        let _ = tokio::fs::remove_file(&path).await;
     }
 
     #[tokio::test]
     async fn read_file_truncates_large_content() {
-        let path = tmp("agent_test_read_large.txt");
+        let fixture = TestTempDir::new("read-file-large");
+        let path = fixture.path().join("large.txt");
         let big = "x".repeat(MAX_READ_LEN + 100);
         tokio::fs::write(&path, &big).await.unwrap();
         let args = format!(r#"{{"path": "{}"}}"#, path.display());
@@ -209,7 +212,22 @@ mod tests {
         .await
         .unwrap();
         assert!(result.ends_with("...[truncated]"), "got: {result}");
-        let _ = tokio::fs::remove_file(&path).await;
+    }
+
+    #[tokio::test]
+    async fn read_file_truncation_is_utf8_safe() {
+        let fixture = TestTempDir::new("read-file-utf8");
+        let path = fixture.path().join("utf8.txt");
+        let big = "🙂".repeat(MAX_READ_LEN + 10);
+        tokio::fs::write(&path, &big).await.unwrap();
+        let args = format!(r#"{{"path": "{}"}}"#, path.display());
+        let result = ReadFileTool {
+            execution: ExecutionContext::local(),
+        }
+        .execute(&args)
+        .await
+        .unwrap();
+        assert!(result.ends_with("...[truncated]"), "got: {result}");
     }
 
     #[tokio::test]
@@ -225,7 +243,8 @@ mod tests {
 
     #[tokio::test]
     async fn write_file_creates_and_reports_bytes() {
-        let path = tmp("agent_test_write_file.txt");
+        let fixture = TestTempDir::new("write-file");
+        let path = fixture.path().join("written.txt");
         let content = "hello write";
         let args = format!(
             r#"{{"path": "{}", "content": "{content}"}}"#,
@@ -240,6 +259,5 @@ mod tests {
         assert!(result.contains(&content.len().to_string()), "got: {result}");
         let written = tokio::fs::read_to_string(&path).await.unwrap();
         assert_eq!(written, content);
-        let _ = tokio::fs::remove_file(&path).await;
     }
 }

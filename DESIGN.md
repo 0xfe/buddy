@@ -33,6 +33,13 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
 - Dual runtime modes:
   - Interactive REPL mode.
   - One-shot mode via `buddy exec <prompt>`.
+- Developer-facing runtime event schema scaffolding:
+  - `src/runtime.rs` defines typed `RuntimeCommand` and `RuntimeEvent` families plus `RuntimeEventEnvelope`.
+  - Includes adapter helpers from existing `AgentUiEvent` into runtime events for incremental migration.
+  - `Agent` exposes `set_runtime_event_sink(...)` and emits runtime events for task/model/tool/metrics lifecycle during `send()`.
+  - Added `ModelClient` trait and `Agent::with_client(...)` injection path so runtime/event behavior can be tested offline with deterministic mock clients.
+  - Added `AgentRunner` facade as stream-capable runner entry point while preserving `Agent::send()` compatibility.
+  - Runtime actor scaffolding is available via `spawn_runtime(...)` / `spawn_runtime_with_agent(...)` with command/event channels; one-shot `exec` is now runtime-backed, while full interactive CLI migration is still pending.
 - CLI subcommands:
   - `buddy` (REPL)
   - `buddy init [--force]`
@@ -49,6 +56,9 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
   - `buddy init --force` overwrites the file after writing a timestamped backup into the same directory.
   - Startup still auto-creates `~/.config/buddy/buddy.toml` when missing.
   - Built-in template includes OpenAI `responses` profiles for `gpt-codex` (`gpt-5.3-codex`) and `gpt-spark` (`gpt-5.3-codex-spark`), plus OpenRouter examples for DeepSeek V3.2 and GLM, with `gpt-codex` selected by default.
+  - Network timeout policy is configurable via `[network]`:
+    - `api_timeout_secs` for model API requests.
+    - `fetch_timeout_secs` for `fetch_url` requests.
   - Primary naming uses `BUDDY_*` env vars + `buddy.toml`, with legacy `AGENT_*` and `agent.toml` compatibility fallbacks.
 - Built-in tool-calling agent loop:
   - Sends tool definitions to the model.
@@ -132,6 +142,7 @@ Configuration is defined with model profiles and runtime resolution:
 - **`ApiConfig`** — resolved active runtime API settings (`base_url`, resolved `api_key`, concrete `model`, resolved `protocol`, resolved `auth`, active `profile`, optional `context_limit`)
 - **`AgentConfig`** — `model` (active profile key), `system_prompt`, `max_iterations`, optional `temperature`/`top_p`
 - **`ToolsConfig`** — boolean flags for each built-in tool, plus `shell_confirm`
+- **`NetworkConfig`** — HTTP timeout policy (`api_timeout_secs`, `fetch_timeout_secs`)
 - **`DisplayConfig`** — `color`, `show_tokens`, `show_tool_calls`
 
 Every field has a default, so a completely empty config file (or no config file at all) produces a working configuration. The `load_config()` function searches for config in this order:
@@ -151,6 +162,7 @@ API key resolution supports exactly one configured source per model profile: `ap
 4. `models.<name>.api_key` literal
 
 `BUDDY_BASE_URL` and `BUDDY_MODEL` (legacy `AGENT_*` fallback) continue to override parsed config values.
+`BUDDY_API_TIMEOUT_SECS` and `BUDDY_FETCH_TIMEOUT_SECS` (legacy `AGENT_*` fallbacks) override network timeout settings.
 
 ### `api/` — HTTP client
 
@@ -197,7 +209,7 @@ The trait uses `async_trait` because dyn dispatch with native async fn in traits
 
 **`shell.rs` — `run_shell`**: Executes commands via `tokio::process::Command` with `sh -c`. If `confirm` is true, the tool either prompts directly (one-shot / non-brokered mode) or sends a foreground approval request through a channel consumed by the interactive REPL loop. Output (stdout + stderr + exit code) is truncated to 4000 characters to prevent blowing up the context window.
 
-**`fetch.rs` — `fetch_url`**: Async HTTP GET via reqwest. Returns the response body as text, truncated to 8000 characters.
+**`fetch.rs` — `fetch_url`**: Async HTTP GET via a timeout-configured reqwest client. Returns the response body as text, truncated to 8000 characters.
 
 **`files.rs` — `read_file` / `write_file`**: Two tool structs in one module. `ReadFileTool` reads via `tokio::fs::read_to_string`, truncating to 8000 chars. `WriteFileTool` writes via `tokio::fs::write` and returns a confirmation message with the byte count.
 

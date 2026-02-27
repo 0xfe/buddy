@@ -1,6 +1,7 @@
 use super::completions;
 use super::policy;
 use super::responses::{self, ResponsesRequestOptions};
+use super::ModelClient;
 use crate::auth::{
     load_provider_tokens, login_provider_key_for_base_url, refresh_openai_tokens,
     save_provider_tokens,
@@ -8,6 +9,8 @@ use crate::auth::{
 use crate::config::{ApiConfig, ApiProtocol, AuthMode};
 use crate::error::ApiError;
 use crate::types::{ChatRequest, ChatResponse};
+use async_trait::async_trait;
+use std::time::Duration;
 
 /// Client for OpenAI-compatible model APIs.
 pub struct ApiClient {
@@ -21,9 +24,13 @@ pub struct ApiClient {
 
 impl ApiClient {
     /// Build a client from resolved API configuration.
-    pub fn new(config: &ApiConfig) -> Self {
+    pub fn new(config: &ApiConfig, timeout: Duration) -> Self {
+        let http = reqwest::Client::builder()
+            .timeout(timeout)
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
-            http: reqwest::Client::new(),
+            http,
             base_url: config.base_url.trim_end_matches('/').to_string(),
             api_key: config.api_key.trim().to_string(),
             protocol: config.protocol,
@@ -128,6 +135,56 @@ impl ApiClient {
                     policy::responses_request_options(base_url, self.auth, &self.api_key);
                 responses::request(&self.http, base_url, request, bearer, options).await
             }
+        }
+    }
+}
+
+#[async_trait]
+impl ModelClient for ApiClient {
+    async fn chat(&self, request: &ChatRequest) -> Result<ChatResponse, ApiError> {
+        ApiClient::chat(self, request).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::ApiProtocol;
+    use crate::types::Message;
+    use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn api_client_respects_timeout_policy() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        // Accept one connection and intentionally keep it open so the client
+        // must hit its configured timeout.
+        let _accept = tokio::spawn(async move {
+            let _ = listener.accept().await;
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        });
+
+        let mut api = ApiConfig::default();
+        api.base_url = format!("http://{addr}");
+        api.api_key = "test-key".to_string();
+        api.model = "dummy-model".to_string();
+        api.protocol = ApiProtocol::Completions;
+
+        let client = ApiClient::new(&api, Duration::from_millis(50));
+        let request = ChatRequest {
+            model: api.model.clone(),
+            messages: vec![Message::user("hello")],
+            tools: None,
+            temperature: None,
+            top_p: None,
+        };
+        let err = client.chat(&request).await.expect_err("timeout expected");
+        match err {
+            ApiError::Http(inner) => {
+                assert!(inner.is_timeout(), "unexpected error: {inner}");
+            }
+            other => panic!("expected timeout Http error, got: {other}"),
         }
     }
 }

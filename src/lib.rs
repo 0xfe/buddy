@@ -27,7 +27,11 @@ pub mod config;
 pub mod error;
 pub mod prompt;
 pub mod render;
+pub mod runtime;
 pub mod session;
+#[cfg(test)]
+pub mod testsupport;
+pub mod textutil;
 pub mod tokens;
 pub mod tools;
 pub mod tui;

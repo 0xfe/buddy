@@ -21,6 +21,8 @@ const DEFAULT_BUDDY_CONFIG_TEMPLATE: &str = include_str!("templates/buddy.toml")
 const DEFAULT_MODEL_PROFILE_NAME: &str = "gpt-codex";
 const DEFAULT_MODEL_ID: &str = "gpt-5.3-codex";
 const DEFAULT_API_BASE_URL: &str = "https://api.openai.com/v1";
+const DEFAULT_API_TIMEOUT_SECS: u64 = 120;
+const DEFAULT_FETCH_TIMEOUT_SECS: u64 = 20;
 
 /// Provider wire protocol for model requests.
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
@@ -53,6 +55,7 @@ pub struct Config {
     pub models: BTreeMap<String, ModelConfig>,
     pub agent: AgentConfig,
     pub tools: ToolsConfig,
+    pub network: NetworkConfig,
     pub display: DisplayConfig,
 }
 
@@ -69,6 +72,7 @@ impl Default for Config {
             models,
             agent,
             tools: ToolsConfig::default(),
+            network: NetworkConfig::default(),
             display: DisplayConfig::default(),
         }
     }
@@ -219,6 +223,25 @@ impl Default for DisplayConfig {
     }
 }
 
+/// Network/HTTP timeout policy.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct NetworkConfig {
+    /// Default timeout for model API requests.
+    pub api_timeout_secs: u64,
+    /// Timeout for `fetch_url` tool requests.
+    pub fetch_timeout_secs: u64,
+}
+
+impl Default for NetworkConfig {
+    fn default() -> Self {
+        Self {
+            api_timeout_secs: DEFAULT_API_TIMEOUT_SECS,
+            fetch_timeout_secs: DEFAULT_FETCH_TIMEOUT_SECS,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 struct FileConfig {
@@ -228,6 +251,7 @@ struct FileConfig {
     api: Option<LegacyApiConfig>,
     agent: AgentConfig,
     tools: ToolsConfig,
+    network: NetworkConfig,
     display: DisplayConfig,
 }
 
@@ -327,6 +351,7 @@ pub fn load_config(path_override: Option<&str>) -> Result<Config, ConfigError> {
         models: parsed.models,
         agent: parsed.agent,
         tools: parsed.tools,
+        network: parsed.network,
         display: parsed.display,
     };
 
@@ -350,6 +375,26 @@ pub fn load_config(path_override: Option<&str>) -> Result<Config, ConfigError> {
     }
     if let Ok(model) = std::env::var("BUDDY_MODEL").or_else(|_| std::env::var("AGENT_MODEL")) {
         config.api.model = model;
+    }
+    if let Ok(timeout) =
+        std::env::var("BUDDY_API_TIMEOUT_SECS").or_else(|_| std::env::var("AGENT_API_TIMEOUT_SECS"))
+    {
+        let parsed = timeout.parse::<u64>().map_err(|_| {
+            ConfigError::Invalid(format!(
+                "invalid BUDDY_API_TIMEOUT_SECS value `{timeout}`: expected positive integer seconds"
+            ))
+        })?;
+        config.network.api_timeout_secs = parsed.max(1);
+    }
+    if let Ok(timeout) = std::env::var("BUDDY_FETCH_TIMEOUT_SECS")
+        .or_else(|_| std::env::var("AGENT_FETCH_TIMEOUT_SECS"))
+    {
+        let parsed = timeout.parse::<u64>().map_err(|_| {
+            ConfigError::Invalid(format!(
+                "invalid BUDDY_FETCH_TIMEOUT_SECS value `{timeout}`: expected positive integer seconds"
+            ))
+        })?;
+        config.network.fetch_timeout_secs = parsed.max(1);
     }
 
     Ok(config)
@@ -713,6 +758,8 @@ mod tests {
         assert!(c.models.contains_key("openrouter-deepseek"));
         assert!(c.models.contains_key("openrouter-glm"));
         assert!(c.models.contains_key("kimi"));
+        assert_eq!(c.network.api_timeout_secs, DEFAULT_API_TIMEOUT_SECS);
+        assert_eq!(c.network.fetch_timeout_secs, DEFAULT_FETCH_TIMEOUT_SECS);
     }
 
     #[test]
@@ -734,6 +781,18 @@ mod tests {
         assert_eq!(c.api.base_url, "https://api.moonshot.ai/v1");
         assert!(!c.tools.shell_confirm);
         assert!(c.display.color);
+    }
+
+    #[test]
+    fn parse_network_timeouts() {
+        let toml = r#"
+            [network]
+            api_timeout_secs = 45
+            fetch_timeout_secs = 12
+        "#;
+        let c = parse_file_config_for_test(toml).unwrap();
+        assert_eq!(c.network.api_timeout_secs, 45);
+        assert_eq!(c.network.fetch_timeout_secs, 12);
     }
 
     #[test]
@@ -1028,6 +1087,7 @@ mod tests {
             models: parsed.models,
             agent: parsed.agent,
             tools: parsed.tools,
+            network: parsed.network,
             display: parsed.display,
         })
     }
