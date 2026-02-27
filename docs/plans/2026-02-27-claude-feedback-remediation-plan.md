@@ -3,7 +3,7 @@
 ## Status
 
 - Program status: Active (integrated with `docs/plans/2026-02-27-streaming-runtime-architecture.md`)
-- Current focus: execute Milestone 3+ correctness items while tracking streaming/runtime `S3` and `S4`.
+- Current focus: complete streaming/runtime milestones `S3` and `S4` now that Milestone 3 correctness fixes are in.
 - Completed so far:
   1. Streaming/runtime `S0` complete (typed runtime command/event schema).
   2. Streaming/runtime `S1` complete (agent emits runtime events with mockable model client interface).
@@ -15,17 +15,18 @@
   8. Remediation Milestone 1 `S3` landed (write-file path controls).
   9. Remediation Milestone 1 `S1` landed (shell denylist + non-interactive exec fail-closed behavior).
   10. Remediation Milestone 2 `S4` landed (machine-derived encrypted auth storage + migration + login check/reset flow).
+  11. Remediation Milestone 3 landed (SSE parser hardening, transient retry/backoff, shared HTTP client reuse, and protocol diagnostics).
 - Next steps:
-  1. Keep Milestones 5/6 checkpoints synchronized with streaming `S3`-`S4`.
-  2. Start Milestone 3 API correctness/retry/parser hardening slices.
-  3. Continue Milestone 6 UX work once runtime `S3` event streaming is in place.
+  1. Land streaming/runtime `S3` (`ToolContext` + streamed shell events).
+  2. Land streaming/runtime `S4` (event-renderer boundary + alternate frontend example parity).
+  3. Continue Milestone 6 UX work once runtime `S3`/`S4` rendering is stabilized.
 
 ## Integrated Program Board
 
 - [x] Milestone 0: Baseline, Repro Harness, and Safety Net
 - [x] Milestone 1: Immediate Security + Crash/Hang Fixes (P1)
 - [x] Milestone 2: Auth and Credential Hardening (P1/P2)
-- [ ] Milestone 3: API Correctness and Robustness (P2)
+- [x] Milestone 3: API Correctness and Robustness (P2)
 - [ ] Milestone 4: Conversation Safety and Session Robustness (P2)
 - [ ] Milestone 5: Testability and Modularization (P2/P3) - in progress via streaming runtime milestones
 - [ ] Milestone 6: UX Improvements (P3) - in progress via streaming runtime milestones
@@ -465,3 +466,9 @@ Address lower-priority architecture items after stabilization (`D1`, `D2`, `D3`,
   - Added auth storage docs (`docs/auth-storage.md`) and auth regression tests.
   - Validation: `cargo test` passed.
   - commit: `84724e3`
+- 2026-02-27: Completed Milestone 3 (API correctness/robustness):
+  - Replaced line-based Responses SSE parsing with event-block parsing that honors multiline `data:` payloads and comments.
+  - Added transient retry/backoff policy in `ApiClient` (429/5xx/timeouts/connectivity) with `Retry-After` support and protocol mismatch hints on 404s.
+  - Added shared HTTP client reuse for auth flows and web search tool executions.
+  - Validation: `cargo test` passed; `cargo test --test model_regression -- --ignored --nocapture` ran and failed only for missing `MOONSHOT_API_KEY` on `kimi` profile.
+  - commit: `e4cf33c`

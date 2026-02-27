@@ -447,3 +447,7 @@ Commit:
   - Added runtime approval command regression test and runtime-context metric emission.
   - Validation: `cargo test` passed.
   - commit: `84724e3`
+- 2026-02-27: Parallel remediation Milestone 3 completed before `S3` start:
+  - Landed SSE parser hardening, transient API retry/backoff with `Retry-After`, and shared auth/search HTTP client reuse.
+  - Validation: `cargo test` passed; model regression suite executed with one expected missing-key failure for `kimi` (`MOONSHOT_API_KEY` not set).
+  - commit: `e4cf33c`
