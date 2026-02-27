@@ -7,8 +7,8 @@
 
 use crate::agent::Agent;
 use crate::agent::AgentUiEvent;
-use crate::auth::{load_provider_tokens, login_provider_key_for_base_url, supports_openai_login};
-use crate::config::{select_model_profile, Config};
+use crate::config::{select_model_profile, ApiProtocol, AuthMode, Config};
+use crate::preflight::validate_active_profile_ready;
 use crate::session::SessionStore;
 use crate::textutil::truncate_with_suffix_by_chars;
 use crate::tools::shell::ShellApprovalRequest;
@@ -197,6 +197,8 @@ pub enum ModelEvent {
         profile: String,
         model: String,
         base_url: String,
+        api: ApiProtocol,
+        auth: AuthMode,
     },
     RequestStarted {
         task: TaskRef,
@@ -674,6 +676,8 @@ async fn handle_runtime_command(
                 return false;
             }
 
+            let previous_protocol = state.config.api.protocol;
+            let previous_auth = state.config.api.auth;
             let mut next = state.config.clone();
             if let Err(err) = select_model_profile(&mut next, &profile) {
                 emit_event(
@@ -686,7 +690,7 @@ async fn handle_runtime_command(
                 );
                 return false;
             }
-            if let Err(err) = ensure_active_auth_ready(&next) {
+            if let Err(err) = validate_active_profile_ready(&next) {
                 emit_event(
                     event_tx,
                     seq,
@@ -704,6 +708,21 @@ async fn handle_runtime_command(
                 guard.switch_api_config(next.api.clone());
             }
 
+            if previous_protocol != next.api.protocol || previous_auth != next.api.auth {
+                emit_event(
+                    event_tx,
+                    seq,
+                    RuntimeEvent::Warning(WarningEvent {
+                        task: None,
+                        message: format!(
+                            "model switch changed API mode: {} -> {}. Existing history is preserved; if behavior looks inconsistent, run `/session new`.",
+                            api_mode_label(previous_protocol, previous_auth),
+                            api_mode_label(next.api.protocol, next.api.auth)
+                        ),
+                    }),
+                );
+            }
+
             emit_event(
                 event_tx,
                 seq,
@@ -711,6 +730,8 @@ async fn handle_runtime_command(
                     profile: next.api.profile.clone(),
                     model: next.api.model.clone(),
                     base_url: next.api.base_url.clone(),
+                    api: next.api.protocol,
+                    auth: next.api.auth,
                 }),
             );
         }
@@ -1142,35 +1163,8 @@ fn truncate_preview(text: &str, max_len: usize) -> String {
     truncate_with_suffix_by_chars(&flat, max_len, "...")
 }
 
-fn ensure_active_auth_ready(config: &Config) -> Result<(), String> {
-    if !config.api.uses_login() {
-        return Ok(());
-    }
-    if !supports_openai_login(&config.api.base_url) {
-        return Err(format!(
-            "profile `{}` uses `auth = \"login\"`, but base URL `{}` is not an OpenAI login endpoint",
-            config.api.profile, config.api.base_url
-        ));
-    }
-
-    let Some(provider) = login_provider_key_for_base_url(&config.api.base_url) else {
-        return Err(format!(
-            "profile `{}` uses `auth = \"login\"`, but provider for base URL `{}` is unsupported",
-            config.api.profile, config.api.base_url
-        ));
-    };
-
-    match load_provider_tokens(provider) {
-        Ok(Some(_)) => Ok(()),
-        Ok(None) => Err(format!(
-            "provider `{}` requires login auth, but no saved login was found. Run `buddy login`.",
-            provider
-        )),
-        Err(err) => Err(format!(
-            "failed to load login credentials for provider `{}`: {err}",
-            provider
-        )),
-    }
+fn api_mode_label(protocol: ApiProtocol, auth: AuthMode) -> String {
+    format!("{protocol:?}/{auth:?}").to_ascii_lowercase()
 }
 
 fn now_unix_millis() -> u64 {
@@ -1184,7 +1178,7 @@ fn now_unix_millis() -> u64 {
 mod tests {
     use super::*;
     use crate::api::ModelClient;
-    use crate::config::Config;
+    use crate::config::{ApiProtocol, AuthMode, Config};
     use crate::error::ApiError;
     use crate::tools::shell::ShellApprovalBroker;
     use crate::types::{ChatRequest, ChatResponse, Choice, Message, Role, Usage};
@@ -1596,13 +1590,28 @@ mod tests {
             .await
             .expect("send switch");
 
-        let event = recv_event(&mut events).await;
-        match event {
-            RuntimeEvent::Model(ModelEvent::ProfileSwitched { profile, .. }) => {
-                assert_eq!(profile, "openrouter-deepseek");
+        let mut saw_switch = false;
+        let mut saw_mode_warning = false;
+        for _ in 0..2 {
+            match recv_event(&mut events).await {
+                RuntimeEvent::Model(ModelEvent::ProfileSwitched {
+                    profile, api, auth, ..
+                }) => {
+                    assert_eq!(profile, "openrouter-deepseek");
+                    assert_eq!(api, ApiProtocol::Completions);
+                    assert_eq!(auth, AuthMode::ApiKey);
+                    saw_switch = true;
+                }
+                RuntimeEvent::Warning(WarningEvent { message, .. }) => {
+                    if message.contains("model switch changed API mode") {
+                        saw_mode_warning = true;
+                    }
+                }
+                other => panic!("unexpected event: {other:?}"),
             }
-            other => panic!("unexpected event: {other:?}"),
         }
+        assert!(saw_switch, "missing switched-profile event");
+        assert!(saw_mode_warning, "missing mode-switch warning");
     }
 
     #[tokio::test]

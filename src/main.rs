@@ -5,7 +5,7 @@ mod cli_event_renderer;
 
 use buddy::agent::Agent;
 use buddy::auth::{
-    complete_openai_device_login, load_provider_tokens, login_provider_key_for_base_url,
+    complete_openai_device_login, login_provider_key_for_base_url,
     provider_login_health, reset_provider_tokens, save_provider_tokens, start_openai_device_login,
     supports_openai_login, try_open_browser,
 };
@@ -14,6 +14,7 @@ use buddy::config::initialize_default_global_config;
 use buddy::config::load_config;
 use buddy::config::select_model_profile;
 use buddy::config::{AuthMode, Config, GlobalConfigInitResult, ToolsConfig};
+use buddy::preflight::validate_active_profile_ready;
 use buddy::prompt::{render_system_prompt, ExecutionTarget, SystemPromptParams};
 use buddy::render::Renderer;
 use buddy::runtime::{
@@ -144,7 +145,7 @@ async fn main() {
         std::process::exit(1);
     }
 
-    if let Err(msg) = ensure_active_auth_ready(&config) {
+    if let Err(msg) = validate_active_profile_ready(&config) {
         renderer.error(&msg);
         std::process::exit(1);
     }
@@ -1094,37 +1095,6 @@ fn normalize_model_selector(selector: &str) -> &str {
         return parts.next().unwrap_or("");
     }
     trimmed
-}
-
-fn ensure_active_auth_ready(config: &Config) -> Result<(), String> {
-    if !config.api.uses_login() {
-        return Ok(());
-    }
-    if !supports_openai_login(&config.api.base_url) {
-        return Err(format!(
-            "profile `{}` uses `auth = \"login\"`, but base URL `{}` is not an OpenAI login endpoint",
-            config.api.profile, config.api.base_url
-        ));
-    }
-
-    let Some(provider) = login_provider_key_for_base_url(&config.api.base_url) else {
-        return Err(format!(
-            "profile `{}` uses `auth = \"login\"`, but provider for base URL `{}` is unsupported",
-            config.api.profile, config.api.base_url
-        ));
-    };
-
-    match load_provider_tokens(provider) {
-        Ok(Some(_)) => Ok(()),
-        Ok(None) => Err(format!(
-            "provider `{}` requires login auth, but no saved login was found. Run `buddy login` (or `/login` inside REPL).",
-            provider
-        )),
-        Err(err) => Err(format!(
-            "failed to load login credentials for provider `{}`: {err}",
-            provider
-        )),
-    }
 }
 
 async fn run_login_flow(
@@ -2251,26 +2221,6 @@ fn truncate_preview(text: &str, max_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use buddy::config::ApiProtocol;
-
-    #[test]
-    fn ensure_active_auth_ready_skips_api_key_mode() {
-        let mut cfg = Config::default();
-        cfg.api.auth = AuthMode::ApiKey;
-        cfg.api.api_key = "sk-test".to_string();
-        assert!(ensure_active_auth_ready(&cfg).is_ok());
-    }
-
-    #[test]
-    fn ensure_active_auth_ready_rejects_non_openai_login_endpoint() {
-        let mut cfg = Config::default();
-        cfg.api.auth = AuthMode::Login;
-        cfg.api.protocol = ApiProtocol::Responses;
-        cfg.api.api_key.clear();
-        cfg.api.base_url = "https://openrouter.ai/api/v1".to_string();
-        let err = ensure_active_auth_ready(&cfg).unwrap_err();
-        assert!(err.contains("not an OpenAI login endpoint"));
-    }
 
     #[test]
     fn exec_shell_guardrails_fail_closed_without_override() {

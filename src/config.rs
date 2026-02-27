@@ -10,7 +10,7 @@
 //! 5. Built-in defaults
 
 use crate::error::ConfigError;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -25,7 +25,7 @@ const DEFAULT_API_TIMEOUT_SECS: u64 = 120;
 const DEFAULT_FETCH_TIMEOUT_SECS: u64 = 20;
 
 /// Provider wire protocol for model requests.
-#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ApiProtocol {
     #[default]
@@ -34,7 +34,7 @@ pub enum ApiProtocol {
 }
 
 /// Authentication mode for a model profile.
-#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum AuthMode {
     #[default]

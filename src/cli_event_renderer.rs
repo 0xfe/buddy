@@ -184,6 +184,8 @@ pub(crate) fn process_runtime_events(
                     profile,
                     model,
                     base_url,
+                    api,
+                    auth,
                 } => {
                     if let Err(err) = select_model_profile(ctx.config, &profile) {
                         ctx.renderer.warn(&format!(
@@ -194,6 +196,10 @@ pub(crate) fn process_runtime_events(
                         .section(&format!("switched model profile: {profile}"));
                     ctx.renderer.field("model", &model);
                     ctx.renderer.field("base_url", &base_url);
+                    ctx.renderer
+                        .field("api", &format!("{api:?}").to_ascii_lowercase());
+                    ctx.renderer
+                        .field("auth", &format!("{auth:?}").to_ascii_lowercase());
                     ctx.renderer.field(
                         "context_limit",
                         &ctx.config
