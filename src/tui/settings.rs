@@ -161,6 +161,11 @@ pub const COLOR_SNIPPET_ASSISTANT_BG: Color = Color::Rgb {
 };
 pub const COLOR_SNIPPET_ASSISTANT_TEXT: Color = Color::White;
 pub const COLOR_SNIPPET_TRUNCATED: Color = Color::Grey;
+pub const RGB_SNIPPET_ASSISTANT_TEXT: (u8, u8, u8) = (242, 248, 244);
+pub const RGB_SNIPPET_ASSISTANT_MD_HEADING: (u8, u8, u8) = (210, 236, 190);
+pub const RGB_SNIPPET_ASSISTANT_MD_MARKER: (u8, u8, u8) = (166, 206, 172);
+pub const RGB_SNIPPET_ASSISTANT_MD_QUOTE: (u8, u8, u8) = (184, 210, 196);
+pub const RGB_SNIPPET_ASSISTANT_MD_CODE: (u8, u8, u8) = (238, 224, 188);
 
 // ---------------------------------------------------------------------------
 // Small helpers

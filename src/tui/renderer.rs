@@ -480,6 +480,12 @@ impl Renderer {
                     continue;
                 }
             }
+            if spec.tone == SnippetTone::Assistant {
+                if let Some(tokens) = style_assistant_markdown_line(line) {
+                    rows.extend(split_highlighted_line(&tokens, block_width, spec.wrap_mode));
+                    continue;
+                }
+            }
             rows.extend(split_plain_line(line, block_width, spec.wrap_mode));
         }
 
@@ -647,6 +653,194 @@ fn split_plain_line(line: &str, width: usize, wrap_mode: BlockWrapMode) -> Vec<R
     }
 }
 
+fn style_assistant_markdown_line(line: &str) -> Option<Vec<StyledToken>> {
+    if line.trim().is_empty() {
+        return None;
+    }
+
+    let indent_chars = line.chars().take_while(|ch| ch.is_whitespace()).count();
+    let indent_end = line
+        .char_indices()
+        .nth(indent_chars)
+        .map(|(idx, _)| idx)
+        .unwrap_or(line.len());
+    let indent = &line[..indent_end];
+    let trimmed = &line[indent_end..];
+
+    let mut tokens = Vec::new();
+    if !indent.is_empty() {
+        tokens.push(styled_token(
+            indent,
+            settings::RGB_SNIPPET_ASSISTANT_TEXT,
+            false,
+            false,
+            false,
+        ));
+    }
+
+    if trimmed.starts_with("```") {
+        tokens.push(styled_token(
+            trimmed,
+            settings::RGB_SNIPPET_ASSISTANT_MD_CODE,
+            false,
+            false,
+            false,
+        ));
+        return Some(tokens);
+    }
+
+    if is_markdown_heading(trimmed) {
+        tokens.push(styled_token(
+            trimmed,
+            settings::RGB_SNIPPET_ASSISTANT_MD_HEADING,
+            true,
+            false,
+            false,
+        ));
+        return Some(tokens);
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("> ") {
+        tokens.push(styled_token(
+            "> ",
+            settings::RGB_SNIPPET_ASSISTANT_MD_MARKER,
+            true,
+            false,
+            false,
+        ));
+        tokens.extend(style_inline_code(
+            rest,
+            settings::RGB_SNIPPET_ASSISTANT_MD_QUOTE,
+        ));
+        return Some(tokens);
+    }
+
+    if let Some(rest) = trimmed
+        .strip_prefix("- ")
+        .or_else(|| trimmed.strip_prefix("* "))
+    {
+        tokens.push(styled_token(
+            &trimmed[..2],
+            settings::RGB_SNIPPET_ASSISTANT_MD_MARKER,
+            true,
+            false,
+            false,
+        ));
+        tokens.extend(style_inline_code(
+            rest,
+            settings::RGB_SNIPPET_ASSISTANT_TEXT,
+        ));
+        return Some(tokens);
+    }
+
+    if let Some((prefix, rest)) = split_ordered_list_prefix(trimmed) {
+        tokens.push(styled_token(
+            prefix,
+            settings::RGB_SNIPPET_ASSISTANT_MD_MARKER,
+            true,
+            false,
+            false,
+        ));
+        tokens.extend(style_inline_code(
+            rest,
+            settings::RGB_SNIPPET_ASSISTANT_TEXT,
+        ));
+        return Some(tokens);
+    }
+
+    if trimmed.contains('`') {
+        tokens.extend(style_inline_code(
+            trimmed,
+            settings::RGB_SNIPPET_ASSISTANT_TEXT,
+        ));
+        return Some(tokens);
+    }
+
+    None
+}
+
+fn split_ordered_list_prefix(line: &str) -> Option<(&str, &str)> {
+    let digit_chars = line.chars().take_while(|ch| ch.is_ascii_digit()).count();
+    if digit_chars == 0 {
+        return None;
+    }
+
+    let digit_end = line
+        .char_indices()
+        .nth(digit_chars)
+        .map(|(idx, _)| idx)
+        .unwrap_or(line.len());
+    let after_digits = &line[digit_end..];
+    let rest = after_digits.strip_prefix(". ")?;
+    let prefix = &line[..digit_end + 2];
+    Some((prefix, rest))
+}
+
+fn is_markdown_heading(line: &str) -> bool {
+    let hash_chars = line.chars().take_while(|ch| *ch == '#').count();
+    if hash_chars == 0 {
+        return false;
+    }
+    line.chars().nth(hash_chars) == Some(' ')
+}
+
+fn style_inline_code(line: &str, base_rgb: (u8, u8, u8)) -> Vec<StyledToken> {
+    let mut tokens = Vec::new();
+    let mut in_code = false;
+    let mut current = String::new();
+
+    let flush_current = |tokens: &mut Vec<StyledToken>, current: &mut String, in_code: bool| {
+        if current.is_empty() {
+            return;
+        }
+        let rgb = if in_code {
+            settings::RGB_SNIPPET_ASSISTANT_MD_CODE
+        } else {
+            base_rgb
+        };
+        tokens.push(styled_token(current.as_str(), rgb, false, false, false));
+        current.clear();
+    };
+
+    for ch in line.chars() {
+        if ch == '`' {
+            flush_current(&mut tokens, &mut current, in_code);
+            tokens.push(styled_token(
+                "`",
+                settings::RGB_SNIPPET_ASSISTANT_MD_CODE,
+                false,
+                false,
+                false,
+            ));
+            in_code = !in_code;
+            continue;
+        }
+        current.push(ch);
+    }
+    flush_current(&mut tokens, &mut current, in_code);
+
+    if tokens.is_empty() {
+        tokens.push(styled_token(line, base_rgb, false, false, false));
+    }
+    tokens
+}
+
+fn styled_token(
+    text: impl Into<String>,
+    rgb: (u8, u8, u8),
+    bold: bool,
+    italic: bool,
+    underline: bool,
+) -> StyledToken {
+    StyledToken {
+        text: text.into(),
+        rgb,
+        bold,
+        italic,
+        underline,
+    }
+}
+
 fn split_highlighted_line(
     tokens: &[StyledToken],
     width: usize,
@@ -718,5 +912,37 @@ fn mark_stream_nonblank(target: BlockTarget) {
 fn mark_stream_blank(target: BlockTarget) {
     if let Ok(mut state) = spacing_state().lock() {
         state.set_blank(target, true);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn assistant_heading_line_gets_heading_style() {
+        let tokens = style_assistant_markdown_line("## Heading").expect("styled");
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].text, "## Heading");
+        assert!(tokens[0].bold);
+        assert_eq!(tokens[0].rgb, settings::RGB_SNIPPET_ASSISTANT_MD_HEADING);
+    }
+
+    #[test]
+    fn assistant_plain_line_has_no_extra_style() {
+        assert!(style_assistant_markdown_line("plain sentence").is_none());
+    }
+
+    #[test]
+    fn assistant_inline_code_preserves_text_and_styles_code_segments() {
+        let tokens = style_assistant_markdown_line("Use `ls -la` now").expect("styled");
+        let rendered = tokens
+            .iter()
+            .map(|token| token.text.as_str())
+            .collect::<String>();
+        assert_eq!(rendered, "Use `ls -la` now");
+        assert!(tokens
+            .iter()
+            .any(|token| token.rgb == settings::RGB_SNIPPET_ASSISTANT_MD_CODE));
     }
 }
