@@ -79,3 +79,4 @@ fetch_timeout_secs = 20
 color = true
 show_tokens = false
 show_tool_calls = true
+persist_history = true                     # save REPL input history to ~/.config/buddy/history

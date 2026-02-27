@@ -1,6 +1,9 @@
 //! Editable input buffer and history helpers.
 
 use crate::tui::prompt::PromptMode;
+use std::fs;
+use std::io;
+use std::path::Path;
 
 const MAX_HISTORY: usize = 1000;
 
@@ -42,6 +45,50 @@ impl ReplState {
             let overflow = self.history.len() - MAX_HISTORY;
             self.history.drain(0..overflow);
         }
+    }
+
+    /// Load persisted history entries from disk.
+    ///
+    /// Supports both JSON array (`["cmd1", "cmd2"]`) and legacy line-based
+    /// text files. Unknown/empty entries are ignored.
+    pub fn load_history_file(&mut self, path: &Path) -> io::Result<()> {
+        if !path.exists() {
+            return Ok(());
+        }
+
+        let raw = fs::read_to_string(path)?;
+        self.history.clear();
+
+        if raw.trim().is_empty() {
+            return Ok(());
+        }
+
+        if let Ok(entries) = serde_json::from_str::<Vec<String>>(&raw) {
+            for entry in entries {
+                self.push_history(&entry);
+            }
+            return Ok(());
+        }
+
+        // Backward/robust fallback for plain text history files.
+        for line in raw.lines() {
+            self.push_history(line);
+        }
+        Ok(())
+    }
+
+    /// Persist history entries to disk as a compact JSON array.
+    pub fn save_history_file(&self, path: &Path) -> io::Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let encoded = serde_json::to_string(&self.history).map_err(|err| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("failed to encode history: {err}"),
+            )
+        })?;
+        fs::write(path, format!("{encoded}\n"))
     }
 
     /// Return the saved draft for this prompt mode, if one exists.
@@ -259,6 +306,50 @@ mod tests {
         state.push_history("two");
         state.push_history("two");
         assert_eq!(state.history(), &["one".to_string(), "two".to_string()]);
+    }
+
+    #[test]
+    fn history_persistence_round_trip_json() {
+        let temp = std::env::temp_dir().join(format!(
+            "buddy-repl-history-{}.json",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&temp);
+
+        let mut state = ReplState::default();
+        state.push_history("one");
+        state.push_history("two");
+        state.save_history_file(&temp).expect("save history");
+
+        let mut restored = ReplState::default();
+        restored.load_history_file(&temp).expect("load history");
+        assert_eq!(
+            restored.history(),
+            &["one".to_string(), "two".to_string()],
+            "restored history should match saved entries"
+        );
+
+        let _ = std::fs::remove_file(&temp);
+    }
+
+    #[test]
+    fn history_loader_supports_line_fallback() {
+        let temp = std::env::temp_dir().join(format!(
+            "buddy-repl-history-lines-{}.txt",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&temp);
+        std::fs::write(&temp, "alpha\nbeta\n").expect("write fallback history");
+
+        let mut restored = ReplState::default();
+        restored.load_history_file(&temp).expect("load history");
+        assert_eq!(
+            restored.history(),
+            &["alpha".to_string(), "beta".to_string()],
+            "line fallback should parse entries"
+        );
+
+        let _ = std::fs::remove_file(&temp);
     }
 
     #[test]

@@ -10,6 +10,7 @@ use buddy::auth::{
     supports_openai_login, try_open_browser,
 };
 use buddy::config::ensure_default_global_config;
+use buddy::config::default_history_path;
 use buddy::config::initialize_default_global_config;
 use buddy::config::load_config;
 use buddy::config::select_model_profile;
@@ -361,6 +362,19 @@ async fn main() {
         );
 
         let mut repl_state = repl::ReplState::default();
+        let history_path = if config.display.persist_history {
+            default_history_path()
+        } else {
+            None
+        };
+        if let Some(path) = history_path.as_ref() {
+            if let Err(err) = repl_state.load_history_file(path) {
+                renderer.warn(&format!(
+                    "failed to load command history from {}: {err}",
+                    path.display()
+                ));
+            }
+        }
         let agent = Arc::new(Mutex::new(agent));
         let (runtime, mut runtime_events) = spawn_runtime_with_shared_agent(
             Arc::clone(&agent),
@@ -819,6 +833,14 @@ async fn main() {
                 .await
             {
                 renderer.error(&format!("failed to start background task: {err}"));
+            }
+        }
+        if let Some(path) = history_path.as_ref() {
+            if let Err(err) = repl_state.save_history_file(path) {
+                renderer.warn(&format!(
+                    "failed to save command history to {}: {err}",
+                    path.display()
+                ));
             }
         }
         let _ = runtime.send(RuntimeCommand::Shutdown).await;

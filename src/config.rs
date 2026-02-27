@@ -234,6 +234,8 @@ pub struct DisplayConfig {
     pub color: bool,
     pub show_tokens: bool,
     pub show_tool_calls: bool,
+    /// Persist REPL input history under `~/.config/buddy/history`.
+    pub persist_history: bool,
 }
 
 impl Default for DisplayConfig {
@@ -242,6 +244,7 @@ impl Default for DisplayConfig {
             color: true,
             show_tokens: false,
             show_tool_calls: true,
+            persist_history: true,
         }
     }
 }
@@ -426,6 +429,11 @@ pub fn load_config(path_override: Option<&str>) -> Result<Config, ConfigError> {
 /// Return the default per-user config path (`~/.config/buddy/buddy.toml`).
 pub fn default_global_config_path() -> Option<PathBuf> {
     config_root_dir().map(|dir| dir.join("buddy").join("buddy.toml"))
+}
+
+/// Return the default REPL history path (`~/.config/buddy/history`).
+pub fn default_history_path() -> Option<PathBuf> {
+    config_root_dir().map(|dir| dir.join("buddy").join("history"))
 }
 
 /// Result of explicit global config initialization (`buddy init`).
@@ -776,6 +784,7 @@ mod tests {
         assert_eq!(c.agent.max_iterations, 20);
         assert!(c.tools.shell_enabled);
         assert!(c.display.color);
+        assert!(c.display.persist_history);
         assert!(c.models.contains_key("gpt-codex"));
         assert!(c.models.contains_key("gpt-spark"));
         assert!(c.models.contains_key("openrouter-deepseek"));
@@ -805,6 +814,7 @@ mod tests {
         assert_eq!(c.api.base_url, "https://api.moonshot.ai/v1");
         assert!(!c.tools.shell_confirm);
         assert!(c.display.color);
+        assert!(c.display.persist_history);
     }
 
     #[test]
