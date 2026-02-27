@@ -72,7 +72,11 @@ pub enum ApiError {
     /// Network / reqwest-level error.
     Http(reqwest::Error),
     /// Non-2xx status from the API.
-    Status(u16, String),
+    Status {
+        code: u16,
+        body: String,
+        retry_after_secs: Option<u64>,
+    },
     /// Login-based auth is configured but no usable login exists.
     LoginRequired(String),
     /// Response body did not match the expected API shape.
@@ -83,7 +87,7 @@ impl fmt::Display for ApiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Http(e) => write!(f, "http: {e}"),
-            Self::Status(code, body) => write!(f, "status {code}: {body}"),
+            Self::Status { code, body, .. } => write!(f, "status {code}: {body}"),
             Self::LoginRequired(msg) => write!(f, "{msg}"),
             Self::InvalidResponse(msg) => write!(f, "invalid response: {msg}"),
         }
@@ -95,6 +99,35 @@ impl std::error::Error for ApiError {}
 impl From<reqwest::Error> for ApiError {
     fn from(e: reqwest::Error) -> Self {
         Self::Http(e)
+    }
+}
+
+impl ApiError {
+    /// Build a status error with optional Retry-After metadata.
+    pub fn status(code: u16, body: String, retry_after_secs: Option<u64>) -> Self {
+        Self::Status {
+            code,
+            body,
+            retry_after_secs,
+        }
+    }
+
+    /// Return the HTTP status code when this error came from a non-2xx response.
+    pub fn status_code(&self) -> Option<u16> {
+        match self {
+            Self::Status { code, .. } => Some(*code),
+            _ => None,
+        }
+    }
+
+    /// Return parsed Retry-After seconds for status errors when available.
+    pub fn retry_after_secs(&self) -> Option<u64> {
+        match self {
+            Self::Status {
+                retry_after_secs, ..
+            } => *retry_after_secs,
+            _ => None,
+        }
     }
 }
 

@@ -4,6 +4,7 @@ use crate::types::{
 };
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
+use crate::api::parse_retry_after_secs;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct ResponsesRequestOptions {
@@ -28,8 +29,9 @@ pub(crate) async fn request(
     let response = req.send().await?;
     if !response.status().is_success() {
         let status = response.status().as_u16();
+        let retry_after_secs = parse_retry_after_secs(response.headers());
         let body = response.text().await.unwrap_or_default();
-        return Err(ApiError::Status(status, body));
+        return Err(ApiError::status(status, body, retry_after_secs));
     }
 
     if options.stream {
@@ -262,16 +264,11 @@ fn parse_streaming_responses_payload(body: &str) -> Result<ChatResponse, ApiErro
     let mut reasoning_content_deltas = BTreeMap::<usize, String>::new();
     let mut reasoning_items = Vec::<Value>::new();
 
-    for line in trimmed.lines() {
-        let data = line.trim();
-        if !data.starts_with("data:") {
-            continue;
-        }
-        let event_payload = data.trim_start_matches("data:").trim();
+    for event_payload in parse_sse_event_payloads(trimmed) {
         if event_payload.is_empty() || event_payload == "[DONE]" {
             continue;
         }
-        let event: Value = serde_json::from_str(event_payload).map_err(|err| {
+        let event: Value = serde_json::from_str(&event_payload).map_err(|err| {
             ApiError::InvalidResponse(format!("invalid streaming event payload: {err}"))
         })?;
         match event
@@ -416,6 +413,45 @@ fn parse_streaming_responses_payload(body: &str) -> Result<ChatResponse, ApiErro
     Err(ApiError::InvalidResponse(
         "stream closed before response.completed".to_string(),
     ))
+}
+
+/// Parse an SSE stream into concatenated `data` payload blocks.
+///
+/// The SSE spec allows events to contain multiple `data:` lines; payload lines
+/// are joined with `\n` and finalized when a blank line is encountered.
+fn parse_sse_event_payloads(stream: &str) -> Vec<String> {
+    let mut payloads = Vec::new();
+    let mut data_lines = Vec::<String>::new();
+
+    let mut flush_event = |lines: &mut Vec<String>| {
+        if lines.is_empty() {
+            return;
+        }
+        payloads.push(lines.join("\n"));
+        lines.clear();
+    };
+
+    for raw_line in stream.lines() {
+        let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
+        if line.is_empty() {
+            flush_event(&mut data_lines);
+            continue;
+        }
+        if line.starts_with(':') {
+            continue;
+        }
+
+        let (field, value) = if let Some((field, value)) = line.split_once(':') {
+            (field, value.strip_prefix(' ').unwrap_or(value))
+        } else {
+            (line, "")
+        };
+        if field == "data" {
+            data_lines.push(value.to_string());
+        }
+    }
+    flush_event(&mut data_lines);
+    payloads
 }
 
 fn parse_output_message_text(item: &Value, out: &mut Vec<String>) {
@@ -669,6 +705,37 @@ mod tests {
         let parsed = parse_streaming_responses_payload(&sse).expect("parse");
         let msg = &parsed.choices[0].message;
         assert!(msg.extra.contains_key("reasoning"));
+    }
+
+    #[test]
+    fn parse_streaming_responses_payload_supports_multiline_sse_events() {
+        let sse = concat!(
+            ": keep-alive\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\n",
+            "data: \"delta\":\"hel\"}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_4\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hello\"}]}]}}\n\n",
+            "data: [DONE]\n\n"
+        );
+        let parsed = parse_streaming_responses_payload(sse).expect("parse");
+        assert_eq!(parsed.id, "resp_4");
+        assert_eq!(parsed.choices[0].message.content.as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn parse_sse_event_payloads_joins_data_lines_and_skips_comments() {
+        let payloads = parse_sse_event_payloads(
+            ": ping\n\
+             event: demo\n\
+             data: one\n\
+             data: two\n\
+             id: 1\n\
+             \n\
+             data: [DONE]\n\
+             \n",
+        );
+        assert_eq!(payloads, vec!["one\ntwo".to_string(), "[DONE]".to_string()]);
     }
 
     #[test]

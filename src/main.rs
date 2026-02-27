@@ -269,7 +269,9 @@ async fn main() {
         });
     }
     if config.tools.search_enabled {
-        tools.register(WebSearchTool);
+        tools.register(WebSearchTool::new(Duration::from_secs(
+            config.network.fetch_timeout_secs,
+        )));
     }
     tools.register(TimeTool);
 

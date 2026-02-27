@@ -19,6 +19,7 @@ clap = { version = "4", features = ["derive"] }
 crossterm = "0.28"
 dirs = "6"
 hostname = "0.4"
+httpdate = "1"
 rand = "0.8"
 reqwest = { version = "0.12", features = ["json"] }
 scrypt = "0.11"

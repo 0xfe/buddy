@@ -1,5 +1,6 @@
 use crate::error::ApiError;
 use crate::types::{ChatRequest, ChatResponse};
+use crate::api::parse_retry_after_secs;
 
 pub(crate) async fn request(
     http: &reqwest::Client,
@@ -16,8 +17,9 @@ pub(crate) async fn request(
     let response = req.send().await?;
     if !response.status().is_success() {
         let status = response.status().as_u16();
+        let retry_after_secs = parse_retry_after_secs(response.headers());
         let body = response.text().await.unwrap_or_default();
-        return Err(ApiError::Status(status, body));
+        return Err(ApiError::status(status, body, retry_after_secs));
     }
 
     response

@@ -5,6 +5,7 @@
 
 use async_trait::async_trait;
 use serde::Deserialize;
+use std::time::Duration;
 
 use super::Tool;
 use crate::error::ToolError;
@@ -14,7 +15,27 @@ use crate::types::{FunctionDefinition, ToolDefinition};
 const MAX_RESULTS: usize = 8;
 
 /// Tool that searches the web via DuckDuckGo.
-pub struct WebSearchTool;
+pub struct WebSearchTool {
+    http: reqwest::Client,
+}
+
+impl WebSearchTool {
+    /// Build a search tool with a reusable HTTP client.
+    pub fn new(timeout: Duration) -> Self {
+        let http = reqwest::Client::builder()
+            .timeout(timeout)
+            .user_agent("Mozilla/5.0 (compatible; buddy/0.1)")
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        Self { http }
+    }
+}
+
+impl Default for WebSearchTool {
+    fn default() -> Self {
+        Self::new(Duration::from_secs(15))
+    }
+}
 
 #[derive(Deserialize)]
 struct Args {
@@ -56,12 +77,8 @@ impl Tool for WebSearchTool {
             urlencoded(&args.query)
         );
 
-        let client = reqwest::Client::builder()
-            .user_agent("Mozilla/5.0 (compatible; buddy/0.1)")
-            .build()
-            .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
-
-        let html = client
+        let html = self
+            .http
             .get(&url)
             .send()
             .await
@@ -369,6 +386,6 @@ mod tests {
 
     #[test]
     fn web_search_tool_name() {
-        assert_eq!(WebSearchTool.name(), "web_search");
+        assert_eq!(WebSearchTool::default().name(), "web_search");
     }
 }

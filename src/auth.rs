@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use sha2::{Digest, Sha256};
 
@@ -32,6 +33,7 @@ const AUTH_STORE_SALT_LEN: usize = 16;
 const AUTH_STORE_NONCE_LEN: usize = 12;
 const AUTH_STORE_KEY_LEN: usize = 32;
 const AUTH_MACHINE_KEY_CONTEXT: &str = "buddy-auth-machine-kek-v1";
+const AUTH_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Errors surfaced by the login/auth subsystem.
 #[derive(Debug)]
@@ -310,7 +312,7 @@ fn resolve_legacy_profile_tokens(store: &AuthStore, provider: &str) -> Option<OA
 
 /// Begin the OpenAI device-code login flow.
 pub async fn start_openai_device_login() -> Result<OpenAiDeviceLogin, AuthError> {
-    let client = reqwest::Client::new();
+    let client = shared_auth_http_client();
     let response = client
         .post(format!("{OPENAI_ACCOUNTS_API_BASE}/deviceauth/usercode"))
         .header("Content-Type", "application/json")
@@ -338,13 +340,21 @@ pub async fn start_openai_device_login() -> Result<OpenAiDeviceLogin, AuthError>
 pub async fn complete_openai_device_login(
     login: &OpenAiDeviceLogin,
 ) -> Result<OAuthTokens, AuthError> {
-    let code = poll_openai_device_code(login).await?;
-    exchange_openai_code(&code.authorization_code, &code.code_verifier, None).await
+    let client = shared_auth_http_client();
+    let code = poll_openai_device_code(client, login).await?;
+    exchange_openai_code(client, &code.authorization_code, &code.code_verifier, None).await
 }
 
 /// Refresh an OpenAI login token.
 pub async fn refresh_openai_tokens(current: &OAuthTokens) -> Result<OAuthTokens, AuthError> {
-    let client = reqwest::Client::new();
+    refresh_openai_tokens_with_client(shared_auth_http_client(), current).await
+}
+
+/// Refresh an OpenAI login token using the provided HTTP client.
+pub async fn refresh_openai_tokens_with_client(
+    client: &reqwest::Client,
+    current: &OAuthTokens,
+) -> Result<OAuthTokens, AuthError> {
     let form = [
         ("grant_type", "refresh_token"),
         ("refresh_token", current.refresh_token.as_str()),
@@ -422,9 +432,9 @@ pub fn try_open_browser(url: &str) -> bool {
 }
 
 async fn poll_openai_device_code(
+    client: &reqwest::Client,
     login: &OpenAiDeviceLogin,
 ) -> Result<DeviceTokenResponse, AuthError> {
-    let client = reqwest::Client::new();
     let started = std::time::Instant::now();
     let poll_interval = Duration::from_secs(login.interval_secs.max(1));
 
@@ -461,11 +471,11 @@ async fn poll_openai_device_code(
 }
 
 async fn exchange_openai_code(
+    client: &reqwest::Client,
     authorization_code: &str,
     code_verifier: &str,
     refresh_fallback: Option<&str>,
 ) -> Result<OAuthTokens, AuthError> {
-    let client = reqwest::Client::new();
     let form = [
         ("grant_type", "authorization_code"),
         ("code", authorization_code),
@@ -513,6 +523,17 @@ async fn exchange_openai_code(
         access_token,
         refresh_token,
         expires_at_unix: unix_now_secs().saturating_add(expires_in),
+    })
+}
+
+fn shared_auth_http_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(AUTH_HTTP_TIMEOUT)
+            .user_agent("buddy/0.1")
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
     })
 }
 
