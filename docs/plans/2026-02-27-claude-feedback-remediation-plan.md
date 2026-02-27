@@ -3,7 +3,7 @@
 ## Status
 
 - Program status: Active (integrated with `docs/plans/2026-02-27-streaming-runtime-architecture.md`)
-- Current focus: Milestone 7 closed; maintain/runtime hardening and optional deferred items only (`D3`, remaining `D4`, `C2`).
+- Current focus: remediation board closed for scoped items; maintain/runtime hardening only.
 - Completed so far:
   1. Streaming/runtime `S0` complete (typed runtime command/event schema).
   2. Streaming/runtime `S1` complete (agent emits runtime events with mockable model client interface).
@@ -24,8 +24,7 @@
   17. Remediation Milestone 7 landed (`D1`/`D2`/`C3`/`T4`) with backend extraction, deprecation timeline warnings, and feature-gated parser property tests.
 - Next steps:
   1. Keep model-regression suite as a release gate whenever default provider/model profiles change.
-  2. Revisit optional `D3` plugin MVP only when there is concrete operator demand.
-  3. Continue reducing legacy compatibility surface (`C2`) and remaining modular cleanup (`D4`) in small slices.
+  2. Track optional `D3` plugin work as `will not fix` unless concrete operator demand appears.
 
 ## Integrated Program Board
 
@@ -52,7 +51,7 @@ Address the issues raised in `docs/plans/claude-feedback-0.md` with an increment
 
 ## Feedback Alignment and Disagreements
 
-1. `D3` (plugin/extension mechanism): agree this is useful, but disagree with its priority now. It is high effort and low immediate risk reduction. We should defer until security/testability baselines are stronger.
+1. `D3` (plugin/extension mechanism): marked **will not fix** for now. It is high effort and low immediate risk reduction versus current product scope.
 2. `S4` (encrypt with machine-derived key): updated decision per product requirements. We will use a cross-platform machine-derived key encryption-at-rest scheme (no keychain dependency) so behavior is consistent for distributed binaries on macOS/Linux.
 3. `U1` (no streaming output): partially outdated. Responses API transport already supports streaming ingestion internally, but incremental rendering is not surfaced to users. Treat as “partial implementation” and finish UX wiring.
 
@@ -361,7 +360,7 @@ Address `U1`, `U2`, `U3`, `U4`, `U5`, and `B4`.
 
 ### Scope
 
-Address lower-priority architecture items after stabilization (`D1`, `D2`, `D3`, remaining `D4`, `T4`, `C3`).
+Address lower-priority architecture items after stabilization (`D1`, `D2`, `D3`, remaining `D4`, `T4`, `C3`) and close residual post-M7 gaps (`C2`, `T2`, `T3`).
 
 ### Tasks
 
@@ -369,7 +368,9 @@ Address lower-priority architecture items after stabilization (`D1`, `D2`, `D3`,
 2. [x] Begin `ExecutionContext` backend trait extraction to reduce duplication.
 3. [x] Add deprecation warnings + timeline for `AGENT_*`, `agent.toml`, `.agentx`, legacy auth keys.
 4. [x] Add parser fuzz/property tests (`proptest`/`cargo-fuzz` targets).
-5. [ ] Evaluate script-based tool plugin MVP only after above completes (deferred by priority).
+5. [x] Evaluate script-based tool plugin MVP only after above completes (marked will-not-fix for current product scope).
+6. [x] Reduce config parsing duplication and add source-injected load path (`C2`, `T3`).
+7. [x] Add REPL/main orchestration tests on top of injectable render sink (`T2`, remaining `D4`).
 
 ### Acceptance Gate
 
@@ -395,7 +396,9 @@ Address lower-priority architecture items after stabilization (`D1`, `D2`, `D3`,
 2. `efb1116` — `refactor(exec): extract backend trait implementations from ExecutionContext`
 3. `e5b09e4` — `chore(compat): add legacy deprecation warnings and migration timeline`
 4. `42084dc` — `test(fuzz): add feature-gated parser property tests`
-5. `feat(tools): prototype config-driven script tool loading` (optional, only if prioritized later)
+5. `a5ed487` — `refactor(config): unify parsed-config resolution and inject load sources` (`C2`, `T3`)
+6. `578580a` — `refactor(repl): inject render trait and add orchestration regression tests` (`T2`, `D4`)
+7. `D3` plugin/extension mechanism — **will not fix** for current scope.
 
 ## Cross-Milestone Quality Gates
 
@@ -533,3 +536,17 @@ Address lower-priority architecture items after stabilization (`D1`, `D2`, `D3`,
 - 2026-02-27: Synced closure status across remediation/runtime plans and `ai-state`.
   - Updated integrated board to mark Milestone 7 complete and refreshed next-step backlog.
   - commit: `29cc58b`
+- 2026-02-27: Completed post-M7 slice `C2` + `T3`:
+  - Refactored config loading into source-injected loader path (`load_config_with_diagnostics_from_sources`) for deterministic tests without filesystem/env coupling.
+  - Extracted shared parsed-config resolver (`resolve_config_from_file_config`) used by runtime load and tests to eliminate duplicated fallback/default logic.
+  - Added injected-source precedence/env-override/deprecation diagnostics tests.
+  - Validation: `cargo test -q` and `cargo test -q --features fuzz-tests` passed.
+  - commit: `a5ed487`
+- 2026-02-27: Completed post-M7 slice `T2` + remaining `D4`:
+  - Added `RenderSink` trait + global progress helper in `src/render.rs`.
+  - Switched runtime-event renderer adapter and REPL/main orchestration helpers to depend on `&dyn RenderSink`.
+  - Added mock-renderer orchestration regression tests for `/session`, `/model`, and runtime warning event rendering.
+  - Validation: `cargo test -q` and `cargo test -q --features fuzz-tests` passed.
+  - commit: `578580a`
+- 2026-02-27: `D3` disposition update:
+  - Plugin/extension mechanism marked **will not fix** for current scope; revisit only with concrete operator demand.

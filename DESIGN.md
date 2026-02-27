@@ -68,6 +68,7 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
     - `fetch_timeout_secs` for `fetch_url` requests.
   - Primary naming uses `BUDDY_*` env vars + `buddy.toml`, with legacy `AGENT_*` and `agent.toml` compatibility fallbacks.
   - Startup emits one-time deprecation warnings when legacy config/env paths are used (`AGENT_*`, `agent.toml`, `[api]`, `.agentx`, legacy auth profile keys), with removal target after `v0.4`.
+  - Config loading internals use a shared parsed-config resolver plus an injectable source path (for deterministic tests without filesystem/env coupling).
 - Built-in tool-calling agent loop:
   - Sends tool definitions to the model.
   - Executes returned tool calls.
@@ -112,6 +113,7 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
 - Terminal UX and observability:
   - Colorized status output.
   - Strict stdout/stderr separation (assistant response on stdout, status/chrome on stderr).
+  - Orchestration code now depends on an injectable render trait (`RenderSink`) instead of directly coupling to concrete stderr renderer internals.
   - Live TTY spinners for model/tool work.
   - Interactive background mode uses REPL-integrated liveness indicators (instead of thread-written spinners) to avoid input corruption.
   - Tool-call/result previews and status sections.

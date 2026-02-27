@@ -30,12 +30,15 @@
     - `R5` done: web search/auth flows now reuse shared HTTP clients instead of per-call client construction.
     - `D1` done: tool runtime context + stream event contract is in place and consumed by runtime/CLI adapters.
     - `D2` done: `ExecutionContext` now delegates through backend trait objects with shared command-backend helpers.
+    - `D4` done: orchestration now targets injectable `RenderSink` trait, with mock-renderer regression tests.
     - `C3` done: startup deprecation warnings/timeline landed for legacy env/config/session/auth compatibility paths.
+    - `C2` done: duplicated parsed-config fallback/default logic removed via shared resolver used in production + test loaders.
+    - `T2` done: REPL/main orchestration regression tests added (`/session`, `/model`, runtime warning render flow).
+    - `T3` done: config load path now supports source injection for deterministic tests without filesystem/env coupling.
     - `T4` done: feature-gated parser property tests landed (`cargo test --features fuzz-tests`).
+    - `D3` will-not-fix: plugin/extension mechanism explicitly out of current scope unless concrete operator demand appears.
   - Not done yet (active backlog):
-    - `T2`, `T3`
-    - `D3`, `D4`
-    - `C2`
+    - none from the remediation scoped backlog (`D3` intentionally WNF).
   - Repro/runbook:
     - `docs/playbook-remediation.md` contains reproducible commands and baseline checks.
 - Runtime schema scaffolding added in `src/runtime.rs`:
@@ -84,9 +87,17 @@
     - `src/config.rs` adds `load_config_with_diagnostics(...)`.
     - Startup now warns once per run for deprecated compatibility paths (`AGENT_*`, `agent.toml`, `[api]`, `.agentx`, legacy auth profile records).
     - New migration doc: `docs/deprecations.md` (removal target after `v0.4`).
+  - Config loader/testability refactor:
+    - Added source-injected config load entry (`load_config_with_diagnostics_from_sources`) used by tests to avoid real filesystem/env coupling.
+    - Added shared parsed-config resolver (`resolve_config_from_file_config`) to eliminate duplicated fallback/default logic between production load and test helpers.
+  - Renderer/testability refactor:
+    - Added `RenderSink` trait (`src/render.rs`) and switched REPL/runtime-event orchestration helpers to depend on the trait rather than concrete `Renderer`.
+    - Added mock-renderer tests for `/session`, `/model`, and runtime warning render routing.
   - Parser property tests:
     - Feature-gated suite via `cargo test --features fuzz-tests`.
     - Added property tests for Responses SSE event payload parsing (`src/api/responses.rs`) and shell wait-duration parsing (`src/tools/shell.rs`).
+  - `D3` plugin mechanism status:
+    - Marked will-not-fix for current scope; revisit only if concrete operator demand appears.
 
 - Responses/login/subcommand upgrade:
   - `src/api/` is now split by concern:
