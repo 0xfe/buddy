@@ -47,6 +47,14 @@ pub enum Command {
         /// Prompt text to execute.
         prompt: String,
     },
+    /// Resume a saved session by ID (or resume the most recent with --last).
+    Resume {
+        /// Session ID to resume.
+        session_id: Option<String>,
+        /// Resume the most recently used session in this directory.
+        #[arg(long = "last", default_value_t = false)]
+        last: bool,
+    },
     /// Login to a provider for a model profile.
     Login {
         /// Model profile name. Uses [agent].model when omitted.
@@ -80,6 +88,24 @@ mod tests {
         assert!(matches!(
             args.command,
             Some(Command::Login { model }) if model.as_deref() == Some("gpt-codex")
+        ));
+    }
+
+    #[test]
+    fn resume_subcommand_accepts_session_id() {
+        let args = Args::parse_from(["buddy", "resume", "a1b2-c3d4"]);
+        assert!(matches!(
+            args.command,
+            Some(Command::Resume { session_id, last }) if session_id.as_deref() == Some("a1b2-c3d4") && !last
+        ));
+    }
+
+    #[test]
+    fn resume_subcommand_supports_last_flag() {
+        let args = Args::parse_from(["buddy", "resume", "--last"]);
+        assert!(matches!(
+            args.command,
+            Some(Command::Resume { session_id, last }) if session_id.is_none() && last
         ));
     }
 

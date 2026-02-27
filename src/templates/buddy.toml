@@ -25,12 +25,19 @@ api = "responses"
 auth = "login"
 model = "gpt-5.3-codex-spark"
 
-[models.deepseek-coder-next]
+[models.openrouter-deepseek]
 api_base_url = "https://openrouter.ai/api/v1"
 api = "completions"
 auth = "api-key"
 api_key_env = "OPENROUTER_API_KEY"
-model = "qwen/qwen3-coder-next"
+model = "deepseek/deepseek-v3.2"
+
+[models.openrouter-glm]
+api_base_url = "https://openrouter.ai/api/v1"
+api = "completions"
+auth = "api-key"
+api_key_env = "OPENROUTER_API_KEY"
+model = "z-ai/glm-5"
 
 [models.kimi]
 api_base_url = "https://api.moonshot.ai/v1"

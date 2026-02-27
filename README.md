@@ -53,6 +53,7 @@ $EDITOR ~/.config/buddy/buddy.toml
 ```bash
 # Interactive mode
 buddy
+# starts tmux-backed local execution by default; buddy prints attach command.
 
 # One-shot mode
 buddy exec "how much free disk space do I have?"
@@ -60,10 +61,9 @@ buddy exec "how much free disk space do I have?"
 # Login for the active/default profile
 buddy login
 
-# Run with tmux (buddy prints attach instructions on startup)
-buddy --tmux
-# example:
-tmux attach -t buddy-1a2b
+# Resume a prior session by ID (or last in this directory)
+buddy resume f4e3-5bc3-a912-1f0d
+buddy resume --last
 
 # Operate a remote ssh host
 buddy --ssh user@hostname
@@ -76,7 +76,7 @@ buddy --container my-dev-container
 
 ```
 > What files are in the current directory?
-[|] task #1 running 0.8s
+task #1 running 0s
 
 > /ps
   • background tasks
@@ -104,7 +104,7 @@ Common editing shortcuts are supported (`Ctrl-A`, `Ctrl-E`, `Ctrl-B`, `Ctrl-F`, 
 In interactive mode, prompts run as background tasks so the REPL remains available; use `/ps` and `/kill <id>` to inspect/cancel active tasks.
 If a background task reaches a shell confirmation point, input is interrupted and the confirmation is brought to the foreground as a one-line inline approval prompt (`user@host$ <command> -- approve?`).
 Background task activity (reasoning traces and tool results) is forwarded to the foreground loop and rendered cleanly without breaking keyboard input.
-A live liveness line (spinner + task state) is rendered above the prompt while background tasks are active.
+A live liveness line (task state) is rendered above the prompt while background tasks are active.
 When running in a tmux-backed execution target, use `run_shell` with `wait: false` to dispatch long-running/interactive commands, then poll with `capture-pane`. Use `send-keys` for control input (for example Ctrl-C, Ctrl-Z, Enter, arrows) when interacting with full-screen TUIs or stuck jobs.
 On tmux-backed startup, buddy shows a friendly `tmux attach` command (local/SSH/container) and works in a shared window named `buddy-shared`.
 
@@ -114,7 +114,7 @@ On tmux-backed startup, buddy shows a friendly `tmux attach` command (local/SSH/
 - `/kill <id>` cancels a background task by ID.
 - `/timeout <duration> [id]` sets/corrects background task deadlines.
 - `/approve ask|all|none|<duration>` changes shell-approval policy.
-- `/session` lists saved sessions; `/session resume <name|last>` resumes one; `/session new <name>` creates a fresh one.
+- `/session` lists saved sessions; `/session resume <session-id|last>` resumes one; `/session new` creates a fresh ID-based session.
 - While background tasks are running, only `/ps`, `/kill <id>`, `/timeout <duration> [id]`, `/approve <mode>`, `/status`, and `/context` are accepted.
 - For foreground approvals, reply `y`/`yes` to approve or `n`/`no` (or empty enter) to deny.
 
@@ -249,7 +249,21 @@ model = "gpt-5.3-codex"                     # concrete provider model id
 api_base_url = "https://api.openai.com/v1"
 api = "responses"
 auth = "login"
-model = "gpt-5.3-spark"
+model = "gpt-5.3-codex-spark"
+
+[models.openrouter-deepseek]
+api_base_url = "https://openrouter.ai/api/v1"
+api = "completions"
+auth = "api-key"
+api_key_env = "OPENROUTER_API_KEY"
+model = "deepseek/deepseek-v3.2"
+
+[models.openrouter-glm]
+api_base_url = "https://openrouter.ai/api/v1"
+api = "completions"
+auth = "api-key"
+api_key_env = "OPENROUTER_API_KEY"
+model = "z-ai/glm-5"
 
 [agent]
 model = "gpt-codex"                         # active profile key from [models.<name>]
@@ -278,6 +292,7 @@ buddy [OPTIONS] [COMMAND]
 
 Commands:
   exec <PROMPT>           Execute one prompt and exit
+  resume [SESSION_ID]     Resume saved session by id (or use --last)
   login [MODEL_PROFILE]   Login to provider for profile (defaults to [agent].model; shared per provider)
   help                    Print command help
 
@@ -287,7 +302,7 @@ Options:
       --base-url <BASE_URL>  Override API base URL
       --container <ID/NAME>  Run shell/files tools with docker/podman exec in this container
       --ssh <USER@HOST>      Run shell/files tools on this host over persistent ssh
-      --tmux [SESSION]       tmux session to use/create (default: auto buddy-xxxx per target; local by default, or on --ssh/--container target)
+      --tmux [SESSION]       optional tmux session override (tmux-backed execution is the default when shell/files tools are enabled)
       --no-color             Disable color output
   -h, --help                 Print help
   -V, --version              Print version
@@ -313,8 +328,7 @@ At startup, the system prompt is rendered from one compiled template with runtim
 | Command | Description |
 |---------|-------------|
 | `/status` | Show current model, base URL, enabled tools, and session counters. |
-| `/model <name\|index>` | Switch the active configured model profile. |
-| `/models` | List configured model profiles and pick one interactively. |
+| `/model [name\|index]` | Switch the active configured model profile (`/model` opens arrow-key picker). |
 | `/login [name\|index]` | Start login flow for a configured profile. |
 | `/context` | Show estimated context usage (`messages` estimate / context window) and token stats. |
 | `/ps` | Show running background tasks with IDs and elapsed time. |
@@ -322,8 +336,8 @@ At startup, the system prompt is rendered from one compiled template with runtim
 | `/timeout <duration> [id]` | Set timeout for a background task (`id` optional only when one task exists). |
 | `/approve ask|all|none|<duration>` | Configure shell approval policy for this REPL session. |
 | `/session` | List saved sessions (ordered by last use). |
-| `/session resume <name\|last>` | Resume a saved session by name, or the most recently used one. |
-| `/session new <name>` | Create and switch to a fresh named session. |
+| `/session resume <session-id\|last>` | Resume a saved session by ID, or the most recently used one. |
+| `/session new` | Create and switch to a fresh generated session ID. |
 | `/help` | Show slash command help (only when no background tasks are running). |
 | `/quit` `/exit` `/q` | Exit interactive mode (only when no background tasks are running). |
 

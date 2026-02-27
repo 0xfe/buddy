@@ -107,8 +107,7 @@ pub struct ReadPoll {
 
 The main REPL loop uses this to:
 
-1. Render a live liveness line above the prompt showing task count, spinner,
-   and elapsed time.
+1. Render a live liveness line above the prompt showing task count/state.
 2. Interrupt the editor when an approval request arrives from a background task.
 
 `ReadOutcome::Interrupted` is returned when `interrupt = true`, causing the
@@ -181,8 +180,7 @@ are processed by the REPL loop before being sent to the agent.
 | Command | Description |
 |---------|-------------|
 | `/status` | Show model name, base URL, enabled tools, and session token counts |
-| `/model <name\|index>` | Switch active configured model profile |
-| `/models` | List configured model profiles and pick one |
+| `/model [name\|index]` | Switch active configured model profile (`/model` with no args opens arrow-key picker) |
 | `/login [name\|index]` | Start login flow for a profile (opens browser when available) |
 | `/context` | Show estimated context window fill % and message counts |
 | `/ps` | List all running background tasks with IDs and elapsed time |
@@ -190,12 +188,12 @@ are processed by the REPL loop before being sent to the agent.
 | `/timeout <dur> [id]` | Set a deadline for one or all tasks (`30s`, `10m`, `1h`, `2d`) |
 | `/approve ask\|all\|none\|<dur>` | Change the shell approval policy |
 | `/session` | List all saved sessions |
-| `/session resume <name\|last>` | Restore a saved session into the agent |
-| `/session new <name>` | Start a fresh session with a new name |
+| `/session resume <session-id\|last>` | Restore a saved session into the agent |
+| `/session new` | Start a fresh session with a generated ID |
 | `/help` | Print all slash commands with descriptions |
 | `/quit`, `/exit`, `/q` | Exit interactive mode |
 
-Commands blocked while tasks are running: `/help`, `/quit`, `/exit`, `/q`, `/model`, `/models`, `/login`, `/session`.
+Commands blocked while tasks are running: `/help`, `/quit`, `/exit`, `/q`, `/model`, `/login`, `/session`.
 The REPL prints a message asking the user to `/kill` tasks first.
 
 ### Approval Policy
@@ -345,7 +343,7 @@ Sessions are saved as JSON files under `.buddyx/sessions/`. Each file contains:
 ```json
 {
   "version": 1,
-  "name": "default",
+  "id": "f4e3-5bc3-a912-1f0d",
   "updated_at_millis": 1708900000000,
   "state": {
     "messages": [...],
@@ -359,8 +357,11 @@ Sessions are saved as JSON files under `.buddyx/sessions/`. Each file contains:
 }
 ```
 
+**Startup behavior:** A plain `buddy` launch creates a fresh generated session
+ID. `buddy resume <session-id>` or `buddy resume --last` restores saved state.
+
 **Auto-save:** After each completed prompt, the REPL calls
-`session_store.save("default", &agent.snapshot_session())`.
+`session_store.save(<active-session-id>, &agent.snapshot_session())`.
 
 **Atomic writes:** Sessions are written to a `.json.tmp` file and then renamed
 into place to prevent corruption on crash.
@@ -369,8 +370,8 @@ into place to prevent corruption on crash.
 descending, so `/session resume last` always resumes the most recently
 active session.
 
-**Session name validation:** Names must be non-empty and contain only
-alphanumeric characters, hyphens, and underscores.
+**Session ID validation:** IDs must be non-empty and contain only
+safe filename characters (`[A-Za-z0-9._-]`).
 
 ---
 

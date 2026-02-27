@@ -10,7 +10,7 @@ pub struct SlashCommand {
 }
 
 /// Built-in slash commands for interactive mode.
-pub const SLASH_COMMANDS: [SlashCommand; 14] = [
+pub const SLASH_COMMANDS: [SlashCommand; 13] = [
     SlashCommand {
         name: "/status",
         description: "Show model, endpoint, tools, and session details.",
@@ -41,11 +41,7 @@ pub const SLASH_COMMANDS: [SlashCommand; 14] = [
     },
     SlashCommand {
         name: "/model",
-        description: "Switch active model profile: /model <name|index>.",
-    },
-    SlashCommand {
-        name: "/models",
-        description: "List and choose configured model profiles.",
+        description: "Switch active model profile: /model [name|index].",
     },
     SlashCommand {
         name: "/login",
@@ -125,7 +121,7 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommandAction> {
             verb: trimmed.split_whitespace().nth(1).map(str::to_string),
             name: trimmed.split_whitespace().nth(2).map(str::to_string),
         },
-        "/model" | "/models" => {
+        "/model" => {
             SlashCommandAction::Model(trimmed.split_whitespace().nth(1).map(str::to_string))
         }
         "/login" => {
@@ -208,10 +204,6 @@ mod tests {
         assert_eq!(
             parse_slash_command("/model kimi"),
             Some(SlashCommandAction::Model(Some("kimi".to_string())))
-        );
-        assert_eq!(
-            parse_slash_command("/models 2"),
-            Some(SlashCommandAction::Model(Some("2".to_string())))
         );
         assert_eq!(
             parse_slash_command("/login"),

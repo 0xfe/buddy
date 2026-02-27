@@ -447,7 +447,33 @@ fn default_models_map() -> BTreeMap<String, ModelConfig> {
             api_key: String::new(),
             api_key_env: None,
             api_key_file: None,
-            model: Some("gpt-5.3-spark".to_string()),
+            model: Some("gpt-5.3-codex-spark".to_string()),
+            context_limit: None,
+        },
+    );
+    models.insert(
+        "openrouter-deepseek".to_string(),
+        ModelConfig {
+            api_base_url: "https://openrouter.ai/api/v1".to_string(),
+            api: ApiProtocol::Completions,
+            auth: AuthMode::ApiKey,
+            api_key: String::new(),
+            api_key_env: Some("OPENROUTER_API_KEY".to_string()),
+            api_key_file: None,
+            model: Some("deepseek/deepseek-v3.2".to_string()),
+            context_limit: None,
+        },
+    );
+    models.insert(
+        "openrouter-glm".to_string(),
+        ModelConfig {
+            api_base_url: "https://openrouter.ai/api/v1".to_string(),
+            api: ApiProtocol::Completions,
+            auth: AuthMode::ApiKey,
+            api_key: String::new(),
+            api_key_env: Some("OPENROUTER_API_KEY".to_string()),
+            api_key_file: None,
+            model: Some("z-ai/glm-5".to_string()),
             context_limit: None,
         },
     );

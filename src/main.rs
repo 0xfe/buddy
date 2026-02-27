@@ -26,6 +26,7 @@ use buddy::tools::time::TimeTool;
 use buddy::tools::ToolRegistry;
 use buddy::tui as repl;
 use clap::Parser;
+use crossterm::style::{Color, Stylize};
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -35,7 +36,6 @@ use tokio::task::JoinHandle;
 
 const BACKGROUND_TASK_WARNING: &str =
     "Background tasks are in progress. Allowed commands now: /ps, /kill <id>, /timeout <dur> [id], /approve <mode>, /status, /context.";
-const DEFAULT_SESSION_NAME: &str = "default";
 
 #[tokio::main]
 async fn main() {
@@ -76,6 +76,14 @@ async fn main() {
 
     let renderer = Renderer::new(config.display.color);
 
+    let resume_request = match resume_request_from_command(args.command.as_ref()) {
+        Ok(request) => request,
+        Err(msg) => {
+            renderer.error(&msg);
+            std::process::exit(1);
+        }
+    };
+
     if let Some(cli::Command::Login { model }) = args.command.as_ref() {
         let selector = model.as_deref();
         if let Err(msg) = run_login_flow(&renderer, &config, selector).await {
@@ -109,14 +117,12 @@ async fn main() {
         std::process::exit(1);
     }
 
-    let execution = if let Some(container) = &args.container {
-        let requested_tmux_session = args.tmux.clone().flatten();
-        let container_ctx = if args.tmux.is_some() {
-            ExecutionContext::container_tmux(container.clone(), requested_tmux_session).await
-        } else {
-            ExecutionContext::container(container.clone()).await
-        };
-        match container_ctx {
+    let execution_tools_enabled = config.tools.shell_enabled || config.tools.files_enabled;
+    let requested_tmux_session = args.tmux.clone().flatten();
+    let execution = if !execution_tools_enabled {
+        ExecutionContext::local()
+    } else if let Some(container) = &args.container {
+        match ExecutionContext::container_tmux(container.clone(), requested_tmux_session).await {
             Ok(ctx) => ctx,
             Err(e) => {
                 renderer.error(&format!("failed to initialize container execution: {e}"));
@@ -124,33 +130,23 @@ async fn main() {
             }
         }
     } else if let Some(target) = &args.ssh {
-        match ExecutionContext::ssh(target.clone(), args.tmux.clone().flatten()).await {
+        match ExecutionContext::ssh(target.clone(), requested_tmux_session).await {
             Ok(ctx) => ctx,
             Err(e) => {
                 renderer.error(&format!("failed to initialize ssh execution: {e}"));
                 std::process::exit(1);
             }
         }
-    } else if args.tmux.is_some() {
-        match ExecutionContext::local_tmux(args.tmux.clone().flatten()).await {
+    } else {
+        match ExecutionContext::local_tmux(requested_tmux_session).await {
             Ok(ctx) => ctx,
             Err(e) => {
                 renderer.error(&format!("failed to initialize local tmux execution: {e}"));
                 std::process::exit(1);
             }
         }
-    } else {
-        ExecutionContext::local()
     };
 
-    if args.container.is_some() || args.ssh.is_some() || args.tmux.is_some() {
-        renderer.section("execution");
-        renderer.field("target", &execution.summary());
-        if let Some(info) = execution.tmux_attach_info() {
-            renderer.field("attach to session", &execution_tmux_attach_command(&info));
-        }
-        eprintln!();
-    }
     let capture_pane_enabled = execution.capture_pane_available();
     let prompt_tool_names = enabled_tool_names(&config, capture_pane_enabled);
 
@@ -234,33 +230,31 @@ async fn main() {
                 std::process::exit(1);
             }
         };
-        let mut active_session = DEFAULT_SESSION_NAME.to_string();
-        let startup_session_state = match session_store.load(&active_session) {
-            Ok(snapshot) => {
-                agent.restore_session(snapshot);
-                SessionStartupState::ResumedExisting
-            }
-            Err(load_err) => {
-                if !is_missing_session_error(&load_err) {
-                    renderer.warn(&format!(
-                        "failed to load session {active_session}: {load_err}"
-                    ));
-                }
-                SessionStartupState::StartedNew
+        let (startup_session_state, mut active_session) = match initialize_active_session(
+            &renderer,
+            &session_store,
+            &mut agent,
+            resume_request,
+        ) {
+            Ok(value) => value,
+            Err(msg) => {
+                renderer.error(&msg);
+                std::process::exit(1);
             }
         };
-        if let Err(e) = session_store.save(&active_session, &agent.snapshot_session()) {
-            renderer.warn(&format!(
-                "session persistence is degraded: failed to save initial session state: {e}"
-            ));
-        }
 
-        renderer.header(&config.api.model);
-        renderer.section(&session_startup_message(
+        render_startup_banner(
+            config.display.color,
+            &config.api.model,
+            execution.tmux_attach_info().as_ref(),
+        );
+        render_session_startup_line(
+            config.display.color,
             startup_session_state,
             &active_session,
-        ));
-        eprintln!();
+            context_used_percent(&agent).unwrap_or(0),
+        );
+
         let mut repl_state = repl::ReplState::default();
         let agent = Arc::new(Mutex::new(agent));
         let mut background_tasks: Vec<BackgroundTask> = Vec::new();
@@ -617,8 +611,6 @@ async fn main() {
                                 &renderer,
                                 &mut config,
                                 &agent,
-                                &mut repl_state,
-                                args.ssh.as_deref(),
                                 selector.as_deref(),
                             )
                             .await;
@@ -728,12 +720,12 @@ async fn handle_session_command(
             Err(e) => renderer.warn(&format!("failed to list sessions: {e}")),
         },
         "resume" => {
-            let Some(requested_name) = name.map(str::trim).filter(|s| !s.is_empty()) else {
-                renderer.warn("Usage: /session resume <name|last>");
+            let Some(requested_id) = name.map(str::trim).filter(|s| !s.is_empty()) else {
+                renderer.warn("Usage: /session resume <session-id|last>");
                 return;
             };
 
-            let target_name = if requested_name.eq_ignore_ascii_case("last") {
+            let target_id = if requested_id.eq_ignore_ascii_case("last") {
                 match session_store.resolve_last() {
                     Ok(Some(last)) => last,
                     Ok(None) => {
@@ -746,11 +738,11 @@ async fn handle_session_command(
                     }
                 }
             } else {
-                requested_name.to_string()
+                requested_id.to_string()
             };
 
-            if target_name == *active_session {
-                renderer.section(&format!("session already active: {target_name}"));
+            if target_id == *active_session {
+                renderer.section(&format!("session already active: {target_id}"));
                 eprintln!();
                 return;
             }
@@ -764,10 +756,10 @@ async fn handle_session_command(
                 return;
             }
 
-            let snapshot = match session_store.load(&target_name) {
+            let snapshot = match session_store.load(&target_id) {
                 Ok(snapshot) => snapshot,
                 Err(e) => {
-                    renderer.warn(&format!("failed to load session {target_name}: {e}"));
+                    renderer.warn(&format!("failed to load session {target_id}: {e}"));
                     return;
                 }
             };
@@ -777,20 +769,20 @@ async fn handle_session_command(
                 guard.restore_session(snapshot);
             }
 
-            *active_session = target_name.clone();
+            *active_session = target_id.clone();
             if let Err(e) = session_store.save(active_session, &snapshot_copy) {
                 renderer.warn(&format!(
-                    "failed to mark session {target_name} as active: {e}"
+                    "failed to mark session {target_id} as active: {e}"
                 ));
             }
-            renderer.section(&format!("resumed session: {target_name}"));
+            renderer.section(&format!("resumed session: {target_id}"));
             eprintln!();
         }
         "new" | "create" => {
-            let Some(new_name) = name.map(str::trim).filter(|s| !s.is_empty()) else {
-                renderer.warn("Usage: /session new <name>");
+            if name.is_some() {
+                renderer.warn("Usage: /session new");
                 return;
-            };
+            }
 
             let current_snapshot = {
                 let guard = agent.lock().await;
@@ -806,17 +798,21 @@ async fn handle_session_command(
                 guard.reset_session();
                 guard.snapshot_session()
             };
-            if let Err(e) = session_store.save(new_name, &new_snapshot) {
-                renderer.warn(&format!("failed to create session {new_name}: {e}"));
-                return;
+            match session_store.create_new_session(&new_snapshot) {
+                Ok(new_id) => {
+                    *active_session = new_id.clone();
+                    renderer.section(&format!("created session: {new_id}"));
+                }
+                Err(e) => {
+                    renderer.warn(&format!("failed to create session: {e}"));
+                    return;
+                }
             }
-            *active_session = new_name.to_string();
-            renderer.section(&format!("created session: {new_name}"));
             eprintln!();
         }
         _ => {
             renderer
-                .warn("Usage: /session [list] | /session resume <name|last> | /session new <name>");
+                .warn("Usage: /session [list] | /session resume <session-id|last> | /session new");
         }
     }
 }
@@ -825,8 +821,6 @@ async fn handle_model_command(
     renderer: &Renderer,
     config: &mut Config,
     agent: &Arc<Mutex<Agent>>,
-    repl_state: &mut repl::ReplState,
-    ssh_target: Option<&str>,
     selector: Option<&str>,
 ) {
     if config.models.is_empty() {
@@ -835,49 +829,42 @@ async fn handle_model_command(
     }
 
     let names = configured_model_profile_names(config);
-    render_model_profiles(renderer, config, &names);
     if names.len() == 1 {
         renderer.warn("Only one model profile is configured.");
         return;
     }
 
-    let selected_input = if let Some(selector) = selector {
-        selector.trim().to_string()
+    let profile_name = if let Some(selector) = selector {
+        let selected_input = selector.trim();
+        if selected_input.is_empty() {
+            return;
+        }
+        match resolve_model_profile_selector(config, &names, selected_input) {
+            Ok(name) => name,
+            Err(msg) => {
+                renderer.warn(&msg);
+                return;
+            }
+        }
     } else {
-        let context_percent = agent
-            .try_lock()
-            .ok()
-            .and_then(|guard| context_used_percent(&guard));
-        let outcome = repl::read_repl_line_with_interrupt(
+        let options = model_picker_options(config, &names);
+        let initial = names
+            .iter()
+            .position(|name| name == &config.agent.model)
+            .unwrap_or(0);
+        match repl::pick_from_list(
             config.display.color,
-            repl_state,
-            ssh_target,
-            context_percent,
-            repl::PromptMode::Normal,
-            None,
-            || repl::ReadPoll::default(),
-        );
-        match outcome {
-            Ok(repl::ReadOutcome::Line(line)) => line.trim().to_string(),
-            Ok(repl::ReadOutcome::Eof)
-            | Ok(repl::ReadOutcome::Cancelled)
-            | Ok(repl::ReadOutcome::Interrupted) => return,
+            "model profiles",
+            "Use ↑/↓ to pick, Enter to confirm, Esc to cancel.",
+            &options,
+            initial,
+        ) {
+            Ok(Some(index)) => names[index].clone(),
+            Ok(None) => return,
             Err(e) => {
                 renderer.warn(&format!("failed to read model selection: {e}"));
                 return;
             }
-        }
-    };
-
-    if selected_input.is_empty() {
-        return;
-    }
-
-    let profile_name = match resolve_model_profile_selector(config, &names, &selected_input) {
-        Ok(name) => name,
-        Err(msg) => {
-            renderer.warn(&msg);
-            return;
         }
     };
 
@@ -925,9 +912,8 @@ fn configured_model_profile_names(config: &Config) -> Vec<String> {
     config.models.keys().cloned().collect()
 }
 
-fn render_model_profiles(renderer: &Renderer, config: &Config, names: &[String]) {
-    renderer.section("model profiles");
-    renderer.field("active", &config.agent.model);
+fn model_picker_options(config: &Config, names: &[String]) -> Vec<String> {
+    let mut options = Vec::with_capacity(names.len());
     for (idx, name) in names.iter().enumerate() {
         let Some(profile) = config.models.get(name) else {
             continue;
@@ -939,16 +925,17 @@ fn render_model_profiles(renderer: &Renderer, config: &Config, names: &[String])
         };
         let api_model = resolved_profile_api_model(profile, name);
         let value = format!(
-            "model={} base_url={} api={:?} auth={:?}",
+            "{}.{} {} | {} | {:?} | {:?}",
+            idx + 1,
+            marker,
             api_model,
             profile.api_base_url.trim(),
             profile.api,
             profile.auth
         );
-        renderer.field(&format!("{}.{marker} {name}", idx + 1), &value);
+        options.push(value);
     }
-    renderer.field("pick", "use /model <name|index> (or type one now)");
-    eprintln!();
+    options
 }
 
 fn resolved_profile_api_model(profile: &buddy::config::ModelConfig, profile_name: &str) -> String {
@@ -997,7 +984,7 @@ fn resolve_model_profile_selector(
     }
 
     Err(format!(
-        "Unknown model profile `{trimmed}`. Use /models to list configured profiles."
+        "Unknown model profile `{trimmed}`. Use /model to pick from configured profiles."
     ))
 }
 
@@ -1011,7 +998,7 @@ fn normalize_model_selector(selector: &str) -> &str {
     let Some(command) = parts.next() else {
         return trimmed;
     };
-    if command.eq_ignore_ascii_case("/model") || command.eq_ignore_ascii_case("/models") {
+    if command.eq_ignore_ascii_case("/model") {
         return parts.next().unwrap_or("");
     }
     trimmed
@@ -1132,10 +1119,10 @@ fn render_sessions(renderer: &Renderer, active_session: &str, sessions: &[Sessio
     }
 
     for session in sessions {
-        let key = if session.name == active_session {
-            format!("* {}", session.name)
+        let key = if session.id == active_session {
+            format!("* {}", session.id)
         } else {
-            session.name.clone()
+            session.id.clone()
         };
         renderer.field(
             &key,
@@ -1281,27 +1268,26 @@ fn background_liveness_line(tasks: &[BackgroundTask]) -> Option<String> {
         return None;
     }
 
-    let frame = spinner_frame();
     if tasks.len() == 1 {
         let task = &tasks[0];
         let timeout_suffix = timeout_suffix_for_task(task);
         return Some(match &task.state {
             BackgroundTaskState::Running => format!(
-                "[{frame}] task #{} running {}{}",
+                "task #{} running {}{}",
                 task.id,
-                format_elapsed(task.started_at.elapsed()),
+                format_elapsed_coarse(task.started_at.elapsed()),
                 timeout_suffix
             ),
             BackgroundTaskState::WaitingApproval { since, .. } => format!(
-                "[{frame}] task #{} waiting approval {}{}",
+                "task #{} waiting approval {}{}",
                 task.id,
-                format_elapsed(since.elapsed()),
+                format_elapsed_coarse(since.elapsed()),
                 timeout_suffix
             ),
             BackgroundTaskState::Cancelling { since } => format!(
-                "[{frame}] task #{} cancelling {}{}",
+                "task #{} cancelling {}{}",
                 task.id,
-                format_elapsed(since.elapsed()),
+                format_elapsed_coarse(since.elapsed()),
                 timeout_suffix
             ),
         });
@@ -1329,13 +1315,13 @@ fn background_liveness_line(tasks: &[BackgroundTask]) -> Option<String> {
         .max()
         .unwrap_or_default();
     Some(format!(
-        "[{frame}] {} tasks: {} running, {} waiting approval, {} cancelling, {} with timeout, oldest {}",
+        "{} tasks: {} running, {} waiting approval, {} cancelling, {} with timeout, oldest {}",
         tasks.len(),
         running,
         waiting,
         cancelling,
         with_timeout,
-        format_elapsed(oldest)
+        format_elapsed_coarse(oldest)
     ))
 }
 
@@ -1349,19 +1335,9 @@ fn timeout_suffix_for_task(task: &BackgroundTask) -> String {
     } else {
         format!(
             " (timeout in {})",
-            format_elapsed(timeout_at.duration_since(now))
+            format_elapsed_coarse(timeout_at.duration_since(now))
         )
     }
-}
-
-fn spinner_frame() -> char {
-    const FRAMES: [char; 4] = ['|', '/', '-', '\\'];
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
-    let idx = ((millis / 120) % FRAMES.len() as u128) as usize;
-    FRAMES[idx]
 }
 
 fn render_agent_ui_events(renderer: &Renderer, events: &mut Vec<AgentUiEvent>) {
@@ -1579,6 +1555,12 @@ enum SessionStartupState {
     StartedNew,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ResumeRequest {
+    SessionId(String),
+    Last,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ApprovalDecision {
     Approve,
@@ -1743,12 +1725,18 @@ fn approval_prompt_actor(ssh_target: Option<&str>, container: Option<&str>) -> S
     "local".to_string()
 }
 
-fn session_startup_message(state: SessionStartupState, session_name: &str) -> String {
+fn session_startup_message(
+    state: SessionStartupState,
+    session_id: &str,
+    context_used: u16,
+) -> String {
     match state {
         SessionStartupState::ResumedExisting => {
-            format!("using existing session \"{session_name}\"")
+            format!("using existing session \"{session_id}\" ({context_used}% context used)")
         }
-        SessionStartupState::StartedNew => format!("creating new session \"{session_name}\""),
+        SessionStartupState::StartedNew => {
+            format!("using new session \"{session_id}\" ({context_used}% context used)")
+        }
     }
 }
 
@@ -1767,11 +1755,141 @@ fn execution_tmux_attach_command(info: &TmuxAttachInfo) -> String {
     }
 }
 
-fn is_missing_session_error(err: &str) -> bool {
-    let lowered = err.to_ascii_lowercase();
-    lowered.contains("no such file")
-        || lowered.contains("not found")
-        || lowered.contains("os error 2")
+fn execution_target_label(info: Option<&TmuxAttachInfo>) -> String {
+    match info {
+        Some(TmuxAttachInfo {
+            target: TmuxAttachTarget::Local,
+            ..
+        }) => "localhost".to_string(),
+        Some(TmuxAttachInfo {
+            target: TmuxAttachTarget::Ssh { target },
+            ..
+        }) => format!("ssh:{target}"),
+        Some(TmuxAttachInfo {
+            target: TmuxAttachTarget::Container { container, .. },
+            ..
+        }) => format!("container:{container}"),
+        None => "localhost".to_string(),
+    }
+}
+
+fn render_startup_banner(color: bool, model: &str, tmux_info: Option<&TmuxAttachInfo>) {
+    let target = execution_target_label(tmux_info);
+    if color {
+        eprintln!(
+            "{} {} running on {} with model {}",
+            "•".with(Color::DarkGrey),
+            "buddy".with(Color::Green).bold(),
+            target.as_str().with(Color::White).bold(),
+            model.with(Color::Yellow).bold(),
+        );
+    } else {
+        eprintln!("• buddy running on {target} with model {model}");
+    }
+
+    if let Some(info) = tmux_info {
+        let attach = execution_tmux_attach_command(info);
+        if color {
+            eprintln!(
+                "  attach with: {}",
+                attach.as_str().with(Color::White).bold()
+            );
+        } else {
+            eprintln!("  attach with: {attach}");
+        }
+    }
+    eprintln!();
+}
+
+fn render_session_startup_line(
+    color: bool,
+    state: SessionStartupState,
+    session_id: &str,
+    context_used: u16,
+) {
+    let message = session_startup_message(state, session_id, context_used);
+    if color {
+        eprintln!("{} {}", "•".with(Color::DarkGrey), message);
+    } else {
+        eprintln!("• {message}");
+    }
+    eprintln!();
+}
+
+fn resume_request_from_command(
+    command: Option<&cli::Command>,
+) -> Result<Option<ResumeRequest>, String> {
+    let Some(command) = command else {
+        return Ok(None);
+    };
+
+    match command {
+        cli::Command::Resume { session_id, last } => {
+            if *last {
+                if session_id.is_some() {
+                    return Err(
+                        "Use either `buddy resume <session-id>` or `buddy resume --last`."
+                            .to_string(),
+                    );
+                }
+                return Ok(Some(ResumeRequest::Last));
+            }
+            let Some(session_id) = session_id.as_deref().map(str::trim) else {
+                return Err("Usage: buddy resume <session-id> | buddy resume --last".to_string());
+            };
+            if session_id.is_empty() {
+                return Err("session id cannot be empty".to_string());
+            }
+            Ok(Some(ResumeRequest::SessionId(session_id.to_string())))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn initialize_active_session(
+    renderer: &Renderer,
+    session_store: &SessionStore,
+    agent: &mut Agent,
+    resume_request: Option<ResumeRequest>,
+) -> Result<(SessionStartupState, String), String> {
+    match resume_request {
+        None => {
+            let snapshot = agent.snapshot_session();
+            let session_id = session_store
+                .create_new_session(&snapshot)
+                .map_err(|e| format!("failed to create new session: {e}"))?;
+            Ok((SessionStartupState::StartedNew, session_id))
+        }
+        Some(ResumeRequest::Last) => {
+            let Some(last_id) = session_store
+                .resolve_last()
+                .map_err(|e| format!("failed to resolve last session: {e}"))?
+            else {
+                return Err(
+                    "No saved sessions found in this directory. Start `buddy` to create one."
+                        .to_string(),
+                );
+            };
+            let snapshot = session_store
+                .load(&last_id)
+                .map_err(|e| format!("failed to load session {last_id}: {e}"))?;
+            agent.restore_session(snapshot.clone());
+            if let Err(e) = session_store.save(&last_id, &snapshot) {
+                renderer.warn(&format!("failed to refresh session {last_id}: {e}"));
+            }
+            Ok((SessionStartupState::ResumedExisting, last_id))
+        }
+        Some(ResumeRequest::SessionId(session_id)) => {
+            let snapshot = session_store
+                .load(&session_id)
+                .map_err(|e| format!("failed to load session {session_id}: {e}"))?;
+            agent.restore_session(snapshot.clone());
+            if let Err(e) = session_store.save(&session_id, &snapshot) {
+                renderer.warn(&format!("failed to refresh session {session_id}: {e}"));
+            }
+            Ok((SessionStartupState::ResumedExisting, session_id))
+        }
+    }
 }
 
 fn context_used_percent(agent: &Agent) -> Option<u16> {
@@ -2013,6 +2131,14 @@ fn format_elapsed(elapsed: Duration) -> String {
     }
 }
 
+fn format_elapsed_coarse(elapsed: Duration) -> String {
+    if elapsed.as_secs() >= 60 {
+        format!("{}m{}s", elapsed.as_secs() / 60, elapsed.as_secs() % 60)
+    } else {
+        format!("{}s", elapsed.as_secs())
+    }
+}
+
 fn truncate_preview(text: &str, max_len: usize) -> String {
     let flat: String = text
         .chars()
@@ -2081,26 +2207,23 @@ mod tests {
     #[test]
     fn session_startup_message_is_clear() {
         assert_eq!(
-            session_startup_message(SessionStartupState::ResumedExisting, "default"),
-            "using existing session \"default\""
+            session_startup_message(SessionStartupState::ResumedExisting, "abcd-1234", 4),
+            "using existing session \"abcd-1234\" (4% context used)"
         );
         assert_eq!(
-            session_startup_message(SessionStartupState::StartedNew, "default"),
-            "creating new session \"default\""
+            session_startup_message(SessionStartupState::StartedNew, "abcd-1234", 0),
+            "using new session \"abcd-1234\" (0% context used)"
         );
     }
 
     #[test]
-    fn missing_session_error_detection_handles_common_variants() {
-        assert!(is_missing_session_error(
-            "failed to read session .buddyx/sessions/default.json: No such file or directory (os error 2)"
-        ));
-        assert!(is_missing_session_error(
-            "failed to read session .buddyx/sessions/default.json: not found"
-        ));
-        assert!(!is_missing_session_error(
-            "failed to parse session .buddyx/sessions/default.json: invalid json"
-        ));
+    fn resume_request_validation_rejects_ambiguous_forms() {
+        let err = resume_request_from_command(Some(&cli::Command::Resume {
+            session_id: Some("abc".to_string()),
+            last: true,
+        }))
+        .expect_err("must reject");
+        assert!(err.contains("either"));
     }
 
     #[test]
@@ -2183,7 +2306,7 @@ mod tests {
         let by_prefixed_name = resolve_model_profile_selector(&cfg, &names, "/model kimi").unwrap();
         assert_eq!(by_prefixed_name, "kimi");
 
-        let by_prefixed_index = resolve_model_profile_selector(&cfg, &names, "/models 2").unwrap();
+        let by_prefixed_index = resolve_model_profile_selector(&cfg, &names, "/model 2").unwrap();
         assert_eq!(by_prefixed_index, names[1]);
     }
 

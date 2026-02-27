@@ -129,7 +129,7 @@ impl Agent {
 
     /// Replace the active API/model settings without resetting conversation state.
     ///
-    /// Used by runtime model switching (`/model` / `/models`).
+    /// Used by runtime model switching (`/model`).
     pub fn switch_api_config(&mut self, api: ApiConfig) {
         let context_limit = api
             .context_limit

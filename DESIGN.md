@@ -36,6 +36,7 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
 - CLI subcommands:
   - `buddy` (REPL)
   - `buddy exec <prompt>`
+  - `buddy resume <session-id>` / `buddy resume --last`
   - `buddy login [model-profile]`
   - `buddy help`
 - Configurable model/API settings with precedence:
@@ -44,7 +45,7 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
   - Local/global TOML config.
   - Built-in defaults.
   - On startup, `~/.config/buddy/buddy.toml` is auto-created (if missing) from a compiled template (`src/templates/buddy.toml`).
-  - Built-in template includes OpenAI `responses` profiles for `gpt-codex` (`gpt-5.3-codex`) and `gpt-spark` (`gpt-5.3-spark`), with `gpt-codex` selected by default.
+  - Built-in template includes OpenAI `responses` profiles for `gpt-codex` (`gpt-5.3-codex`) and `gpt-spark` (`gpt-5.3-codex-spark`), plus OpenRouter examples for DeepSeek V3.2 and GLM, with `gpt-codex` selected by default.
   - Primary naming uses `BUDDY_*` env vars + `buddy.toml`, with legacy `AGENT_*` and `agent.toml` compatibility fallbacks.
 - Built-in tool-calling agent loop:
   - Sends tool definitions to the model.
@@ -59,13 +60,13 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
   - `send-keys` for tmux key injection (for example Ctrl-C/Ctrl-Z/Enter/arrows) to control interactive terminal programs.
   - `time` for harness-recorded wall-clock time in multiple common UTC/epoch formats.
 - Multi-target execution for shell/file tools:
-  - Local host execution by default.
+  - Local host execution by default, tmux-backed when shell/file tools are enabled.
   - Container execution with `--container`.
   - Remote SSH execution with `--ssh`.
-  - Optional tmux session control with `--tmux [session]` (default auto session `buddy-xxxx` per local/container/SSH target), including persistent session/pane reuse and prompt-marker based output capture.
+  - Tmux-backed execution is the default for local/container/SSH targets (auto session `buddy-xxxx`), with optional override via `--tmux [session]`.
   - On tmux-backed startup, buddy prints friendly attach instructions (local, SSH, or container) including the resolved session name.
   - Managed tmux setup uses a single shared window (`buddy-shared`) with one pane by default.
-  - Local `--tmux` startup refuses to run from the managed `buddy-shared` pane to avoid self-injection loops; run buddy from a different terminal/pane.
+  - Local tmux startup refuses to run from the managed `buddy-shared` pane to avoid self-injection loops; run buddy from a different terminal/pane.
   - `capture-pane` is only enabled when tmux pane capture is available for the active execution target.
   - In tmux-backed targets, `run_shell` supports non-blocking dispatch (`wait: false`) and timeout-bound waits (`wait: "10m"` style) for interactive workflows.
 - System prompt templating:
@@ -76,7 +77,7 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
   - Prompt format:
     - local: `> `
     - ssh target: `(ssh user@host)> `
-  - Slash-command autocomplete and built-in slash commands (`/status`, `/context`, `/ps`, `/kill`, `/timeout`, `/approve`, `/session`, `/model`, `/models`, `/login`, `/help`, `/quit`, `/exit`, `/q`).
+  - Slash-command autocomplete and built-in slash commands (`/status`, `/context`, `/ps`, `/kill`, `/timeout`, `/approve`, `/session`, `/model`, `/login`, `/help`, `/quit`, `/exit`, `/q`).
   - Command history navigation (`Up/Down`, `Ctrl-P/N`).
   - Multiline editing with `Alt+Enter`.
   - Common cursor/edit shortcuts (`Ctrl-A/E/B/F/K/U/W`, arrows, home/end, delete/backspace).
@@ -84,8 +85,8 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
   - Session approval policy control via `/approve ask|all|none|<duration>`, including expiring auto-approve windows.
   - Background shell-confirmation handoff: when `run_shell` needs approval, the REPL input is interrupted and approval is rendered in the foreground.
   - One-line approval prompt format (`user@host$ <command> -- approve?`) with colorized actor/command/action segments.
-  - Inline liveness line while background tasks run (spinner + task runtime/state), rendered above the input prompt.
-  - Persistent named sessions under `.buddyx/sessions` with `/session` list + resume/create flows (`/session resume <name|last>`, `/session new <name>`), ordered by last use, with legacy `.agentx` auto-reuse when present.
+  - Inline liveness line while background tasks run (task runtime/state), rendered above the input prompt.
+  - Persistent session IDs under `.buddyx/sessions` with `/session` list + resume/create flows (`/session resume <session-id|last>`, `/session new`) and CLI resume (`buddy resume <session-id>`, `buddy resume --last`), ordered by last use, with legacy `.agentx` auto-reuse when present.
 - Terminal UX and observability:
   - Colorized status output.
   - Strict stdout/stderr separation (assistant response on stdout, status/chrome on stderr).
@@ -316,21 +317,20 @@ The interactive REPL reads input via `tui/input.rs`, which runs in raw mode and 
 - command gating while background tasks run (only `/ps`, `/kill <id>`, `/timeout <duration> [id]`, `/approve <mode>`, `/status`, `/context` are accepted)
 - foreground shell approval when background tasks hit a `run_shell` confirmation point (`y/yes` approve; `n/no` deny), rendered as an inline one-line approval prompt
 - approval policy controls for shell confirmations (`/approve ask|all|none|<duration>`)
-- persistent named sessions stored locally under `.buddyx/` (`/session`, `/session resume <name|last>`, `/session new <name>`)
-- model-profile switching from config via `/model <name|index>` and `/models` picker flow
+- persistent ID-based sessions stored locally under `.buddyx/` (`/session`, `/session resume <session-id|last>`, `/session new`, and CLI `buddy resume <session-id>|--last`)
+- model-profile switching from config via `/model [name|index]` (no-arg opens arrow-key picker)
 
 Supported slash commands:
 - `/status` — current model, endpoint, enabled tools, and session counters
-- `/model <name|index>` — switch the active configured model profile
-- `/models` — list configured model profiles and select one interactively
+- `/model [name|index]` — switch the active configured model profile (`/model` opens picker)
 - `/context` — estimated context window usage + token stats
 - `/ps` — list running background tasks
 - `/kill <id>` — cancel a running background task by task ID
 - `/timeout <duration> [id]` — set timeout for a running background task (id optional only when one task exists)
 - `/approve ask|all|none|<duration>` — configure shell approval policy for this session
 - `/session` — list sessions ordered by last use
-- `/session resume <name|last>` — save current session and resume a named/most-recent session
-- `/session new <name>` — start and switch to a fresh named session
+- `/session resume <session-id|last>` — save current session and resume by id / most-recent
+- `/session new` — start and switch to a fresh generated session id
 - `/help` — slash command reference (only when no background tasks are running)
 - `/quit`, `/exit`, `/q` — exit (only when no background tasks are running)
 

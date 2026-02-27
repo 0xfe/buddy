@@ -5,8 +5,11 @@
 
 use crate::agent::AgentSessionSnapshot;
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const SESSIONS_DIR: &str = "sessions";
@@ -18,7 +21,7 @@ const LEGACY_SESSION_ROOT: &str = ".agentx";
 /// Lightweight listing metadata shown by `/session`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionSummary {
-    pub name: String,
+    pub id: String,
     pub updated_at_millis: u64,
 }
 
@@ -31,10 +34,13 @@ pub struct SessionStore {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PersistedSession {
     version: u32,
-    name: String,
+    #[serde(alias = "name")]
+    id: String,
     updated_at_millis: u64,
     state: AgentSessionSnapshot,
 }
+
+static NEXT_SESSION_NONCE: AtomicU64 = AtomicU64::new(1);
 
 impl SessionStore {
     /// Open/create the default local session directory (`.buddyx/sessions`).
@@ -63,18 +69,32 @@ impl SessionStore {
         Ok(Self { sessions_dir })
     }
 
-    /// Save snapshot state under a stable session name.
-    pub fn save(&self, name: &str, state: &AgentSessionSnapshot) -> Result<(), String> {
-        validate_session_name(name)?;
+    /// Create and persist a new unique session ID for `state`.
+    pub fn create_new_session(&self, state: &AgentSessionSnapshot) -> Result<String, String> {
+        for _ in 0..64 {
+            let session_id = generate_session_id();
+            let path = self.session_path(&session_id);
+            if path.exists() {
+                continue;
+            }
+            self.save(&session_id, state)?;
+            return Ok(session_id);
+        }
+        Err("failed to allocate a unique session id".to_string())
+    }
+
+    /// Save snapshot state under a stable session ID.
+    pub fn save(&self, session_id: &str, state: &AgentSessionSnapshot) -> Result<(), String> {
+        validate_session_id(session_id)?;
         let payload = PersistedSession {
             version: SESSION_FILE_VERSION,
-            name: name.to_string(),
+            id: session_id.to_string(),
             updated_at_millis: now_unix_millis(),
             state: state.clone(),
         };
         let json = serde_json::to_vec_pretty(&payload)
-            .map_err(|e| format!("failed to serialize session {name}: {e}"))?;
-        let path = self.session_path(name);
+            .map_err(|e| format!("failed to serialize session {session_id}: {e}"))?;
+        let path = self.session_path(session_id);
         let tmp_path = path.with_extension("json.tmp");
         fs::write(&tmp_path, json).map_err(|e| {
             format!(
@@ -91,10 +111,10 @@ impl SessionStore {
         Ok(())
     }
 
-    /// Load a named session snapshot from disk.
-    pub fn load(&self, name: &str) -> Result<AgentSessionSnapshot, String> {
-        validate_session_name(name)?;
-        let path = self.session_path(name);
+    /// Load a saved session snapshot from disk.
+    pub fn load(&self, session_id: &str) -> Result<AgentSessionSnapshot, String> {
+        validate_session_id(session_id)?;
+        let path = self.session_path(session_id);
         let raw = fs::read_to_string(&path)
             .map_err(|e| format!("failed to read session {}: {e}", path.display()))?;
         let payload: PersistedSession = serde_json::from_str(&raw)
@@ -130,7 +150,7 @@ impl SessionStore {
                 Err(_) => continue,
             };
             sessions.push(SessionSummary {
-                name: payload.name,
+                id: payload.id,
                 updated_at_millis: payload.updated_at_millis,
             });
         }
@@ -138,35 +158,36 @@ impl SessionStore {
         sessions.sort_by(|a, b| {
             b.updated_at_millis
                 .cmp(&a.updated_at_millis)
-                .then_with(|| a.name.cmp(&b.name))
+                .then_with(|| a.id.cmp(&b.id))
         });
         Ok(sessions)
     }
 
     /// Resolve `"last"` to the most recently used session.
     pub fn resolve_last(&self) -> Result<Option<String>, String> {
-        Ok(self.list()?.into_iter().next().map(|s| s.name))
+        Ok(self.list()?.into_iter().next().map(|s| s.id))
     }
 
-    fn session_path(&self, name: &str) -> PathBuf {
-        self.sessions_dir.join(format!("{name}.{SESSION_FILE_EXT}"))
+    fn session_path(&self, session_id: &str) -> PathBuf {
+        self.sessions_dir
+            .join(format!("{session_id}.{SESSION_FILE_EXT}"))
     }
 }
 
-fn validate_session_name(name: &str) -> Result<(), String> {
-    let trimmed = name.trim();
+fn validate_session_id(session_id: &str) -> Result<(), String> {
+    let trimmed = session_id.trim();
     if trimmed.is_empty() {
-        return Err("session name cannot be empty".to_string());
+        return Err("session id cannot be empty".to_string());
     }
     if trimmed == "." || trimmed == ".." {
-        return Err("session name cannot be '.' or '..'".to_string());
+        return Err("session id cannot be '.' or '..'".to_string());
     }
     if trimmed
         .chars()
         .any(|ch| !(ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.'))
     {
         return Err(
-            "session name can only contain ASCII letters, numbers, '.', '-', '_'".to_string(),
+            "session id can only contain ASCII letters, numbers, '.', '-', '_'".to_string(),
         );
     }
     Ok(())
@@ -181,6 +202,38 @@ fn now_unix_millis() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+/// Generate a unique-ish hex session id (`xxxx-xxxx-xxxx-xxxx`).
+pub fn generate_session_id() -> String {
+    let nonce = NEXT_SESSION_NONCE.fetch_add(1, Ordering::Relaxed);
+    let now_ns = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let pid = std::process::id();
+
+    let mut h1 = DefaultHasher::new();
+    now_ns.hash(&mut h1);
+    nonce.hash(&mut h1);
+    pid.hash(&mut h1);
+    let left = h1.finish();
+
+    let mut h2 = DefaultHasher::new();
+    nonce.rotate_left(17).hash(&mut h2);
+    now_ns.rotate_left(29).hash(&mut h2);
+    (pid as u64).rotate_left(9).hash(&mut h2);
+    let right = h2.finish();
+
+    let mixed = left ^ right.rotate_left(13);
+    let hex = format!("{mixed:016x}");
+    format!(
+        "{}-{}-{}-{}",
+        &hex[0..4],
+        &hex[4..8],
+        &hex[8..12],
+        &hex[12..16]
+    )
 }
 
 #[cfg(test)]
@@ -233,7 +286,7 @@ mod tests {
 
         let sessions = store.list().expect("list should succeed");
         assert!(!sessions.is_empty());
-        assert_eq!(sessions[0].name, "b");
+        assert_eq!(sessions[0].id, "b");
     }
 
     #[test]
@@ -247,11 +300,31 @@ mod tests {
     }
 
     #[test]
-    fn invalid_name_is_rejected() {
+    fn invalid_session_id_is_rejected() {
         let store = test_store();
         let err = store
             .save("bad/name", &test_snapshot())
             .expect_err("must fail");
-        assert!(err.contains("session name"));
+        assert!(err.contains("session id"));
+    }
+
+    #[test]
+    fn generate_session_id_is_hex_groups() {
+        let id = generate_session_id();
+        let parts = id.split('-').collect::<Vec<_>>();
+        assert_eq!(parts.len(), 4);
+        assert!(parts.iter().all(|part| part.len() == 4));
+        assert!(parts
+            .iter()
+            .all(|part| part.chars().all(|ch| ch.is_ascii_hexdigit())));
+    }
+
+    #[test]
+    fn create_new_session_allocates_distinct_ids() {
+        let store = test_store();
+        let snapshot = test_snapshot();
+        let first = store.create_new_session(&snapshot).expect("create first");
+        let second = store.create_new_session(&snapshot).expect("create second");
+        assert_ne!(first, second);
     }
 }

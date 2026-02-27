@@ -20,6 +20,6 @@ pub mod text;
 pub use commands::{
     matching_slash_commands, parse_slash_command, SlashCommand, SlashCommandAction, SLASH_COMMANDS,
 };
-pub use input::{read_repl_line_with_interrupt, ReadOutcome, ReadPoll, ReplState};
+pub use input::{pick_from_list, read_repl_line_with_interrupt, ReadOutcome, ReadPoll, ReplState};
 pub use prompt::{ApprovalPrompt, PromptMode};
 pub use renderer::Renderer;

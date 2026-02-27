@@ -31,6 +31,7 @@
   - CLI now uses subcommands (`src/cli.rs`):
     - `buddy` (REPL)
     - `buddy exec <prompt>`
+    - `buddy resume <session-id>` / `buddy resume --last`
     - `buddy login [model-profile]`
     - `buddy help`
   - Added REPL slash command `/login [name|index]` (`src/tui/commands.rs`, `src/main.rs`).
@@ -38,14 +39,17 @@
 
 - Config/template/bootstrap refresh:
   - Config schema migrated from single `[api]` to profile map `[models.<name>]` (also accepts `[model.<name>]` alias), with active profile selected by `[agent].model`.
-  - Added runtime model profile switch via REPL slash commands: `/model <name|index>` and `/models`.
+  - Runtime model profile switch now uses one command: `/model [name|index]` (`/model` with no args opens arrow-key picker and Esc cancels).
   - API key source options are per profile: `api_key`, `api_key_env`, `api_key_file` (`src/config.rs`), with strict mutual exclusivity validation.
   - API key resolution order now:
     1. `BUDDY_API_KEY` / `AGENT_API_KEY`
     2. selected profile `api_key_env` (named env var; empty if unset)
     3. selected profile `api_key_file` (file content, trailing newline trimmed)
     4. selected profile `api_key`
-  - Default generated config template now uses `[models.gpt-codex]` (`gpt-5.3-codex`) and `[models.gpt-spark]` (`gpt-5.3-spark`), both with `api = "responses"` and `auth = "login"`.
+  - Default generated config template now uses `[models.gpt-codex]` (`gpt-5.3-codex`) and `[models.gpt-spark]` (`gpt-5.3-codex-spark`), both with `api = "responses"` and `auth = "login"`.
+  - Default template also includes OpenRouter examples:
+    - `[models.openrouter-deepseek]` -> `deepseek/deepseek-v3.2`
+    - `[models.openrouter-glm]` -> `z-ai/glm-5`
   - Default active profile is now `agent.model = "gpt-codex"`.
   - `main.rs` now calls `ensure_default_global_config()` before `load_config(...)`.
   - Repository sample config moved from repo root to `src/templates/buddy.toml` and is embedded via `include_str!`.
@@ -59,10 +63,26 @@
   - `ensure_tmux_pane_script()` creates new sessions directly with `buddy-shared` as the initial window (`tmux new-session -d -s "$SESSION" -n "$WINDOW"`), avoiding the extra default window.
   - Missing `buddy-shared` windows are created with `tmux new-window -d -t "$SESSION" -n "$WINDOW"` (no explicit `session:` target), avoiding index-collision errors like `create window failed: index 3 in use`.
   - Managed setup now assumes a single shared pane in `buddy-shared` (operators can add panes/windows manually).
-  - `ExecutionContext::tmux_attach_info()` exposes attach metadata; `main.rs` now renders a single concise `execution` section with `attach to session: ...` (no separate tmux section).
+  - Tmux-backed execution is now the default when shell/file tools are enabled (local/container/ssh), with optional `--tmux [session]` override.
+  - `ExecutionContext::tmux_attach_info()` exposes attach metadata; startup now renders a compact banner:
+    - `• buddy running on <target> with model <model>`
+    - `  attach with: <tmux attach command>`
   - Prompt-layout initialization (`BUDDY_PROMPT_LAYOUT`, etc.) runs only when the managed pane is newly created; existing panes are reused without re-init.
   - After first-time prompt setup, buddy sends `clear` so first attach lands on a fresh screen.
-  - Local `--tmux` still rejects startup when the current pane window name is `buddy-shared`, with guidance to run buddy from a different terminal/pane.
+  - Local tmux startup still rejects startup when the current pane window name is `buddy-shared`, with guidance to run buddy from a different terminal/pane.
+
+- Session lifecycle changes:
+  - Sessions are now ID-based (`xxxx-xxxx-xxxx-xxxx`) instead of a fixed `default` name.
+  - Plain `buddy` startup creates a fresh session ID each run.
+  - Resume flows:
+    - CLI: `buddy resume <session-id>` / `buddy resume --last`
+    - REPL: `/session resume <session-id|last>`
+  - REPL creation flow: `/session new` now creates a generated ID (no name argument).
+
+- Input/render stability fixes:
+  - REPL editor now memoizes render frames and skips redundant full-surface redraws when nothing visible changed.
+  - Live task status above the prompt is forced to a single clipped line to prevent multi-line wrap drift/clear corruption during long approval prompts.
+  - Background liveness text no longer animates per-frame spinner glyphs; elapsed text is coarse-grained for calmer redraw cadence.
 
 - Output preview/tint rendering upgraded:
   - Tool output for `run_shell` and `read_file` now renders as clipped snippet blocks (first 10 lines) with `...N more lines...` continuation markers.
@@ -159,13 +179,16 @@
   - Remote target instructions are parameterized by template render (instead of separate text-file append logic).
 
 - Session persistence added:
-  - New module: `src/session.rs` storing named sessions under `.buddyx/sessions`.
+  - New module: `src/session.rs` storing ID-based sessions under `.buddyx/sessions`.
   - Agent state snapshot/restore support lives in `src/agent.rs` (`snapshot_session`, `restore_session`, `reset_session`).
-  - Interactive mode auto-loads/saves `default` session and persists on prompt completion.
+  - Interactive mode now creates a fresh generated session ID on plain startup and persists active session state on prompt completion.
+  - CLI resume support:
+    - `buddy resume <session-id>`
+    - `buddy resume --last`
   - New slash command flow:
     - `/session` lists sessions ordered by last use
-    - `/session resume <name|last>` resumes a specific or most-recent session
-    - `/session new <name>` creates/switches to a fresh named session
+    - `/session resume <session-id|last>` resumes a specific or most-recent session
+    - `/session new` creates/switches to a fresh generated session ID
   - Test isolation fix:
     - `src/session.rs` tests now use an atomic suffix for temp session roots to avoid occasional collisions when tests execute quickly/parallel.
 

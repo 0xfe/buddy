@@ -18,6 +18,7 @@ use crate::tui::prompt::{
     ApprovalPrompt, PromptMode,
 };
 use crate::tui::settings;
+use crate::tui::text::clip_to_width;
 use crossterm::cursor::{MoveToColumn, MoveUp};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::style::{Print, PrintStyledContent, Stylize};
@@ -42,6 +43,28 @@ pub enum ReadOutcome {
 pub struct ReadPoll {
     pub interrupt: bool,
     pub status_line: Option<String>,
+}
+
+/// Present an interactive list picker and return the selected index.
+///
+/// In TTY mode, use arrow keys and Enter to select, or Esc to cancel.
+/// In non-interactive mode, a numeric selection prompt is shown.
+pub fn pick_from_list(
+    color: bool,
+    title: &str,
+    help: &str,
+    options: &[String],
+    initial_selection: usize,
+) -> io::Result<Option<usize>> {
+    if options.is_empty() {
+        return Ok(None);
+    }
+
+    if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
+        return pick_from_list_fallback(title, options);
+    }
+
+    pick_from_list_interactive(color, title, help, options, initial_selection)
 }
 
 /// Read one REPL line, but allow an external caller to interrupt input.
@@ -151,6 +174,7 @@ fn read_line_interactive(
     let mut cursor = draft.cursor; // cursor in char indices
     let mut selected = draft.selected;
     let mut previous_cursor_row = 0usize;
+    let mut last_render_signature: Option<String> = None;
     let mut history_index = draft.history_index.filter(|idx| *idx < state.history_len());
     let mut history_draft = draft.history_draft;
 
@@ -160,21 +184,31 @@ fn read_line_interactive(
         if selected >= matches.len() {
             selected = 0;
         }
-        previous_cursor_row = render_editor(
-            &mut stderr,
-            color,
-            ssh_target,
-            context_used_percent,
-            prompt_mode,
-            approval_prompt,
-            &primary_prompt,
+        let signature = editor_render_signature(
             poll_state.status_line.as_deref(),
             &buffer,
             cursor,
-            &matches,
             selected,
-            previous_cursor_row,
-        )?;
+            &matches,
+        );
+        if last_render_signature.as_deref() != Some(signature.as_str()) {
+            previous_cursor_row = render_editor(
+                &mut stderr,
+                color,
+                ssh_target,
+                context_used_percent,
+                prompt_mode,
+                approval_prompt,
+                &primary_prompt,
+                poll_state.status_line.as_deref(),
+                &buffer,
+                cursor,
+                &matches,
+                selected,
+                previous_cursor_row,
+            )?;
+            last_render_signature = Some(signature);
+        }
 
         if poll_state.interrupt {
             state.save_draft(
@@ -371,6 +405,164 @@ fn read_line_interactive(
     }
 }
 
+fn pick_from_list_fallback(title: &str, options: &[String]) -> io::Result<Option<usize>> {
+    eprintln!("• {title}");
+    for (idx, option) in options.iter().enumerate() {
+        eprintln!("  {}. {}", idx + 1, option);
+    }
+    eprint!("  pick (empty to cancel): ");
+    io::stderr().flush()?;
+
+    let mut line = String::new();
+    if io::stdin().read_line(&mut line)? == 0 {
+        eprintln!();
+        return Ok(None);
+    }
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let Ok(index) = trimmed.parse::<usize>() else {
+        return Ok(None);
+    };
+    if index == 0 || index > options.len() {
+        return Ok(None);
+    }
+    Ok(Some(index - 1))
+}
+
+fn pick_from_list_interactive(
+    color: bool,
+    title: &str,
+    help: &str,
+    options: &[String],
+    initial_selection: usize,
+) -> io::Result<Option<usize>> {
+    let _guard = RawModeGuard::acquire()?;
+    let mut stderr = io::stderr();
+    let mut selected = initial_selection.min(options.len().saturating_sub(1));
+    let mut previous_rows = 0usize;
+
+    loop {
+        previous_rows = render_picker(
+            &mut stderr,
+            color,
+            title,
+            help,
+            options,
+            selected,
+            previous_rows,
+        )?;
+
+        if !event::poll(Duration::from_millis(settings::REPL_EVENT_POLL_MS))? {
+            continue;
+        }
+
+        let evt = event::read()?;
+        let Event::Key(key) = evt else {
+            continue;
+        };
+        if key.kind != KeyEventKind::Press && key.kind != KeyEventKind::Repeat {
+            continue;
+        }
+
+        match key.code {
+            KeyCode::Up => {
+                selected = if selected == 0 {
+                    options.len().saturating_sub(1)
+                } else {
+                    selected - 1
+                };
+            }
+            KeyCode::Down => {
+                selected = (selected + 1) % options.len();
+            }
+            KeyCode::Enter => {
+                clear_editor_surface(&mut stderr, previous_rows)?;
+                return Ok(Some(selected));
+            }
+            KeyCode::Esc => {
+                clear_editor_surface(&mut stderr, previous_rows)?;
+                return Ok(None);
+            }
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                clear_editor_surface(&mut stderr, previous_rows)?;
+                return Ok(None);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn render_picker(
+    stderr: &mut io::Stderr,
+    color: bool,
+    title: &str,
+    help: &str,
+    options: &[String],
+    selected: usize,
+    previous_rows: usize,
+) -> io::Result<usize> {
+    if previous_rows > 0 {
+        stderr.queue(MoveUp(previous_rows as u16))?;
+    }
+    stderr.queue(MoveToColumn(0))?;
+    stderr.queue(Clear(ClearType::FromCursorDown))?;
+
+    let cols = terminal_columns();
+    let mut total_rows = 0usize;
+    let title_plain = format!("• {title}");
+    total_rows += wrapped_rows(&title_plain, cols);
+    if color {
+        stderr.queue(PrintStyledContent("•".with(settings::COLOR_SECTION_BULLET)))?;
+        stderr.queue(Print(" "))?;
+        stderr.queue(PrintStyledContent(
+            title.with(settings::COLOR_SECTION_TITLE).bold(),
+        ))?;
+    } else {
+        stderr.queue(Print(&title_plain))?;
+    }
+    let help_plain = format!("  {help}");
+    stderr.queue(Print("\r\n"))?;
+    total_rows += wrapped_rows(&help_plain, cols);
+    if color {
+        stderr.queue(PrintStyledContent(
+            help_plain.as_str().with(settings::COLOR_FIELD_KEY),
+        ))?;
+    } else {
+        stderr.queue(Print(&help_plain))?;
+    }
+
+    for (idx, option) in options.iter().enumerate() {
+        let active = idx == selected;
+        let marker = if active { "▶" } else { "·" };
+        let line_plain = format!("  {marker} {}", option);
+        stderr.queue(Print("\r\n"))?;
+        total_rows += wrapped_rows(&line_plain, cols);
+        if color {
+            let marker_color = if active {
+                settings::COLOR_AUTOCOMPLETE_SELECTED
+            } else {
+                settings::COLOR_AUTOCOMPLETE_UNSELECTED
+            };
+            let text_color = if active {
+                settings::COLOR_AUTOCOMPLETE_COMMAND
+            } else {
+                settings::COLOR_FIELD_VALUE
+            };
+            stderr.queue(Print("  "))?;
+            stderr.queue(PrintStyledContent(marker.with(marker_color)))?;
+            stderr.queue(Print(" "))?;
+            stderr.queue(PrintStyledContent(option.as_str().with(text_color)))?;
+        } else {
+            stderr.queue(Print(&line_plain))?;
+        }
+    }
+
+    stderr.flush()?;
+    Ok(total_rows.saturating_sub(1))
+}
+
 fn clear_editor_surface(stderr: &mut io::Stderr, previous_cursor_row: usize) -> io::Result<()> {
     if previous_cursor_row > 0 {
         stderr.queue(MoveUp(previous_cursor_row as u16))?;
@@ -379,6 +571,43 @@ fn clear_editor_surface(stderr: &mut io::Stderr, previous_cursor_row: usize) -> 
     stderr.queue(Clear(ClearType::FromCursorDown))?;
     stderr.flush()?;
     Ok(())
+}
+
+fn editor_render_signature(
+    status_line: Option<&str>,
+    buffer: &str,
+    cursor: usize,
+    selected: usize,
+    matches: &[SlashCommand],
+) -> String {
+    let mut signature = String::new();
+    signature.push_str(status_line.unwrap_or_default());
+    signature.push('|');
+    signature.push_str(buffer);
+    signature.push('|');
+    signature.push_str(&cursor.to_string());
+    signature.push('|');
+    signature.push_str(&selected.to_string());
+    signature.push('|');
+    for cmd in matches {
+        signature.push_str(cmd.name);
+        signature.push(',');
+    }
+    signature
+}
+
+fn single_line_status(status_line: &str, cols: usize) -> String {
+    let flat = status_line.replace('\n', " ");
+    if cols == 0 {
+        return flat;
+    }
+    if flat.chars().count() <= cols {
+        return flat;
+    }
+    if cols <= 3 {
+        return clip_to_width(&flat, cols);
+    }
+    format!("{}...", clip_to_width(&flat, cols - 3))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -404,14 +633,15 @@ fn render_editor(
     stderr.queue(Clear(ClearType::FromCursorDown))?;
 
     let cols = terminal_columns();
-    let status_prefix_rows = if let Some(status_line) = status_line {
+    let status_prefix_rows: usize = if let Some(status_line) = status_line {
+        let display = single_line_status(status_line, cols);
         write_status_line(
             stderr,
             color,
-            status_line,
+            &display,
             settings::STATUS_LINE_NEWLINE_INTERACTIVE,
         )?;
-        wrapped_rows(status_line, cols)
+        1
     } else {
         0
     };
@@ -564,5 +794,24 @@ mod tests {
         let outcome =
             read_line_fallback(false, None, None, PromptMode::Normal, None, &mut poll).unwrap();
         assert_eq!(outcome, ReadOutcome::Interrupted);
+    }
+
+    #[test]
+    fn single_line_status_truncates_to_terminal_width() {
+        assert_eq!(single_line_status("abcdef", 4), "a...");
+        assert_eq!(single_line_status("abc", 4), "abc");
+    }
+
+    #[test]
+    fn render_signature_changes_with_status_and_selection() {
+        let matches = [SlashCommand {
+            name: "/model",
+            description: "model switch",
+        }];
+        let a = editor_render_signature(Some("a"), "/model", 6, 0, &matches);
+        let b = editor_render_signature(Some("b"), "/model", 6, 0, &matches);
+        let c = editor_render_signature(Some("a"), "/model", 6, 1, &matches);
+        assert_ne!(a, b);
+        assert_ne!(a, c);
     }
 }
