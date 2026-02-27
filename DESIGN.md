@@ -128,6 +128,7 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
   - Assistant messages with tool calls preserve compatible null content behavior.
   - Empty/null assistant turns are sanitized out of request history before dispatch so strict providers (for example Moonshot/Kimi) do not reject follow-up turns.
   - Reasoning traces only render textual reasoning content; null/metadata-only reasoning payloads are suppressed.
+  - Optional parser property-test suite is available via `cargo test --features fuzz-tests` (currently covers Responses SSE payload parsing and shell wait-duration parsing).
 
 ## Module details
 

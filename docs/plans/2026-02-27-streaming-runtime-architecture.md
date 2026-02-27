@@ -5,7 +5,7 @@
 - Current milestone: Completed
 - Current status: `S0`-`S5` complete (integrated with `docs/plans/2026-02-27-claude-feedback-remediation-plan.md`)
 - Next steps:
-  1. Runtime plan is in maintenance mode; drive new work through remediation Milestone 7.
+  1. Runtime plan is in maintenance mode; drive new work through remediation post-M7 backlog slices.
   2. Keep model-regression and runtime parity checks as release gates when runtime event contracts change.
 
 ## Task Board

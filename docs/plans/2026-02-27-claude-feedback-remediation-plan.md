@@ -3,7 +3,7 @@
 ## Status
 
 - Program status: Active (integrated with `docs/plans/2026-02-27-streaming-runtime-architecture.md`)
-- Current focus: prepare Milestone 7 deferred architecture slices now that Milestone 6 UX follow-up checkpoints are closed.
+- Current focus: Milestone 7 closed; maintain/runtime hardening and optional deferred items only (`D3`, remaining `D4`, `C2`).
 - Completed so far:
   1. Streaming/runtime `S0` complete (typed runtime command/event schema).
   2. Streaming/runtime `S1` complete (agent emits runtime events with mockable model client interface).
@@ -21,10 +21,11 @@
   14. Streaming/runtime `S5` landed (runtime docs/stabilization updates across README/DESIGN/ai-state + plan sync).
   15. Remediation Milestone 4 landed (context budget hard-stop + compaction path, `/compact`, `u64` token accounting, CSPRNG session IDs, SSH control cleanup verification).
   16. Remediation Milestone 6 follow-up slices landed (`U3`, `U4`, `U5`, `B4`) with fresh model-regression validation.
+  17. Remediation Milestone 7 landed (`D1`/`D2`/`C3`/`T4`) with backend extraction, deprecation timeline warnings, and feature-gated parser property tests.
 - Next steps:
-  1. Start Milestone 7 deferred architecture slices (`D1`/`D2`) on top of the stabilized runtime.
-  2. Add deprecation policy/timeline work (`C3`) once Milestone 7 extraction boundaries are in place.
-  3. Keep model-regression suite as a release gate whenever default provider/model profiles change.
+  1. Keep model-regression suite as a release gate whenever default provider/model profiles change.
+  2. Revisit optional `D3` plugin MVP only when there is concrete operator demand.
+  3. Continue reducing legacy compatibility surface (`C2`) and remaining modular cleanup (`D4`) in small slices.
 
 ## Integrated Program Board
 
@@ -35,7 +36,7 @@
 - [x] Milestone 4: Conversation Safety and Session Robustness (P2)
 - [x] Milestone 5: Testability and Modularization (P2/P3)
 - [x] Milestone 6: UX Improvements (P3)
-- [ ] Milestone 7: Deferred Design Extensions (P4)
+- [x] Milestone 7: Deferred Design Extensions (P4)
 
 ## Goal
 
@@ -364,11 +365,11 @@ Address lower-priority architecture items after stabilization (`D1`, `D2`, `D3`,
 
 ### Tasks
 
-1. Introduce `ToolContext` API and migrate tools incrementally.
-2. Begin `ExecutionContext` backend trait extraction to reduce duplication.
-3. Add deprecation warnings + timeline for `AGENT_*`, `agent.toml`, `.agentx`, legacy auth keys.
-4. Add parser fuzz/property tests (`proptest`/`cargo-fuzz` targets).
-5. Evaluate script-based tool plugin MVP only after above completes.
+1. [x] Introduce `ToolContext` API and migrate tools incrementally.
+2. [x] Begin `ExecutionContext` backend trait extraction to reduce duplication.
+3. [x] Add deprecation warnings + timeline for `AGENT_*`, `agent.toml`, `.agentx`, legacy auth keys.
+4. [x] Add parser fuzz/property tests (`proptest`/`cargo-fuzz` targets).
+5. [ ] Evaluate script-based tool plugin MVP only after above completes (deferred by priority).
 
 ### Acceptance Gate
 
@@ -390,10 +391,10 @@ Address lower-priority architecture items after stabilization (`D1`, `D2`, `D3`,
 
 ### Commits
 
-1. `refactor(tools): add tool context interface and migrate core tools`
-2. `refactor(exec): extract backend trait and reduce execution duplication`
-3. `chore(compat): add deprecation warnings and migration timeline`
-4. `test(fuzz): add parser property/fuzz targets`
+1. `324b0d2` — `feat(runtime): introduce streaming command/event interface for model/tool/metrics flows` (`D1` foundation)
+2. `efb1116` — `refactor(exec): extract backend trait implementations from ExecutionContext`
+3. `e5b09e4` — `chore(compat): add legacy deprecation warnings and migration timeline`
+4. `42084dc` — `test(fuzz): add feature-gated parser property tests`
 5. `feat(tools): prototype config-driven script tool loading` (optional, only if prioritized later)
 
 ## Cross-Milestone Quality Gates
@@ -511,3 +512,21 @@ Address lower-priority architecture items after stabilization (`D1`, `D2`, `D3`,
   - Added parser resilience tests (attribute reordering, fallback extraction, limit enforcement).
   - Validation: `cargo test -q` passed.
   - commit: `f9fba20`
+- 2026-02-27: Completed Milestone 7 slice `D2`:
+  - Refactored `ExecutionContext` to store `Arc<dyn ExecutionBackendOps>` and moved backend behavior into concrete backend impls.
+  - Added shared `CommandBackend` helper contract to deduplicate shell-backed `read_file`/`write_file` paths across local tmux/container/ssh backends.
+  - Validation: `cargo test -q` passed.
+  - commit: `efb1116`
+- 2026-02-27: Completed Milestone 7 slice `C3`:
+  - Added load-time config diagnostics (`load_config_with_diagnostics`) and startup warnings for deprecated `AGENT_*`, `agent.toml`, legacy `[api]`, `.agentx`, and legacy auth profile records.
+  - Added migration policy doc `docs/deprecations.md` and updated README/DESIGN/docs/tools references.
+  - Validation: `cargo test -q` passed.
+  - commit: `e5b09e4`
+- 2026-02-27: Completed Milestone 7 slice `T4`:
+  - Added feature-gated parser property tests (`--features fuzz-tests`) for Responses SSE event parsing and shell wait-duration parsing.
+  - Added `fuzz-tests` feature wiring in `Cargo.toml` and remediation playbook command coverage.
+  - Validation: `cargo test -q` and `cargo test -q --features fuzz-tests` passed.
+  - commit: `42084dc`
+- 2026-02-27: Milestone 7 closed.
+  - Scope landed: `D1` foundation + `D2` + `C3` + `T4`.
+  - Deferred by priority: optional `D3` plugin MVP.

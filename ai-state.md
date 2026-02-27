@@ -28,10 +28,14 @@
     - `R3` done: API client now retries transient failures (429/5xx/timeouts/connectivity) with capped backoff and `Retry-After` support.
     - `R4` done: SSH control-master drop path has explicit cleanup verification coverage.
     - `R5` done: web search/auth flows now reuse shared HTTP clients instead of per-call client construction.
+    - `D1` done: tool runtime context + stream event contract is in place and consumed by runtime/CLI adapters.
+    - `D2` done: `ExecutionContext` now delegates through backend trait objects with shared command-backend helpers.
+    - `C3` done: startup deprecation warnings/timeline landed for legacy env/config/session/auth compatibility paths.
+    - `T4` done: feature-gated parser property tests landed (`cargo test --features fuzz-tests`).
   - Not done yet (active backlog):
-    - `T2`, `T3`, `T4`
-    - `D1`, `D2`, `D3`, `D4`
-    - `C2`, `C3`
+    - `T2`, `T3`
+    - `D3`, `D4`
+    - `C2`
   - Repro/runbook:
     - `docs/playbook-remediation.md` contains reproducible commands and baseline checks.
 - Runtime schema scaffolding added in `src/runtime.rs`:
@@ -50,6 +54,7 @@
   - Handles submit/cancel/model-switch/session commands plus explicit approval command routing (`RuntimeCommand::Approve`).
   - Both `buddy exec` and interactive REPL prompt execution now consume runtime command/event flow.
 - Config load precedence (effective): env vars override TOML; CLI flags override loaded config in `main.rs`.
+- `load_config_with_diagnostics(...)` now reports startup deprecation diagnostics (`AGENT_*`, `agent.toml`, legacy `[api]`) while preserving `load_config(...)` compatibility.
 - Tool runtime interface upgrade:
   - `Tool::execute(&self, arguments, context)` now accepts `ToolContext`.
   - `ToolContext` can emit `ToolStreamEvent` values (`Started`, `StdoutChunk`, `StderrChunk`, `Info`, `Completed`).
@@ -69,6 +74,19 @@
 - Status/chrome output -> stderr; assistant final answer -> stdout (`src/tui/renderer.rs`, re-exported via `src/render.rs`).
 
 ## Important recent changes
+
+- Milestone 7 closure updates:
+  - `src/tools/execution.rs`:
+    - `ExecutionContext` now stores `Arc<dyn ExecutionBackendOps>` instead of a large backend enum match dispatcher.
+    - Backend-specific behavior lives in concrete implementations (`LocalBackend`, `LocalTmuxContext`, `ContainerContext`, `ContainerTmuxContext`, `SshContext`).
+    - Shared `CommandBackend` trait centralizes shell-backed read/write command paths.
+  - Deprecation policy and warnings:
+    - `src/config.rs` adds `load_config_with_diagnostics(...)`.
+    - Startup now warns once per run for deprecated compatibility paths (`AGENT_*`, `agent.toml`, `[api]`, `.agentx`, legacy auth profile records).
+    - New migration doc: `docs/deprecations.md` (removal target after `v0.4`).
+  - Parser property tests:
+    - Feature-gated suite via `cargo test --features fuzz-tests`.
+    - Added property tests for Responses SSE event payload parsing (`src/api/responses.rs`) and shell wait-duration parsing (`src/tools/shell.rs`).
 
 - Responses/login/subcommand upgrade:
   - `src/api/` is now split by concern:
