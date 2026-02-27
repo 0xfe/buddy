@@ -406,7 +406,10 @@ mod tests {
             execution: ExecutionContext::local(),
             approval: None,
         }
-        .execute(r#"{"command":"echo hi","wait":false}"#, &ToolContext::empty())
+        .execute(
+            r#"{"command":"echo hi","wait":false}"#,
+            &ToolContext::empty(),
+        )
         .await;
         if real_tmux_enabled
             && std::env::var("TMUX_PANE")
@@ -433,7 +436,10 @@ mod tests {
             execution: ExecutionContext::local(),
             approval: None,
         }
-        .execute(r#"{"command":"sleep 1","wait":"1ms"}"#, &ToolContext::empty())
+        .execute(
+            r#"{"command":"sleep 1","wait":"1ms"}"#,
+            &ToolContext::empty(),
+        )
         .await
         .expect_err("timeout expected");
         assert!(

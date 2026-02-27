@@ -11,13 +11,13 @@ use base64::Engine;
 use rand::RngCore;
 use scrypt::{scrypt, Params as ScryptParams};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use sha2::{Digest, Sha256};
 
 const OPENAI_ACCOUNTS_API_BASE: &str = "https://auth.openai.com/api/accounts";
 const OPENAI_OAUTH_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
@@ -651,9 +651,14 @@ fn encrypt_store(store: &AuthStore) -> Result<EncryptedAuthStore, AuthError> {
 fn decrypt_store(store: &EncryptedAuthStore) -> Result<AuthStore, AuthError> {
     let salt = decode_fixed::<AUTH_STORE_SALT_LEN>(&store.encryption.salt, "salt")?;
     let kek = derive_machine_kek(&salt)?;
-    let wrapped_nonce =
-        decode_fixed::<AUTH_STORE_NONCE_LEN>(&store.encryption.wrapped_dek_nonce, "wrapped_dek_nonce")?;
-    let wrapped_dek = decode_bytes(&store.encryption.wrapped_dek_ciphertext, "wrapped_dek_ciphertext")?;
+    let wrapped_nonce = decode_fixed::<AUTH_STORE_NONCE_LEN>(
+        &store.encryption.wrapped_dek_nonce,
+        "wrapped_dek_nonce",
+    )?;
+    let wrapped_dek = decode_bytes(
+        &store.encryption.wrapped_dek_ciphertext,
+        "wrapped_dek_ciphertext",
+    )?;
     let dek_raw = decrypt_blob(&kek, &wrapped_nonce, &wrapped_dek).map_err(|_| {
         AuthError::Invalid(
             "failed to decrypt auth credentials (machine identity may have changed). Run `buddy login --reset` and login again."
@@ -695,7 +700,10 @@ fn decrypt_store(store: &EncryptedAuthStore) -> Result<AuthStore, AuthError> {
     })
 }
 
-fn encrypt_token_record(key: &[u8; AUTH_STORE_KEY_LEN], tokens: &OAuthTokens) -> Result<EncryptedTokenRecord, AuthError> {
+fn encrypt_token_record(
+    key: &[u8; AUTH_STORE_KEY_LEN],
+    tokens: &OAuthTokens,
+) -> Result<EncryptedTokenRecord, AuthError> {
     let payload = serde_json::to_vec(tokens)
         .map_err(|err| AuthError::Invalid(format!("failed to serialize oauth tokens: {err}")))?;
     let (nonce, ciphertext) = encrypt_blob(key, &payload)?;
@@ -711,14 +719,16 @@ fn decrypt_token_record(
 ) -> Result<OAuthTokens, AuthError> {
     let nonce = decode_fixed::<AUTH_STORE_NONCE_LEN>(&record.nonce, "nonce")?;
     let ciphertext = decode_bytes(&record.ciphertext, "ciphertext")?;
-    let payload = decrypt_blob(key, &nonce, &ciphertext).map_err(|_| {
-        AuthError::Invalid("failed to decrypt token record".to_string())
-    })?;
-    serde_json::from_slice(&payload)
-        .map_err(|err| AuthError::Invalid(format!("failed to decode decrypted token record: {err}")))
+    let payload = decrypt_blob(key, &nonce, &ciphertext)
+        .map_err(|_| AuthError::Invalid("failed to decrypt token record".to_string()))?;
+    serde_json::from_slice(&payload).map_err(|err| {
+        AuthError::Invalid(format!("failed to decode decrypted token record: {err}"))
+    })
 }
 
-fn derive_machine_kek(salt: &[u8; AUTH_STORE_SALT_LEN]) -> Result<[u8; AUTH_STORE_KEY_LEN], AuthError> {
+fn derive_machine_kek(
+    salt: &[u8; AUTH_STORE_SALT_LEN],
+) -> Result<[u8; AUTH_STORE_KEY_LEN], AuthError> {
     let mut material = machine_secret_material()?;
     material.extend_from_slice(salt);
 
@@ -729,9 +739,8 @@ fn derive_machine_kek(salt: &[u8; AUTH_STORE_SALT_LEN]) -> Result<[u8; AUTH_STOR
 
     let params = ScryptParams::recommended();
     let mut key = [0u8; AUTH_STORE_KEY_LEN];
-    scrypt(&seed, salt, &params, &mut key).map_err(|err| {
-        AuthError::Invalid(format!("failed to derive machine auth key: {err}"))
-    })?;
+    scrypt(&seed, salt, &params, &mut key)
+        .map_err(|err| AuthError::Invalid(format!("failed to derive machine auth key: {err}")))?;
     Ok(key)
 }
 
@@ -797,7 +806,9 @@ fn decrypt_blob(
 
 fn decode_bytes(value: &str, field: &str) -> Result<Vec<u8>, AuthError> {
     B64.decode(value).map_err(|err| {
-        AuthError::Invalid(format!("failed to decode auth store field `{field}`: {err}"))
+        AuthError::Invalid(format!(
+            "failed to decode auth store field `{field}`: {err}"
+        ))
     })
 }
 
@@ -1016,7 +1027,10 @@ mod tests {
 
         let loaded = load_store(&path).expect("load + migrate plaintext");
         assert_eq!(
-            loaded.providers.get("openai").map(|value| value.access_token.as_str()),
+            loaded
+                .providers
+                .get("openai")
+                .map(|value| value.access_token.as_str()),
             Some("legacy-access")
         );
 
@@ -1051,8 +1065,11 @@ mod tests {
             .to_string();
         value["providers"]["openai"]["ciphertext"] =
             serde_json::Value::String(format!("{ciphertext}AA"));
-        std::fs::write(&path, serde_json::to_string_pretty(&value).expect("serialize tampered"))
-            .expect("write tampered");
+        std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&value).expect("serialize tampered"),
+        )
+        .expect("write tampered");
 
         let err = load_store(&path).expect_err("tampered payload should fail");
         assert!(err.to_string().contains("failed to decrypt"));

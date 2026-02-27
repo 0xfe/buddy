@@ -264,8 +264,8 @@ mod tests {
     use super::*;
     use crate::config::ApiProtocol;
     use crate::types::Message;
-    use tokio::net::TcpListener;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
     #[tokio::test]
     async fn api_client_respects_timeout_policy() {
@@ -367,14 +367,15 @@ mod tests {
         let mut api = ApiConfig::default();
         api.protocol = ApiProtocol::Responses;
         api.base_url = "https://example.com/v1".to_string();
-        let client = ApiClient::new_with_retry_policy(
-            &api,
-            Duration::from_secs(1),
-            RetryPolicy::default(),
-        );
-        let err = client.with_diagnostic_hints(ApiError::status(404, "not found".to_string(), None));
+        let client =
+            ApiClient::new_with_retry_policy(&api, Duration::from_secs(1), RetryPolicy::default());
+        let err =
+            client.with_diagnostic_hints(ApiError::status(404, "not found".to_string(), None));
         let text = err.to_string();
         assert!(text.contains("/responses"), "missing hint: {text}");
-        assert!(text.contains("api = \"completions\""), "missing hint: {text}");
+        assert!(
+            text.contains("api = \"completions\""),
+            "missing hint: {text}"
+        );
     }
 }

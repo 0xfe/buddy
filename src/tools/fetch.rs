@@ -357,8 +357,8 @@ mod tests {
             Duration::from_millis(400),
             tool.execute(&args, &ToolContext::empty()),
         )
-            .await
-            .expect("fetch should not hang indefinitely");
+        .await
+        .expect("fetch should not hang indefinitely");
         assert!(outcome.is_err(), "expected fetch request to fail");
     }
 
@@ -372,14 +372,13 @@ mod tests {
             Vec::new(),
             Some(broker),
         );
-        let join =
-            tokio::spawn(async move {
-                tool.execute(
-                    r#"{"url":"https://1.1.1.1/dns-query"}"#,
-                    &ToolContext::empty(),
-                )
-                .await
-            });
+        let join = tokio::spawn(async move {
+            tool.execute(
+                r#"{"url":"https://1.1.1.1/dns-query"}"#,
+                &ToolContext::empty(),
+            )
+            .await
+        });
 
         let req = rx.recv().await.expect("approval request expected");
         assert!(req.command().contains("fetch https://1.1.1.1"));

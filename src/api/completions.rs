@@ -1,6 +1,6 @@
+use crate::api::parse_retry_after_secs;
 use crate::error::ApiError;
 use crate::types::{ChatRequest, ChatResponse};
-use crate::api::parse_retry_after_secs;
 
 pub(crate) async fn request(
     http: &reqwest::Client,
