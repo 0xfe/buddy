@@ -197,14 +197,14 @@ impl Renderer {
     pub fn header(&self, model: &str) {
         if self.color {
             eprintln!(
-                "{} {}",
+                "\r{} {}",
                 settings::LABEL_AGENT
                     .with(settings::COLOR_AGENT_LABEL)
                     .bold(),
                 model.with(settings::COLOR_MODEL_NAME),
             );
         } else {
-            eprintln!("{} ({model})", settings::LABEL_AGENT);
+            eprintln!("\r{} ({model})", settings::LABEL_AGENT);
         }
         mark_stream_nonblank(BlockTarget::Stderr);
     }
@@ -214,7 +214,7 @@ impl Renderer {
         let preview = truncate_single_line(args, 80);
         if self.color {
             eprintln!(
-                "{}{} {}({})",
+                "\r{}{} {}({})",
                 settings::INDENT_1,
                 settings::GLYPH_TOOL_CALL.with(settings::COLOR_TOOL_CALL_GLYPH),
                 name.with(settings::COLOR_TOOL_CALL_NAME).bold(),
@@ -222,7 +222,7 @@ impl Renderer {
             );
         } else {
             eprintln!(
-                "{}{} {name}({preview})",
+                "\r{}{} {name}({preview})",
                 settings::INDENT_1,
                 settings::GLYPH_TOOL_CALL_PLAIN
             );
@@ -235,14 +235,14 @@ impl Renderer {
         let preview = truncate_single_line(result, 120);
         if self.color {
             eprintln!(
-                "{}{} {}",
+                "\r{}{} {}",
                 settings::INDENT_1,
                 settings::GLYPH_TOOL_RESULT.with(settings::COLOR_TOOL_RESULT_GLYPH),
                 preview.with(settings::COLOR_TOOL_RESULT_TEXT),
             );
         } else {
             eprintln!(
-                "{}{} {preview}",
+                "\r{}{} {preview}",
                 settings::INDENT_1,
                 settings::GLYPH_TOOL_RESULT_PLAIN
             );
@@ -267,7 +267,7 @@ impl Renderer {
     pub fn token_usage(&self, prompt: u64, completion: u64, session_total: u64) {
         if self.color {
             eprintln!(
-                "{}{} prompt:{} completion:{} session:{}",
+                "\r{}{} prompt:{} completion:{} session:{}",
                 settings::INDENT_1,
                 settings::LABEL_TOKENS.with(settings::COLOR_TOKEN_LABEL),
                 prompt.to_string().with(settings::COLOR_TOKEN_VALUE),
@@ -278,7 +278,7 @@ impl Renderer {
             );
         } else {
             eprintln!(
-                "{}{} prompt:{prompt} completion:{completion} session:{session_total}",
+                "\r{}{} prompt:{prompt} completion:{completion} session:{session_total}",
                 settings::INDENT_1,
                 settings::LABEL_TOKENS
             );
@@ -294,7 +294,7 @@ impl Renderer {
 
         if self.color {
             eprintln!(
-                "{}{} {}",
+                "\r{}{} {}",
                 settings::INDENT_1,
                 settings::LABEL_THINKING
                     .with(settings::COLOR_REASONING_LABEL)
@@ -303,7 +303,7 @@ impl Renderer {
             );
         } else {
             eprintln!(
-                "{}{} ({field})",
+                "\r{}{} ({field})",
                 settings::INDENT_1,
                 settings::LABEL_THINKING
             );
@@ -316,11 +316,11 @@ impl Renderer {
     pub fn warn(&self, msg: &str) {
         if self.color {
             eprintln!(
-                "{} {msg}",
+                "\r{} {msg}",
                 settings::LABEL_WARNING.with(settings::COLOR_WARNING).bold()
             );
         } else {
-            eprintln!("{} {msg}", settings::LABEL_WARNING);
+            eprintln!("\r{} {msg}", settings::LABEL_WARNING);
         }
         mark_stream_nonblank(BlockTarget::Stderr);
     }
@@ -329,12 +329,12 @@ impl Renderer {
     pub fn section(&self, title: &str) {
         if self.color {
             eprintln!(
-                "{} {}",
+                "\r{} {}",
                 settings::GLYPH_SECTION_BULLET.with(settings::COLOR_SECTION_BULLET),
                 title.with(settings::COLOR_SECTION_TITLE).bold()
             );
         } else {
-            eprintln!("{title}:");
+            eprintln!("\r{title}:");
         }
         mark_stream_nonblank(BlockTarget::Stderr);
     }
@@ -343,12 +343,12 @@ impl Renderer {
     pub fn activity(&self, text: &str) {
         if self.color {
             eprintln!(
-                "{} {}",
+                "\r{} {}",
                 settings::GLYPH_SECTION_BULLET.with(settings::COLOR_SECTION_BULLET),
                 text.with(settings::COLOR_ACTIVITY_TEXT).bold()
             );
         } else {
-            eprintln!("{text}");
+            eprintln!("\r{text}");
         }
         mark_stream_nonblank(BlockTarget::Stderr);
     }
@@ -357,13 +357,13 @@ impl Renderer {
     pub fn field(&self, key: &str, value: &str) {
         if self.color {
             eprintln!(
-                "{}{} {}",
+                "\r{}{} {}",
                 settings::INDENT_1,
                 format!("{key}:").with(settings::COLOR_FIELD_KEY),
                 value.with(settings::COLOR_FIELD_VALUE),
             );
         } else {
-            eprintln!("{}{key}: {value}", settings::INDENT_1);
+            eprintln!("\r{}{key}: {value}", settings::INDENT_1);
         }
         mark_stream_nonblank(BlockTarget::Stderr);
     }
@@ -372,12 +372,12 @@ impl Renderer {
     pub fn detail(&self, text: &str) {
         if self.color {
             eprintln!(
-                "{}{}",
+                "\r{}{}",
                 settings::INDENT_1,
                 text.with(settings::COLOR_FIELD_VALUE)
             );
         } else {
-            eprintln!("{}{text}", settings::INDENT_1);
+            eprintln!("\r{}{text}", settings::INDENT_1);
         }
         mark_stream_nonblank(BlockTarget::Stderr);
     }
@@ -386,11 +386,11 @@ impl Renderer {
     pub fn error(&self, msg: &str) {
         if self.color {
             eprintln!(
-                "{} {msg}",
+                "\r{} {msg}",
                 settings::LABEL_ERROR.with(settings::COLOR_ERROR).bold()
             );
         } else {
-            eprintln!("{} {msg}", settings::LABEL_ERROR);
+            eprintln!("\r{} {msg}", settings::LABEL_ERROR);
         }
         mark_stream_nonblank(BlockTarget::Stderr);
     }
@@ -546,6 +546,7 @@ impl Renderer {
         let default_fg = tone.fg();
 
         for row in rows {
+            out.queue(Print("\r"))?;
             out.queue(Print(settings::INDENT_1))?;
             if self.color {
                 let mut used = 0usize;
@@ -597,7 +598,7 @@ impl Renderer {
             } else {
                 out.queue(Print(clip_to_width(&row.as_plain_text(), block_width)))?;
             }
-            out.queue(Print("\n"))?;
+            out.queue(Print("\r\n"))?;
         }
         Ok(())
     }
@@ -607,8 +608,9 @@ impl Renderer {
         out: &mut W,
         target: BlockTarget,
     ) -> io::Result<()> {
+        out.queue(Print("\r"))?;
         if !stream_is_blank(target) {
-            out.queue(Print("\n"))?;
+            out.queue(Print("\r\n"))?;
         }
         mark_stream_blank(target);
         Ok(())
@@ -619,7 +621,7 @@ impl Renderer {
         out: &mut W,
         target: BlockTarget,
     ) -> io::Result<()> {
-        out.queue(Print("\n"))?;
+        out.queue(Print("\r\n"))?;
         out.flush()?;
         mark_stream_blank(target);
         Ok(())
