@@ -433,3 +433,7 @@ Commit:
   - Added optional fetch confirmation flow with shared approval broker wiring.
   - Validation: `cargo test` passed.
   - commit: `26e389d`
+- 2026-02-27: Parallel remediation Milestone 1 slice `S3` completed:
+  - Added `write_file` path policy controls (`tools.files_allowed_paths` + sensitive directory guardrails).
+  - Validation: `cargo test` passed.
+  - commit: `81325b0`

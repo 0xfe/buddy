@@ -12,9 +12,10 @@
   5. Remediation Milestone 1 `B1` landed (UTF-8-safe truncation helper and call-site migrations).
   6. Remediation Milestone 1 `R1` landed (centralized API/fetch timeout policy with config).
   7. Remediation Milestone 1 `S2` landed (fetch SSRF controls and domain policy).
+  8. Remediation Milestone 1 `S3` landed (write-file path controls).
 - Next steps:
   1. Complete runtime `S2` interactive-path migration and approval command wiring.
-  2. Execute remaining Milestone 1 P1 fixes in small gated commits (`S3`, `S1`).
+  2. Execute remaining Milestone 1 P1 fixes in small gated commits (`S1`).
   3. Keep Milestones 5/6 checkpoints synchronized with streaming `S2`-`S4`.
 
 ## Integrated Program Board
@@ -104,7 +105,7 @@ Address `S2`, `S3`, `B1`, `R1` first, then tighten `S1` to fail closed safely.
    - block loopback/link-local/RFC1918/metadata IPs by default.
    - add config `fetch_allowed_domains` and `fetch_blocked_domains`.
    - optional confirm mode for fetch (default off for compatibility, documented).
-4. [ ] `S3` write-file path controls:
+4. [x] `S3` write-file path controls:
    - add `files_allowed_paths`.
    - hard-block sensitive paths unless explicitly allowed.
    - clear error messages when denied.
@@ -438,3 +439,9 @@ Address lower-priority architecture items after stabilization (`D1`, `D2`, `D3`,
   - Updated docs/template/config tests for new policy fields.
   - Validation: `cargo test` passed (lib/bin/doc tests).
   - commit: `26e389d`
+- 2026-02-27: Completed Milestone 1 `S3` (write-file path controls):
+  - Added `tools.files_allowed_paths` allowlist config for `write_file`.
+  - Added sensitive-directory blocklist with explicit allowlist override.
+  - Enforced policy in `WriteFileTool` with deterministic deny messages.
+  - Validation: `cargo test` passed.
+  - commit: `81325b0`

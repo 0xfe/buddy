@@ -26,7 +26,7 @@ cargo test
 | --- | --- | --- | --- |
 | `S1` | shell guardrails | `cargo test tools::shell::tests::execute_confirm_approved_via_broker_runs_command -- --nocapture` | Approval flow works, but no denylist/sandbox policy yet. |
 | `S2` | fetch SSRF | Manual REPL with `fetch_url` against `http://127.0.0.1:<port>` | Request is blocked by default unless explicitly allowed in `tools.fetch_allowed_domains`. |
-| `S3` | file write path policy | `cargo test tools::files::tests::write_file_creates_and_reports_bytes -- --nocapture` | Write works with no allowlist/denylist path checks yet. |
+| `S3` | file write path policy | `cargo test tools::files::tests::write_policy_blocks_sensitive_path_by_default -- --nocapture` | Sensitive directories are blocked by default; writes can be scoped via `tools.files_allowed_paths`. |
 | `B1` | UTF-8 truncation | Add/execute non-ASCII truncation case in `tools::shell` / `tools::files` | Some truncation code still slices by byte index and can panic. |
 | `R1` | HTTP timeout | `cargo test api::client::tests::api_client_respects_timeout_policy -- --nocapture` and `cargo test tools::fetch::tests::fetch_tool_respects_configured_timeout -- --nocapture` | Requests time out predictably using configured `[network]` timeout policy. |
 | `R2` | history growth | Long REPL session (many tool turns) | History grows without hard-budget enforcement/pruning. |
@@ -79,10 +79,11 @@ fetch_timeout_secs = 20
 Deterministic baseline:
 
 ```bash
-cargo test tools::files::tests::write_file_creates_and_reports_bytes -- --nocapture
+cargo test tools::files::tests::write_policy_blocks_sensitive_path_by_default -- --nocapture
+cargo test tools::files::tests::write_policy_blocks_paths_outside_allowlist -- --nocapture
 ```
 
-Current baseline: write succeeds for arbitrary writable paths.
+Expected now: sensitive directories are denied by default, and allowlist scoping is enforced when `tools.files_allowed_paths` is configured.
 
 ### SSE edge payload behavior (`B5`)
 

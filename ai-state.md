@@ -14,6 +14,7 @@
     - `B1` done: UTF-8-safe truncation helpers (`src/textutil.rs`) now back shell/files/fetch/capture/tui/preview truncation paths.
     - `R1` done: centralized request timeouts with `[network]` config (`api_timeout_secs`, `fetch_timeout_secs`) now applied in API and fetch clients.
     - `S2` done: `fetch_url` now blocks localhost/private/link-local targets by default and supports `tools.fetch_allowed_domains` / `tools.fetch_blocked_domains` overrides plus optional `tools.fetch_confirm`.
+    - `S3` done: `write_file` now enforces sensitive-path blocking and optional `tools.files_allowed_paths` allowlist.
   - Not done yet (active backlog):
     - `S1`, `S2`, `S3`, `S4`
     - `B1`, `B2`, `B3`, `B4`, `B5`
