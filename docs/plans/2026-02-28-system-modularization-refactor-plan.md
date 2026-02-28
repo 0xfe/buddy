@@ -30,14 +30,9 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 
 ## Current Hotspots
 
-1. `src/main.rs` (2593 LOC): bootstrap, REPL routing, session/model/login flows, approval UX, liveness/task orchestration, rendering helpers, and tests.
-2. `src/tools/execution.rs` (2750 LOC): local/container/ssh backends, tmux lifecycle, command transport, parsing, and tests.
-3. `src/agent.rs` (1799 LOC): agent loop, event plumbing, prompt augmentation, compaction, normalization.
-4. `src/runtime.rs` (1690 LOC): runtime schema + actor + approvals + session/model command handling.
-5. `src/config.rs` (1561 LOC) and `src/auth.rs` (1090 LOC): large multi-responsibility modules.
-6. `src/api/client.rs` + `src/api/responses.rs`: transport/auth/retry/protocol parsing mixed.
-7. UI rendering pipeline is split across `src/render.rs`, `src/tui/*`, `src/cli_event_renderer/*`, and `src/repl_support/*`, which leaks presentation/state concerns across too many modules.
-8. Tmux lifecycle logic is primarily in `src/tools/execution/tmux/*`, but higher-level runtime/startup and tool-facing call sites still reason about tmux concepts directly instead of using one shared tmux abstraction.
+1. `src/main.rs` still carries large CLI orchestration/tests and remains the next decomposition candidate.
+2. `src/tools/execution/*` + `src/tmux/*` should continue converging on narrow command-transport traits.
+3. `src/tui/*` is now behind `src/ui/terminal.rs`, but additional internal cleanup is still possible.
 
 ## Target Module Topology
 
@@ -60,11 +55,11 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 ### UI and REPL boundaries (new consolidation target)
 
 1. `src/ui/mod.rs` as the single presentation facade for terminal rendering.
-2. `src/ui/render_sink.rs` for `RenderSink`, progress handles, and shared rendering contracts.
-3. `src/ui/terminal/*` for low-level styling/markdown/spinner/input helpers (current `tui/*` internals).
+2. `src/ui/render.rs` for `RenderSink`, progress handles, and shared rendering contracts.
+3. `src/ui/terminal.rs` facade for low-level styling/markdown/spinner/input helpers (implemented in current `tui/*` internals).
 4. `src/ui/runtime/*` for runtime-event-to-render mapping (current `cli_event_renderer/*` handlers/reducer).
 5. `src/repl/mod.rs` for REPL state machine and command dispatch concerns currently spread across `repl_support` and `app/repl_loop`.
-6. Keep `src/render.rs` only as a temporary backward-compat shim during migration, then remove it once call sites are moved.
+6. Remove temporary compatibility shims once all call sites are moved (`M8.5` complete).
 
 ### Execution backend
 
@@ -77,11 +72,9 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 
 ### Shared tmux infrastructure (new consolidation target)
 
-1. `src/tmux/mod.rs` as a neutral tmux domain API (session/pane discovery, ensure/create, capture, send-keys, prompt readiness).
-2. `src/tmux/types.rs` for tmux target/session/pane identifiers and errors.
-3. `src/tmux/driver.rs` for command transport adapters (local/container/ssh).
-4. `src/tmux/workflow.rs` for behavior-level flows (create-or-reuse `shared` pane, attach metadata, busy-pane checks, startup capture).
-5. `src/tools/execution/tmux/*` becomes a thin adapter layer (or is folded into `src/tmux/*`) so tmux behavior is defined once and reused by tools and startup/runtime flows.
+1. `src/tmux/mod.rs` as a shared tmux domain namespace.
+2. `src/tmux/{pane,prompt,capture,send_keys,run}.rs` defines pane/session discovery, prompt bootstrap, capture, key injection, and command execution loops once for all execution targets.
+3. `src/tools/execution/*` consumes `src/tmux/*` instead of carrying a duplicated tmux submodule.
 
 ### Config/auth
 
