@@ -4,10 +4,10 @@
 
 - Program status: Active
 - Current milestone: `M5` (split `agent.rs` and `runtime.rs`)
-- Current task: `M5.3` (split runtime schema from actor implementation and isolate approvals/sessions/task handlers)
+- Current task: `M5.4` (resolve runtime-event contract risks with explicit tests)
 - Next steps:
-  1. Land `M5.3` with behavior-preserving runtime module splits (`schema`, `actor`, `approvals`, `sessions`).
-  2. Continue `M5.4` with explicit tests for duplicate start/failure event risks.
+  1. Add explicit regression tests for duplicate `TaskEvent::Started` / `TaskEvent::Failed` emission paths.
+  2. Close M5 by validating event contracts remain stable after modular splits.
   3. Keep `cargo test` green after each M5 task slice.
 
 ## Maintainer Instructions
@@ -160,7 +160,7 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 
 - [x] M5.1 Extract agent event plumbing and prompt augmentation modules. — `e0e143a`
 - [x] M5.2 Extract agent history/compaction and normalization modules. — `fb871e9`
-- [ ] M5.3 Split runtime schema from actor implementation and isolate approvals/sessions/task handlers. — `<commit-id>`
+- [x] M5.3 Split runtime schema from actor implementation and isolate approvals/sessions/task handlers. — `e89cb88`
 - [ ] M5.4 Resolve known runtime-event contract risks (duplicate failure/start events) with explicit tests. — `<commit-id>`
 - Acceptance gate:
   1. Cleaner event contracts for alternate frontends.
@@ -236,3 +236,4 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 - 2026-02-28: Completed `M4.4`: added explicit characterization coverage for config precedence and legacy-env behavior (canonical env over legacy alias, explicit config-path precedence) plus auth legacy-migration behavior (unknown-provider fallback to legacy profile, missing-store default). Validation: `cargo fmt`, `cargo test -q` (green). Commit: `4cb8bc0`.
 - 2026-02-28: Completed `M5.1`: converted `src/agent.rs` to `src/agent/mod.rs` and extracted `src/agent/events.rs` (event sink plumbing) plus `src/agent/prompt_aug.rs` (dynamic tmux screenshot prompt augmentation), with API surface preserved via `pub use events::AgentUiEvent`. Added focused prompt-augmentation unit tests and kept existing agent/runtime behavior tests passing. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `e0e143a`.
 - 2026-02-28: Completed `M5.2`: extracted history/compaction logic into `src/agent/history.rs` and reasoning/message sanitization into `src/agent/normalization.rs`, keeping `src/agent/mod.rs` as orchestration facade with re-exports/imported helpers. Preserved existing behavior and test expectations by maintaining internal visibility for moved test seams (`reasoning_value_to_text`, compact summary prefix). Validation: `cargo fmt`, `cargo test -q` (green). Commit: `fb871e9`.
+- 2026-02-28: Completed `M5.3`: split runtime schema into `src/runtime/schema.rs` and isolated actor helper concerns into `src/runtime/{approvals,sessions,tasks}.rs` with `src/runtime/mod.rs` as orchestration facade + `pub use schema::*` compatibility surface. Preserved runtime behavior, event mapping, and actor command semantics while keeping existing runtime tests green. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `e89cb88`.
