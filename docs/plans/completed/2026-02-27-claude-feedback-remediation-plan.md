@@ -2,7 +2,7 @@
 
 ## Status
 
-- Program status: Active (integrated with `docs/plans/2026-02-27-streaming-runtime-architecture.md`)
+- Program status: Active (integrated with `docs/plans/completed/2026-02-27-streaming-runtime-architecture.md`)
 - Current focus: remediation board closed for scoped items; maintain/runtime hardening only.
 - Completed so far:
   1. Streaming/runtime `S0` complete (typed runtime command/event schema).
@@ -39,7 +39,7 @@
 
 ## Goal
 
-Address the issues raised in `docs/plans/claude-feedback-0.md` with an incremental, low-regression execution plan that prioritizes security and correctness first, then robustness/testability, then architecture/UX cleanup.
+Address the issues raised in `docs/plans/completed/claude-feedback-0.md` with an incremental, low-regression execution plan that prioritizes security and correctness first, then robustness/testability, then architecture/UX cleanup.
 
 ## Planning Principles
 
@@ -323,7 +323,7 @@ Address `U1`, `U2`, `U3`, `U4`, `U5`, and `B4`.
 ### Tasks
 
 1. [x] Expose incremental runtime stream surfaces for model/tool output (`S0`-`S5` runtime track); continue iterating renderer polish as follow-up work.
-2. [x] Implement the runtime/event refactor track in `docs/plans/2026-02-27-streaming-runtime-architecture.md` so streaming is a first-class library interface (not just CLI rendering).
+2. [x] Implement the runtime/event refactor track in `docs/plans/completed/2026-02-27-streaming-runtime-architecture.md` so streaming is a first-class library interface (not just CLI rendering).
 3. [x] Improve context warnings with actionable next steps (`/compact`, `/session new`).
 4. [x] Add protocol-switch warning on `/model` when API/auth mode changes.
 5. [x] Add pre-flight model/profile validation to reduce cryptic API errors.

@@ -12,7 +12,7 @@
 cargo build
 cargo test
 cargo run
-cargo run -- "prompt"
+cargo run -- exec "prompt"
 ```
 
 ## High-value file map

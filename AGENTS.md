@@ -33,7 +33,7 @@ If you're working with complicated tooling/infrastructure/workflows, add or upda
 cargo build          # compile
 cargo test           # run all tests (offline, no network)
 cargo run            # interactive mode
-cargo run -- "prompt" # one-shot mode
+cargo run -- exec "prompt" # one-shot mode
 ```
 
 ## Code structure
@@ -41,21 +41,27 @@ cargo run -- "prompt" # one-shot mode
 ```
 src/
   lib.rs          Public library re-exports
-  main.rs         Binary entry point (CLI wiring, REPL)
+  main.rs         Binary entry point (CLI wiring + startup branch)
   cli.rs          clap argument parsing
-  config.rs       TOML config loading + env var overrides + default config bootstrap
-  prompt.rs       Single-file system prompt template renderer
+  app/            App orchestration (entry, REPL/exec mode, approvals, startup)
+  runtime/        Runtime command/event actor + schemas
+  agent/          Core agentic loop + history/normalization/prompt augmentation
+  api/            Model transport (completions + responses + retries/policy)
+  auth/           Login flows + encrypted credential storage
+  config/         TOML/env config loading + resolution + init
+  prompt.rs       System prompt template renderer
+  preflight.rs    Startup/model-switch config validation
   templates/
     buddy.toml    Compiled default config template written to ~/.config/buddy/buddy.toml
     models.toml   Compiled model context-window catalog used by tokens.rs
     system_prompt.template Built-in system prompt template
   session.rs      Persistent session store (.buddyx/sessions; legacy .agentx fallback)
   types.rs        OpenAI API data model (Message, ChatRequest, ChatResponse, etc.)
-  api.rs          Async HTTP client for /chat/completions
-  agent.rs        Core agentic loop
   tokens.rs       Token estimation + tracking
-  render.rs       Backward-compatible re-export for terminal renderer
-  tui/            Terminal UI module (editor, prompt, layout, renderer, progress)
+  textutil.rs     UTF-8-safe truncation helpers
+  ui/             Rendering contracts + runtime event renderer + terminal facade
+  repl/           Shared REPL/runtime helper state
+  tui/            Terminal UI implementation (editor/layout/render/progress)
     mod.rs        TUI public surface + re-exports
     commands.rs   Slash command metadata, parsing, autocomplete matching
     input.rs      Interruptible raw-mode editor loop
@@ -69,6 +75,7 @@ src/
   error.rs        Error enums (AgentError, ApiError, ConfigError, ToolError)
   tools/
     mod.rs        Tool trait (async) + ToolRegistry
+    execution/    Local/container/ssh execution backends
     capture_pane.rs capture-pane tool (tmux pane snapshots with optional delay)
     shell.rs      run_shell tool
     fetch.rs      fetch_url tool
@@ -76,6 +83,7 @@ src/
     search.rs     web_search tool (DuckDuckGo)
     send_keys.rs  send-keys tool (tmux key injection for interactive control)
     time.rs       time tool (harness-recorded wall-clock formats)
+  tmux/           Shared tmux session/pane/capture/send/run domain
 ```
 
 ## Conventions
@@ -92,16 +100,16 @@ src/
 1. Create `src/tools/your_tool.rs`
 2. Implement the `Tool` trait (name, definition with JSON Schema, async execute)
 3. Add `pub mod your_tool;` to `src/tools/mod.rs`
-4. Register it in `main.rs` (gated by a config flag if appropriate)
-5. Add a config flag to `ToolsConfig` in `config.rs` if it should be toggleable
+4. Register it in `src/app/entry.rs` (`build_tools`) (gated by a config flag if appropriate)
+5. Add a config flag to `ToolsConfig` in `src/config/types.rs` if it should be toggleable
 6. Add tests
 
 ## Key design constraints
 
 - The `Agent` struct is the only thing that orchestrates the agentic loop. Don't add loop logic elsewhere.
 - Tool definitions use raw `serde_json::Value` for parameters (JSON Schema). Don't add a schema generation dependency.
-- The API client is intentionally simple: no retries, no streaming, no middleware. Keep it that way until there's a concrete need.
-- Config loading order matters: env vars > CLI flags > local file > global file > defaults. Don't change the precedence.
+- Keep API behavior centralized in `src/api/*` (protocol routing, retries, auth transport policy) rather than duplicating provider logic in higher layers.
+- Config precedence matters: CLI flags > env vars > local file > global file > defaults. Don't change the precedence.
 
 ## Coding Style
 

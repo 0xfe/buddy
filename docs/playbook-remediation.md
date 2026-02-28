@@ -4,7 +4,7 @@
 
 This playbook captures the baseline repro/validation harness used for the
 2026-02-27 remediation plan in
-`docs/plans/2026-02-27-claude-feedback-remediation-plan.md`.
+`docs/plans/completed/2026-02-27-claude-feedback-remediation-plan.md`.
 
 It focuses on:
 
