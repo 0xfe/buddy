@@ -3,12 +3,12 @@
 ## Status
 
 - Program status: Active
-- Current milestone: `M2` (split `repl_support.rs` and `cli_event_renderer.rs`)
-- Current task: `M2.1` (split `repl_support.rs` into focused submodules)
+- Current milestone: `M3` (split `tools/execution.rs` into backend/process/tmux modules)
+- Current task: `M3.1` (convert `src/tools/execution.rs` into facade + shared contracts/types)
 - Next steps:
-  1. Land `M2.1` with a re-export facade and no behavior drift.
-  2. Land `M2.2` by splitting `cli_event_renderer.rs` into event handler modules.
-  3. Preserve full test green at each extraction slice.
+  1. Land `M3.1` with a behavior-preserving facade extraction.
+  2. Land `M3.2` and `M3.3` to separate process/file I/O and tmux concerns.
+  3. Keep milestone-level regression checks green after each extraction slice.
 
 ## Maintainer Instructions
 
@@ -106,9 +106,9 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 
 ## M2: Split `repl_support.rs` and `cli_event_renderer.rs`
 
-- [ ] M2.1 Split `repl_support.rs` into `tool_payload`, `task_state`, `policy` submodules with re-export facade. — `<commit-id>`
-- [ ] M2.2 Split `cli_event_renderer.rs` into per-event handler modules with single reducer entrypoint. — `<commit-id>`
-- [ ] M2.3 Add reducer-focused tests (approval transitions, suppression filters, tool-result rendering branches). — `<commit-id>`
+- [x] M2.1 Split `repl_support.rs` into `tool_payload`, `task_state`, `policy` submodules with re-export facade. — `d3be74e`
+- [x] M2.2 Split `cli_event_renderer.rs` into per-event handler modules with single reducer entrypoint. — `794741f`
+- [x] M2.3 Add reducer-focused tests (approval transitions, suppression filters, tool-result rendering branches). — `abcf21c`
 - Acceptance gate:
   1. No logic drift in runtime event rendering.
   2. Stable function boundaries for future frontends/runtime adapters.
@@ -188,3 +188,6 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 - 2026-02-28: Created system-wide modularization plan after auditing `main`, `execution`, `agent`, `runtime`, `config`, `auth`, and `api` modules. M1 started. Commit: `84af672`.
 - 2026-02-28: Completed `M1.1` + `M1.2` in one behavior-preserving slice: extracted `src/app/commands/{model,session}.rs`, `src/app/startup.rs`, `src/app/approval.rs`, and `src/app/tasks.rs`; rewired `main.rs` to use new modules. `main.rs` reduced from 2593 LOC to 1825 LOC. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `84af672`.
 - 2026-02-28: Completed `M1.3` + `M1.4`: added `src/app/repl_loop.rs` to centralize shared slash-command dispatch for normal/approval REPL paths (`/ps`, `/kill`, `/timeout`, `/approve`), removed duplicated routing logic in `main.rs`, and migrated command/helper tests from `main.rs` into `src/app/{approval,startup,commands/*}.rs`. `main.rs` reduced further from 1825 LOC to 1624 LOC. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `5cceba8`.
+- 2026-02-28: Completed `M2.1`: split `repl_support` into `policy`, `task_state`, and `tool_payload` modules with a re-exporting facade to preserve call sites. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `d3be74e`.
+- 2026-02-28: Completed `M2.2`: converted `cli_event_renderer` into a reducer + per-event handlers (`warning`, `session`, `task`, `model`, `tool`, `metrics`) with unchanged runtime event semantics. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `794741f`.
+- 2026-02-28: Completed `M2.3`: added reducer-focused tests for approval state transitions, transient warning suppression, and tool-result branch rendering (including run_shell suppression behavior). Validation: `cargo fmt`, `cargo test -q` (green). Commit: `abcf21c`.
