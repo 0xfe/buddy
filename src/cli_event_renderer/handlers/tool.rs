@@ -1,6 +1,6 @@
 //! Tool runtime event handlers.
 
-use buddy::render::RenderSink;
+use buddy::ui::render::RenderSink;
 use buddy::runtime::ToolEvent;
 
 use crate::cli_event_renderer::RuntimeEventRenderContext;

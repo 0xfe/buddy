@@ -37,7 +37,7 @@ use buddy::config::select_model_profile;
 use buddy::config::{AuthMode, Config, GlobalConfigInitResult, ToolsConfig};
 use buddy::preflight::validate_active_profile_ready;
 use buddy::prompt::{render_system_prompt, ExecutionTarget, SystemPromptParams};
-use buddy::render::{set_progress_enabled, RenderSink, Renderer};
+use buddy::ui::render::{set_progress_enabled, RenderSink, Renderer};
 #[cfg(test)]
 use buddy::runtime::BuddyRuntimeHandle;
 use buddy::runtime::{
@@ -1162,7 +1162,7 @@ mod tests {
             self.record("assistant", content);
         }
 
-        fn progress(&self, label: &str) -> buddy::render::ProgressHandle {
+        fn progress(&self, label: &str) -> buddy::ui::render::ProgressHandle {
             self.record("progress", label);
             Renderer::new(false).progress(label)
         }
@@ -1170,8 +1170,8 @@ mod tests {
         fn progress_with_metrics(
             &self,
             label: &str,
-            _metrics: buddy::render::ProgressMetrics,
-        ) -> buddy::render::ProgressHandle {
+            _metrics: buddy::ui::render::ProgressMetrics,
+        ) -> buddy::ui::render::ProgressHandle {
             self.record("progress", label);
             Renderer::new(false).progress(label)
         }

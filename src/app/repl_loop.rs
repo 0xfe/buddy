@@ -11,7 +11,7 @@ use crate::repl_support::{
     task_is_waiting_for_approval, to_runtime_approval_policy, update_approval_policy,
     ApprovalPolicy, BackgroundTask, PendingApproval,
 };
-use buddy::render::RenderSink;
+use buddy::ui::render::RenderSink;
 use buddy::runtime::BuddyRuntimeHandle;
 use buddy::runtime::RuntimeCommand;
 use buddy::tui as repl;

@@ -1,6 +1,6 @@
 //! Task runtime event handlers.
 
-use buddy::render::set_progress_enabled;
+use buddy::ui::render::set_progress_enabled;
 use buddy::runtime::TaskEvent;
 
 use crate::cli_event_renderer::RuntimeEventRenderContext;

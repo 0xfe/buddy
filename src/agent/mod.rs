@@ -8,7 +8,7 @@
 use crate::api::{ApiClient, ModelClient};
 use crate::config::{ApiConfig, Config};
 use crate::error::AgentError;
-use crate::render::Renderer;
+use crate::ui::render::Renderer;
 use crate::runtime::{
     MetricsEvent, ModelEvent, RuntimeEvent, RuntimeEventEnvelope, TaskEvent, ToolEvent,
 };

@@ -3,7 +3,7 @@
 use crate::cli;
 use crate::repl_support::{format_elapsed, ResumeRequest};
 use buddy::agent::Agent;
-use buddy::render::RenderSink;
+use buddy::ui::render::RenderSink;
 use buddy::runtime::{BuddyRuntimeHandle, RuntimeCommand};
 use buddy::session::{SessionStore, SessionSummary};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

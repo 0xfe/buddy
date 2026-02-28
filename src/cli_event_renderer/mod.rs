@@ -7,7 +7,7 @@
 mod handlers;
 
 use buddy::config::Config;
-use buddy::render::RenderSink;
+use buddy::ui::render::RenderSink;
 use buddy::runtime::{RuntimeEvent, RuntimeEventEnvelope};
 
 use crate::repl_support::{
@@ -47,7 +47,7 @@ pub(crate) fn process_runtime_events(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use buddy::render::{ProgressHandle, ProgressMetrics, Renderer};
+    use buddy::ui::render::{ProgressHandle, ProgressMetrics, Renderer};
     use buddy::runtime::{TaskEvent, TaskRef, ToolEvent, WarningEvent};
     use std::sync::{Arc, Mutex};
 

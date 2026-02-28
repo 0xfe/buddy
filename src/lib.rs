@@ -28,6 +28,7 @@ pub mod error;
 pub mod preflight;
 pub mod prompt;
 pub mod render;
+pub mod ui;
 pub mod runtime;
 pub mod session;
 #[cfg(test)]

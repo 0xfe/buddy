@@ -8,7 +8,7 @@ use crate::repl_support::{
     RuntimeContextState,
 };
 use buddy::config::Config;
-use buddy::render::RenderSink;
+use buddy::ui::render::RenderSink;
 use buddy::runtime::{BuddyRuntimeHandle, RuntimeCommand, RuntimeEventEnvelope};
 use buddy::tui;
 use std::time::Instant;
