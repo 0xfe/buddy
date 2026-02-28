@@ -43,10 +43,15 @@ pub trait Tool: Send + Sync {
 /// Incremental tool output emitted while a tool is running.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolStreamEvent {
+    /// Tool started execution.
     Started { detail: String },
+    /// A chunk of stdout produced while running.
     StdoutChunk { chunk: String },
+    /// A chunk of stderr produced while running.
     StderrChunk { chunk: String },
+    /// Informational status message not tied to one stream.
     Info { message: String },
+    /// Tool finished execution.
     Completed { detail: String },
 }
 
@@ -56,6 +61,7 @@ pub enum ToolStreamEvent {
 /// side channel for incremental output.
 #[derive(Clone, Default)]
 pub struct ToolContext {
+    /// Optional sink for incremental events consumed by the runtime UI.
     stream_tx: Option<mpsc::UnboundedSender<ToolStreamEvent>>,
 }
 
@@ -97,6 +103,7 @@ impl ToolContext {
 /// The agent sends all registered tool definitions to the API, and dispatches
 /// tool calls through this registry.
 pub struct ToolRegistry {
+    /// Registered tools in dispatch order.
     tools: Vec<Box<dyn Tool>>,
 }
 
@@ -187,16 +194,19 @@ mod tests {
 
     #[test]
     fn new_registry_is_empty() {
+        // Fresh registries should contain no tools.
         assert!(ToolRegistry::new().is_empty());
     }
 
     #[test]
     fn default_registry_is_empty() {
+        // Default constructor should mirror `new`.
         assert!(ToolRegistry::default().is_empty());
     }
 
     #[test]
     fn register_makes_nonempty() {
+        // Registering one tool should flip `is_empty` to false.
         let mut r = ToolRegistry::new();
         r.register(EchoTool);
         assert!(!r.is_empty());
@@ -204,6 +214,7 @@ mod tests {
 
     #[test]
     fn definitions_returns_registered_tools() {
+        // Tool definitions must be forwarded exactly to API wiring.
         let mut r = ToolRegistry::new();
         r.register(EchoTool);
         let defs = r.definitions();
@@ -213,6 +224,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_known_tool_returns_output() {
+        // Dispatch should locate the named tool and return its output.
         let mut r = ToolRegistry::new();
         r.register(EchoTool);
         let out = r.execute("echo", r#"{"x":1}"#).await.unwrap();
@@ -221,6 +233,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_unknown_tool_returns_error() {
+        // Unknown tool names should return a clear execution error.
         let r = ToolRegistry::new();
         let err = r.execute("nonexistent", "{}").await.unwrap_err();
         assert!(err.to_string().contains("unknown tool"));

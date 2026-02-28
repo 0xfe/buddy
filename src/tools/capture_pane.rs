@@ -25,24 +25,35 @@ pub struct CapturePaneTool {
 
 #[derive(Deserialize)]
 struct Args {
+    /// Optional explicit pane/session target (`tmux -t` syntax).
     target: Option<String>,
+    /// Optional tmux `-S` capture start boundary.
     start: Option<String>,
+    /// Optional tmux `-E` capture end boundary.
     end: Option<String>,
+    /// Whether wrapped lines should be joined (`tmux -J`).
     #[serde(default = "default_join_wrapped_lines")]
     join_wrapped_lines: bool,
+    /// Whether trailing spaces should be preserved (`tmux -N`).
     #[serde(default)]
     preserve_trailing_spaces: bool,
+    /// Whether escape sequences should be included (`tmux -e`).
     #[serde(default)]
     include_escape_sequences: bool,
+    /// Whether non-printables should be escaped (`tmux -C`).
     #[serde(default)]
     escape_non_printable: bool,
+    /// Whether alternate screen should be captured (`tmux -a`).
     #[serde(default)]
     include_alternate_screen: bool,
+    /// Optional string duration before capture.
     delay: Option<String>,
+    /// Optional millisecond duration before capture.
     delay_ms: Option<u64>,
 }
 
 fn default_join_wrapped_lines() -> bool {
+    // Most CLI output is easier for the model to parse when wraps are joined.
     true
 }
 
@@ -110,10 +121,12 @@ impl Tool for CapturePaneTool {
     }
 
     async fn execute(&self, arguments: &str, _context: &ToolContext) -> Result<String, ToolError> {
+        // Parse capture options and normalize delay controls.
         let args: Args = serde_json::from_str(arguments)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
         let delay = resolve_delay(&args)?;
 
+        // Translate tool JSON args into backend-neutral capture options.
         let mut options = CapturePaneOptions::default();
         if let Some(target) = args.target {
             options.target = Some(target);
@@ -137,6 +150,7 @@ impl Tool for CapturePaneTool {
 }
 
 fn resolve_delay(args: &Args) -> Result<Duration, ToolError> {
+    // Disallow ambiguous requests with two delay sources.
     if args.delay.is_some() && args.delay_ms.is_some() {
         return Err(ToolError::InvalidArguments(
             "provide either `delay` or `delay_ms`, not both".into(),
@@ -155,6 +169,7 @@ fn resolve_delay(args: &Args) -> Result<Duration, ToolError> {
 }
 
 fn parse_delay_duration(raw: &str) -> Result<Duration, String> {
+    // Keep parser intentionally strict and deterministic for model-authored inputs.
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err("delay cannot be empty".to_string());
@@ -188,6 +203,7 @@ fn parse_delay_duration(raw: &str) -> Result<Duration, String> {
 }
 
 fn truncate_output_tail(text: &str, max_len: usize) -> String {
+    // Keep latest pane content because recent lines are usually most relevant.
     if text.len() > max_len {
         let skipped = text.len().saturating_sub(max_len);
         let mut start = text.len().saturating_sub(max_len);
@@ -213,6 +229,7 @@ mod tests {
 
     #[test]
     fn name_is_capture_pane() {
+        // Tool name must match the registered function name.
         assert_eq!(
             CapturePaneTool {
                 execution: ExecutionContext::local(),
@@ -224,6 +241,7 @@ mod tests {
 
     #[test]
     fn parse_delay_supports_common_units() {
+        // Delay parser should accept standard units used by tool callers.
         assert_eq!(
             parse_delay_duration("10ms").unwrap(),
             Duration::from_millis(10)
@@ -242,12 +260,14 @@ mod tests {
 
     #[test]
     fn parse_delay_rejects_bad_unit() {
+        // Unsupported units should return actionable validation errors.
         let err = parse_delay_duration("2d").expect_err("should reject unit");
         assert!(err.contains("invalid delay unit"), "got: {err}");
     }
 
     #[test]
     fn default_window_uses_tmux_visible_screenshot_range() {
+        // Default capture should use tmux's visible-range behavior.
         let opts = CapturePaneOptions::default();
         assert!(opts.start.is_none());
         assert!(opts.end.is_none());
@@ -255,6 +275,7 @@ mod tests {
 
     #[test]
     fn truncate_output_tail_marks_large_capture() {
+        // Tail truncation should add metadata and keep latest text.
         let out = truncate_output_tail("x".repeat(MAX_CAPTURE_LEN + 1).as_str(), MAX_CAPTURE_LEN);
         assert!(out.starts_with("[truncated "), "got: {out}");
         assert!(out.ends_with('x'), "got: {out}");
@@ -262,6 +283,7 @@ mod tests {
 
     #[test]
     fn truncate_output_tail_handles_utf8_boundaries() {
+        // Tail truncation should not split multibyte UTF-8 characters.
         let input = "🙂".repeat(MAX_CAPTURE_LEN + 2);
         let out = truncate_output_tail(&input, MAX_CAPTURE_LEN + 1);
         assert!(out.starts_with("[truncated "), "got: {out}");

@@ -29,6 +29,7 @@ pub struct ReadFileTool {
 
 #[derive(Deserialize)]
 struct ReadArgs {
+    /// File path to read from the selected execution backend.
     path: String,
 }
 
@@ -90,7 +91,9 @@ pub struct WriteFileTool {
 
 #[derive(Deserialize)]
 struct WriteArgs {
+    /// File path to write on the selected execution backend.
     path: String,
+    /// Full file contents to write.
     content: String,
 }
 
@@ -140,10 +143,12 @@ impl Tool for WriteFileTool {
 }
 
 fn validate_write_path_policy(path: &str, allowed_paths: &[String]) -> Result<(), ToolError> {
+    // Normalize once so all checks operate on the same lexical path view.
     let target = normalize_target_path(path)?;
     let allowed = normalize_allowed_paths(allowed_paths);
     let explicitly_allowed = allowed.iter().any(|root| target.starts_with(root));
 
+    // If allowlist exists, writes must stay inside it.
     if !allowed.is_empty() && !explicitly_allowed {
         return Err(ToolError::ExecutionFailed(format!(
             "write_file blocked: path `{}` is outside tools.files_allowed_paths",
@@ -151,6 +156,7 @@ fn validate_write_path_policy(path: &str, allowed_paths: &[String]) -> Result<()
         )));
     }
 
+    // Sensitive locations are blocked unless caller explicitly allowlisted them.
     let sensitive = sensitive_roots();
     let blocked_sensitive = sensitive.iter().any(|root| target.starts_with(root));
     if blocked_sensitive && !explicitly_allowed {
@@ -163,6 +169,7 @@ fn validate_write_path_policy(path: &str, allowed_paths: &[String]) -> Result<()
 }
 
 fn normalize_target_path(raw: &str) -> Result<PathBuf, ToolError> {
+    // Reject empty paths early to keep downstream errors actionable.
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err(ToolError::InvalidArguments(
@@ -181,6 +188,7 @@ fn normalize_target_path(raw: &str) -> Result<PathBuf, ToolError> {
 }
 
 fn normalize_allowed_paths(paths: &[String]) -> Vec<PathBuf> {
+    // Invalid allowlist entries are ignored so one bad path does not disable policy.
     paths
         .iter()
         .filter_map(|raw| normalize_target_path(raw).ok())
@@ -188,6 +196,7 @@ fn normalize_allowed_paths(paths: &[String]) -> Vec<PathBuf> {
 }
 
 fn normalize_lexical(path: &Path) -> PathBuf {
+    // Pure lexical normalization keeps behavior backend-agnostic and avoids fs lookups.
     let mut out = PathBuf::new();
     for component in path.components() {
         match component {
@@ -204,6 +213,7 @@ fn normalize_lexical(path: &Path) -> PathBuf {
 }
 
 fn sensitive_roots() -> Vec<PathBuf> {
+    // Block common privileged roots and credential directories by default.
     let mut roots = vec![
         normalize_lexical(Path::new("/etc")),
         normalize_lexical(Path::new("/bin")),
@@ -236,6 +246,7 @@ mod tests {
 
     #[test]
     fn read_tool_name() {
+        // Tool name must match the registered function name.
         assert_eq!(
             ReadFileTool {
                 execution: ExecutionContext::local()
@@ -247,6 +258,7 @@ mod tests {
 
     #[test]
     fn write_tool_name() {
+        // Tool name must match the registered function name.
         assert_eq!(
             WriteFileTool {
                 execution: ExecutionContext::local(),
@@ -259,6 +271,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_invalid_json_returns_error() {
+        // Malformed arguments should map to invalid-arguments errors.
         let err = ReadFileTool {
             execution: ExecutionContext::local(),
         }
@@ -270,6 +283,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_nonexistent_file_returns_error() {
+        // Missing files should surface backend execution errors.
         let err = ReadFileTool {
             execution: ExecutionContext::local(),
         }
@@ -284,6 +298,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_file_returns_contents() {
+        // Successful reads should round-trip file contents unchanged.
         let fixture = TestTempDir::new("read-file");
         let path = fixture.path().join("file.txt");
         tokio::fs::write(&path, "file content").await.unwrap();
@@ -299,6 +314,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_file_truncates_large_content() {
+        // Long reads should be truncated with an explicit marker.
         let fixture = TestTempDir::new("read-file-large");
         let path = fixture.path().join("large.txt");
         let big = "x".repeat(MAX_READ_LEN + 100);
@@ -317,6 +333,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_file_truncation_is_utf8_safe() {
+        // Truncation should preserve UTF-8 boundaries.
         let fixture = TestTempDir::new("read-file-utf8");
         let path = fixture.path().join("utf8.txt");
         let big = "🙂".repeat(MAX_READ_LEN + 10);
@@ -335,6 +352,7 @@ mod tests {
 
     #[tokio::test]
     async fn write_invalid_json_returns_error() {
+        // Malformed write arguments should return invalid-arguments errors.
         let err = WriteFileTool {
             execution: ExecutionContext::local(),
             allowed_paths: Vec::new(),
@@ -347,6 +365,7 @@ mod tests {
 
     #[tokio::test]
     async fn write_file_creates_and_reports_bytes() {
+        // Writes should persist data and return a byte-count status message.
         let fixture = TestTempDir::new("write-file");
         let path = fixture.path().join("written.txt");
         let content = "hello write";
@@ -373,6 +392,7 @@ mod tests {
 
     #[test]
     fn write_policy_blocks_sensitive_path_by_default() {
+        // Sensitive system roots should be blocked when not explicitly allowed.
         let err = validate_write_path_policy("/etc/passwd", &[]).expect_err("should be blocked");
         assert!(
             err.to_string().contains("sensitive"),
@@ -382,11 +402,13 @@ mod tests {
 
     #[test]
     fn write_policy_allows_sensitive_path_when_explicitly_allowlisted() {
+        // Explicit allowlist entries should override default sensitive-root blocking.
         assert!(validate_write_path_policy("/etc/buddy-test.conf", &["/etc".to_string()]).is_ok());
     }
 
     #[test]
     fn write_policy_blocks_paths_outside_allowlist() {
+        // Allowlist mode should reject writes outside configured prefixes.
         let fixture = TestTempDir::new("write-policy");
         let allowed = fixture.path().join("allowed");
         let denied = fixture.path().join("denied").join("x.txt");
@@ -403,6 +425,7 @@ mod tests {
 
     #[test]
     fn write_policy_allows_paths_inside_allowlist() {
+        // Allowlist mode should accept nested paths under allowed roots.
         let fixture = TestTempDir::new("write-policy-ok");
         let allowed = fixture.path().join("allowed");
         let target = allowed.join("subdir").join("x.txt");

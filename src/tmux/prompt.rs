@@ -10,6 +10,8 @@ use super::send_keys::{send_container_tmux_line, send_local_tmux_line, send_tmux
 
 /// Prompt setup script injected into managed tmux panes.
 pub(crate) fn tmux_prompt_setup_script() -> &'static str {
+    // Script installs a prompt prefix that includes monotonically increasing command ids
+    // and exit status, with bash/zsh handling and idempotent guards.
     "if [ \"${BUDDY_PROMPT_LAYOUT:-}\" != \"v3\" ]; then \
 BUDDY_PROMPT_LAYOUT=v3; \
 BUDDY_CMD_SEQ=${BUDDY_CMD_SEQ:-0}; \
@@ -44,6 +46,7 @@ pub(crate) async fn ensure_tmux_prompt_setup(
     control_path: &std::path::Path,
     pane_id: &str,
 ) -> Result<(), ToolError> {
+    // Inject prompt bootstrap, wait for marker visibility, then clear bootstrap noise.
     let configure_prompt = tmux_prompt_setup_script();
 
     send_tmux_line(target, control_path, pane_id, configure_prompt).await?;
@@ -54,6 +57,7 @@ pub(crate) async fn ensure_tmux_prompt_setup(
 
 /// Ensure prompt bootstrap is installed in local tmux pane.
 pub(crate) async fn ensure_local_tmux_prompt_setup(pane_id: &str) -> Result<(), ToolError> {
+    // Inject prompt bootstrap, wait for marker visibility, then clear bootstrap noise.
     let configure_prompt = tmux_prompt_setup_script();
     send_local_tmux_line(pane_id, configure_prompt).await?;
     wait_for_local_tmux_any_prompt(pane_id).await?;
@@ -66,6 +70,7 @@ pub(crate) async fn ensure_container_tmux_prompt_setup(
     ctx: &ContainerTmuxContext,
     pane_id: &str,
 ) -> Result<(), ToolError> {
+    // Inject prompt bootstrap, wait for marker visibility, then clear bootstrap noise.
     let configure_prompt = tmux_prompt_setup_script();
     send_container_tmux_line(ctx, pane_id, configure_prompt).await?;
     wait_for_container_tmux_any_prompt(ctx, pane_id).await?;

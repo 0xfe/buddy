@@ -11,6 +11,7 @@ pub(super) async fn read_file_via_command_backend(
     backend: &(impl CommandBackend + ?Sized),
     path: &str,
 ) -> Result<String, ToolError> {
+    // Use shell-quoted path to avoid expansion/injection issues.
     let script = format!("cat -- {}", shell_quote(path));
     let output = backend.run_command(&script, None, ShellWait::Wait).await?;
     ensure_success(output, path.to_string()).map(|out| out.stdout)
@@ -22,6 +23,7 @@ pub(super) async fn write_file_via_command_backend(
     path: &str,
     content: &str,
 ) -> Result<(), ToolError> {
+    // Stream bytes via stdin to avoid shell escaping large file content.
     let script = format!("cat > {}", shell_quote(path));
     let output = backend
         .run_command(&script, Some(content.as_bytes()), ShellWait::Wait)

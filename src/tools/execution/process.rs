@@ -35,6 +35,7 @@ async fn run_container_sh_process_with(
     command: &str,
     stdin: Option<&[u8]>,
 ) -> Result<ExecOutput, ToolError> {
+    // Build `docker/podman exec` invocation with shell wrapper for parity with local/ssh.
     let mut args = vec!["exec".to_string()];
     if stdin.is_some() {
         // `podman` and `docker` both support stdin-interactive exec, but
@@ -69,6 +70,7 @@ pub(crate) async fn run_ssh_raw_process(
     remote_command: &str,
     stdin: Option<&[u8]>,
 ) -> Result<ExecOutput, ToolError> {
+    // `-T` disables PTY for deterministic stdout/stderr capture.
     run_process(
         "ssh",
         &[
@@ -91,6 +93,7 @@ pub(crate) async fn run_with_wait(
     wait: ShellWait,
     timeout_context: &str,
 ) -> Result<ExecOutput, ToolError> {
+    // Centralized wait semantics keep backend implementations consistent.
     match wait {
         ShellWait::Wait => fut.await,
         ShellWait::WaitWithTimeout(limit) => match timeout(limit, fut).await {
@@ -144,6 +147,7 @@ pub(crate) async fn run_process(
         .spawn()
         .map_err(|e| ToolError::ExecutionFailed(format!("{program}: {e}")))?;
 
+    // Write optional stdin fully before waiting so subprocess can consume input.
     if let Some(input) = stdin {
         if let Some(mut child_stdin) = child.stdin.take() {
             child_stdin
@@ -158,6 +162,7 @@ pub(crate) async fn run_process(
         .await
         .map_err(|e| ToolError::ExecutionFailed(format!("{program}: {e}")))?;
 
+    // Lossy UTF-8 conversion matches historical behavior across backends.
     Ok(ExecOutput {
         exit_code: output.status.code().unwrap_or(-1),
         stdout: String::from_utf8_lossy(&output.stdout).to_string(),
@@ -206,6 +211,7 @@ pub(crate) async fn detect_container_engine() -> Result<ContainerEngine, ToolErr
 }
 
 async fn probe_version(command: &str) -> Result<Option<String>, ToolError> {
+    // Version probing distinguishes "missing binary" from other execution failures.
     let output = match Command::new(command).arg("--version").output().await {
         Ok(out) => out,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -233,6 +239,7 @@ pub(crate) fn docker_frontend_kind(version_output: &str) -> ContainerEngineKind 
 
 /// Shell-safe single-quote escaping.
 pub(crate) fn shell_quote(s: &str) -> String {
+    // Use single-quote escaping compatible with POSIX `sh`.
     if s.is_empty() {
         "''".into()
     } else {
@@ -247,28 +254,33 @@ mod tests {
 
     #[test]
     fn quote_empty() {
+        // Empty strings should become safe empty single-quoted values.
         assert_eq!(shell_quote(""), "''");
     }
 
     #[test]
     fn quote_with_single_quote() {
+        // Embedded single quotes should be escaped in POSIX-compatible form.
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
 
     #[test]
     fn detects_podman_from_docker_version_output() {
+        // Podman docker-compat output should select Podman command flavor.
         let kind = docker_frontend_kind("Emulate Docker CLI using podman");
         assert_eq!(kind, ContainerEngineKind::Podman);
     }
 
     #[test]
     fn defaults_to_docker_when_podman_not_mentioned() {
+        // Regular Docker version output should keep Docker mode.
         let kind = docker_frontend_kind("Docker version 26.1.0, build deadbeef");
         assert_eq!(kind, ContainerEngineKind::Docker);
     }
 
     #[test]
     fn format_duration_prefers_human_units() {
+        // Timeout formatting should favor concise human-readable units.
         assert_eq!(format_duration(Duration::from_millis(250)), "250ms");
         assert_eq!(format_duration(Duration::from_secs(7)), "7s");
         assert_eq!(format_duration(Duration::from_secs(120)), "2m");
@@ -278,6 +290,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_with_wait_times_out_when_limit_hit() {
+        // Timeout wait mode should produce an execution error when exceeded.
         let result = run_with_wait(
             async {
                 sleep(Duration::from_millis(50)).await;

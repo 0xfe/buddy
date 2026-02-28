@@ -10,11 +10,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Minimal harness clock snapshot attached to every tool response.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct HarnessTimestamp {
+    /// Identifies that the timestamp comes from the harness process.
     pub source: &'static str,
+    /// Milliseconds since Unix epoch according to the harness clock.
     pub unix_millis: u64,
 }
 
 impl HarnessTimestamp {
+    /// Capture a best-effort current harness timestamp.
     pub fn now() -> Self {
         let unix_millis = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -33,7 +36,9 @@ pub struct ToolResultEnvelope<T>
 where
     T: Serialize,
 {
+    /// Shared timestamp metadata present on every tool response.
     pub harness_timestamp: HarnessTimestamp,
+    /// Tool-specific payload.
     pub result: T,
 }
 
@@ -57,6 +62,7 @@ mod tests {
 
     #[test]
     fn wrap_result_contains_result_and_timestamp() {
+        // Ensures callers always receive both payload and harness timestamp.
         let json = wrap_result("ok").expect("envelope");
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse");
         assert_eq!(value["result"], "ok");

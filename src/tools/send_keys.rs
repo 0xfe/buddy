@@ -22,15 +22,25 @@ pub struct SendKeysTool {
 
 #[derive(Deserialize)]
 struct Args {
+    /// Optional explicit tmux target (`tmux -t` syntax).
     target: Option<String>,
+    /// Optional list of tmux key names to send.
     keys: Option<Vec<String>>,
+    /// Optional literal text payload (`tmux send-keys -l`).
     literal_text: Option<String>,
+    /// Whether to press Enter after the key/text payload.
     enter: Option<bool>,
+    /// Optional delay string before key injection.
     delay: Option<String>,
+    /// Optional delay in milliseconds before key injection.
     delay_ms: Option<u64>,
+    /// Declared risk classification for this action.
     risk: RiskLevel,
+    /// Whether action mutates state.
     mutation: bool,
+    /// Whether action involves privilege escalation.
     privesc: bool,
+    /// Human rationale for why keys are being sent.
     why: String,
 }
 
@@ -101,6 +111,7 @@ impl Tool for SendKeysTool {
     }
 
     async fn execute(&self, arguments: &str, _context: &ToolContext) -> Result<String, ToolError> {
+        // Parse and validate metadata that accompanies key injection.
         let args: Args = serde_json::from_str(arguments)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
         if args.why.trim().is_empty() {
@@ -108,8 +119,10 @@ impl Tool for SendKeysTool {
                 "send-keys.why must be a non-empty string".to_string(),
             ));
         }
+        // Risk metadata is currently validated-for-presence and forwarded to policy layers.
         let _ = (args.risk, args.mutation, args.privesc);
         let delay = resolve_delay(args.delay.as_deref(), args.delay_ms)?;
+        // Convert tool args into backend-agnostic execution options.
         let options = SendKeysOptions {
             target: args.target,
             keys: args.keys.unwrap_or_default(),
@@ -122,6 +135,7 @@ impl Tool for SendKeysTool {
 }
 
 fn resolve_delay(delay: Option<&str>, delay_ms: Option<u64>) -> Result<Duration, ToolError> {
+    // Keep input unambiguous: one delay source only.
     if delay.is_some() && delay_ms.is_some() {
         return Err(ToolError::InvalidArguments(
             "provide either `delay` or `delay_ms`, not both".into(),
@@ -137,6 +151,7 @@ fn resolve_delay(delay: Option<&str>, delay_ms: Option<u64>) -> Result<Duration,
 }
 
 fn parse_delay_duration(raw: &str) -> Result<Duration, String> {
+    // Shared parser semantics with capture-pane delay handling.
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err("delay cannot be empty".to_string());
@@ -172,6 +187,7 @@ mod tests {
 
     #[test]
     fn name_is_send_keys() {
+        // Tool name must match the registered function name.
         assert_eq!(
             SendKeysTool {
                 execution: ExecutionContext::local(),
@@ -183,6 +199,7 @@ mod tests {
 
     #[test]
     fn parse_delay_supports_units() {
+        // Delay parser should handle milliseconds and minute units.
         assert_eq!(
             parse_delay_duration("500ms").expect("parse"),
             Duration::from_millis(500)
@@ -195,6 +212,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_missing_required_metadata_returns_error() {
+        // Metadata fields are required even when only sending keys.
         let err = SendKeysTool {
             execution: ExecutionContext::local(),
         }

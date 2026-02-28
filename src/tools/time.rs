@@ -56,19 +56,30 @@ impl Tool for TimeTool {
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
 struct TimeSnapshot {
+    /// Data origin to distinguish harness clock from remote/system clocks.
     source: &'static str,
+    /// Human-readable caveat about what this clock represents.
     note: &'static str,
+    /// Whole seconds since Unix epoch.
     unix_seconds: u64,
+    /// Milliseconds since Unix epoch.
     unix_millis: u64,
+    /// Nanoseconds since Unix epoch.
     unix_nanos: u64,
+    /// UTC timestamp without fractional seconds.
     iso_8601_utc: String,
+    /// UTC timestamp with millisecond precision.
     iso_8601_millis_utc: String,
+    /// RFC 2822 UTC timestamp.
     rfc_2822_utc: String,
+    /// Date-only UTC field (`YYYY-MM-DD`).
     date_utc: String,
+    /// Time-only UTC field (`HH:MM:SS`).
     time_utc: String,
 }
 
 fn build_snapshot(since_epoch: Duration) -> TimeSnapshot {
+    // Derive all numeric epochs first so string formatting cannot skew values.
     let unix_seconds = since_epoch.as_secs();
     let unix_millis = since_epoch
         .as_secs()
@@ -81,6 +92,7 @@ fn build_snapshot(since_epoch: Duration) -> TimeSnapshot {
 
     let utc = format_utc(unix_seconds as i64, since_epoch.subsec_nanos());
 
+    // Populate common text formats expected by downstream prompts/tools.
     TimeSnapshot {
         source: "harness",
         note: "This is the harness-recorded wall clock time for this agent process.",
@@ -118,17 +130,26 @@ fn build_snapshot(since_epoch: Duration) -> TimeSnapshot {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct UtcFields {
+    /// UTC calendar year.
     year: i32,
+    /// UTC calendar month (1-12).
     month: u32,
+    /// UTC calendar day (1-31).
     day: u32,
+    /// UTC hour (0-23).
     hour: u32,
+    /// UTC minute (0-59).
     minute: u32,
+    /// UTC second (0-59).
     second: u32,
+    /// Sub-second nanoseconds.
     nanosecond: u32,
+    /// Weekday index where Sunday = 0.
     weekday_index: u32,
 }
 
 fn format_utc(unix_seconds: i64, nanosecond: u32) -> UtcFields {
+    // Split epoch seconds into day + intra-day components using Euclidean math.
     let days = unix_seconds.div_euclid(86_400);
     let seconds_of_day = unix_seconds.rem_euclid(86_400) as u32;
     let (year, month, day) = civil_from_days(days);
@@ -166,6 +187,7 @@ fn civil_from_days(days_since_epoch: i64) -> (i32, u32, u32) {
 }
 
 fn weekday_name(index: u32) -> &'static str {
+    // Index is normalized by caller; fallback branch preserves total coverage.
     match index {
         0 => "Sun",
         1 => "Mon",
@@ -178,6 +200,7 @@ fn weekday_name(index: u32) -> &'static str {
 }
 
 fn month_name(month: u32) -> &'static str {
+    // Month is expected in 1..=12; fallback keeps output defined.
     match month {
         1 => "Jan",
         2 => "Feb",
@@ -200,11 +223,13 @@ mod tests {
 
     #[test]
     fn name_is_time() {
+        // Tool name must match registered function name.
         assert_eq!(TimeTool.name(), "time");
     }
 
     #[test]
     fn build_snapshot_formats_epoch_start() {
+        // Epoch zero should format to canonical 1970-01-01 UTC values.
         let snapshot = build_snapshot(Duration::from_secs(0));
         assert_eq!(snapshot.unix_seconds, 0);
         assert_eq!(snapshot.date_utc, "1970-01-01");
@@ -215,6 +240,7 @@ mod tests {
 
     #[test]
     fn build_snapshot_handles_known_timestamp() {
+        // Known timestamp regression test for calendar conversion correctness.
         let snapshot = build_snapshot(Duration::from_secs(1_709_130_123));
         assert_eq!(snapshot.date_utc, "2024-02-28");
         assert_eq!(snapshot.time_utc, "14:22:03");

@@ -14,6 +14,7 @@ pub(crate) async fn send_tmux_line(
     pane_id: &str,
     text: &str,
 ) -> Result<(), ToolError> {
+    // Split literal text and Enter to match interactive typing semantics.
     let pane_q = shell_quote(pane_id);
     let text_q = shell_quote(text);
 
@@ -40,6 +41,7 @@ pub(crate) async fn send_tmux_line(
 
 /// Send a full command line (text + Enter) to local tmux.
 pub(crate) async fn send_local_tmux_line(pane_id: &str, text: &str) -> Result<(), ToolError> {
+    // Split literal text and Enter to match interactive typing semantics.
     let pane_q = shell_quote(pane_id);
     let text_q = shell_quote(text);
     let send_text = run_sh_process(
@@ -62,6 +64,7 @@ pub(crate) async fn send_container_tmux_line(
     pane_id: &str,
     text: &str,
 ) -> Result<(), ToolError> {
+    // Split literal text and Enter to match interactive typing semantics.
     let pane_q = shell_quote(pane_id);
     let text_q = shell_quote(text);
     let send_text = run_container_tmux_sh_process(
@@ -84,6 +87,7 @@ pub(crate) async fn send_local_tmux_keys(
     target: &str,
     options: &SendKeysOptions,
 ) -> Result<(), ToolError> {
+    // Apply literal text, then key sequence, then Enter for deterministic ordering.
     if let Some(text) = options.literal_text.as_deref() {
         if !text.is_empty() {
             let cmd = build_tmux_send_literal_command(target, text);
@@ -111,6 +115,7 @@ pub(crate) async fn send_remote_tmux_keys(
     pane_id: &str,
     options: &SendKeysOptions,
 ) -> Result<(), ToolError> {
+    // Apply literal text, then key sequence, then Enter for deterministic ordering.
     if let Some(text) = options.literal_text.as_deref() {
         if !text.is_empty() {
             let cmd = build_tmux_send_literal_command(pane_id, text);
@@ -137,6 +142,7 @@ pub(crate) async fn send_container_tmux_keys(
     pane_id: &str,
     options: &SendKeysOptions,
 ) -> Result<(), ToolError> {
+    // Apply literal text, then key sequence, then Enter for deterministic ordering.
     if let Some(text) = options.literal_text.as_deref() {
         if !text.is_empty() {
             let cmd = build_tmux_send_literal_command(pane_id, text);
@@ -159,6 +165,7 @@ pub(crate) async fn send_container_tmux_keys(
 
 /// Build literal tmux send-keys shell command.
 pub(crate) fn build_tmux_send_literal_command(target: &str, text: &str) -> String {
+    // Quote target/text to avoid shell expansion and preserve literal bytes.
     let target_q = shell_quote(target);
     let text_q = shell_quote(text);
     format!("tmux send-keys -l -t {target_q} {text_q}")
@@ -166,6 +173,7 @@ pub(crate) fn build_tmux_send_literal_command(target: &str, text: &str) -> Strin
 
 /// Build tmux send-keys command for key sequence arguments.
 pub(crate) fn build_tmux_send_keys_command(target: &str, keys: &[String]) -> String {
+    // Quote each key token independently for safe shell composition.
     let target_q = shell_quote(target);
     let keys_q = keys
         .iter()
@@ -177,6 +185,7 @@ pub(crate) fn build_tmux_send_keys_command(target: &str, keys: &[String]) -> Str
 
 /// Build tmux Enter key command.
 pub(crate) fn build_tmux_send_enter_command(target: &str) -> String {
+    // Enter is sent as named key token.
     let target_q = shell_quote(target);
     format!("tmux send-keys -t {target_q} Enter")
 }
@@ -187,6 +196,7 @@ mod tests {
 
     #[test]
     fn build_tmux_send_key_commands_quote_targets_and_values() {
+        // Command builders should quote pane target and user-provided key/text values.
         assert_eq!(
             build_tmux_send_literal_command("%1", "abc"),
             "tmux send-keys -l -t '%1' 'abc'"

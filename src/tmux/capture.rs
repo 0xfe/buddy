@@ -12,6 +12,7 @@ use super::run::latest_prompt_marker;
 
 /// Build `tmux capture-pane` shell command from capture options.
 pub(crate) fn build_capture_pane_command(target: &str, options: &CapturePaneOptions) -> String {
+    // Construct command incrementally to preserve flag ordering and readability.
     let mut cmd = String::from("tmux capture-pane -p");
     if options.join_wrapped_lines {
         cmd.push_str(" -J");
@@ -43,6 +44,7 @@ pub(crate) fn build_capture_pane_command(target: &str, options: &CapturePaneOpti
 
 /// Capture options used for full tmux history parsing.
 pub(crate) fn full_history_capture_options() -> CapturePaneOptions {
+    // `-S - -E -` requests entire pane history (not just visible viewport).
     CapturePaneOptions {
         start: Some("-".to_string()),
         end: Some("-".to_string()),
@@ -55,11 +57,13 @@ pub(crate) async fn run_local_capture_pane(
     pane_target: &str,
     options: &CapturePaneOptions,
 ) -> Result<String, ToolError> {
+    // Attempt requested capture settings first.
     let capture_cmd = build_capture_pane_command(pane_target, options);
     let output = run_sh_process("sh", &capture_cmd, None).await?;
     match ensure_success(output, "failed to capture tmux pane".into()) {
         Ok(out) => Ok(out.stdout),
         Err(err) if should_fallback_from_alternate_screen(options, &err) => {
+            // Gracefully retry without alternate-screen flag when that screen is inactive.
             let mut fallback = options.clone();
             fallback.include_alternate_screen = false;
             let fallback_cmd = build_capture_pane_command(pane_target, &fallback);
@@ -84,11 +88,13 @@ pub(crate) async fn run_remote_capture_pane(
     pane_target: &str,
     options: &CapturePaneOptions,
 ) -> Result<String, ToolError> {
+    // Attempt requested capture settings first.
     let capture_cmd = build_capture_pane_command(pane_target, options);
     let output = run_ssh_raw_process(target, control_path, &capture_cmd, None).await?;
     match ensure_success(output, "failed to capture tmux pane".into()) {
         Ok(out) => Ok(out.stdout),
         Err(err) if should_fallback_from_alternate_screen(options, &err) => {
+            // Gracefully retry without alternate-screen flag when that screen is inactive.
             let mut fallback = options.clone();
             fallback.include_alternate_screen = false;
             let fallback_cmd = build_capture_pane_command(pane_target, &fallback);
@@ -113,11 +119,13 @@ pub(crate) async fn run_container_capture_pane(
     pane_target: &str,
     options: &CapturePaneOptions,
 ) -> Result<String, ToolError> {
+    // Attempt requested capture settings first.
     let capture_cmd = build_capture_pane_command(pane_target, options);
     let output = run_container_tmux_sh_process(ctx, &capture_cmd, None).await?;
     match ensure_success(output, "failed to capture tmux pane".into()) {
         Ok(out) => Ok(out.stdout),
         Err(err) if should_fallback_from_alternate_screen(options, &err) => {
+            // Gracefully retry without alternate-screen flag when that screen is inactive.
             let mut fallback = options.clone();
             fallback.include_alternate_screen = false;
             let fallback_cmd = build_capture_pane_command(pane_target, &fallback);
@@ -140,6 +148,7 @@ pub(crate) fn should_fallback_from_alternate_screen(
     options: &CapturePaneOptions,
     err: &ToolError,
 ) -> bool {
+    // Only retry when caller explicitly asked for alternate screen and tmux says none exists.
     options.include_alternate_screen
         && err
             .to_string()
@@ -182,6 +191,7 @@ pub(crate) async fn wait_for_tmux_any_prompt(
     pane_id: &str,
 ) -> Result<(), ToolError> {
     const MAX_POLLS: usize = 72000;
+    // Poll at fixed intervals until prompt marker appears or timeout budget is exhausted.
     for _ in 0..MAX_POLLS {
         let capture = capture_tmux_pane(target, control_path, pane_id).await?;
         if latest_prompt_marker(&capture).is_some() {
@@ -198,6 +208,7 @@ pub(crate) async fn wait_for_tmux_any_prompt(
 /// Wait until any prompt marker is visible in local tmux pane.
 pub(crate) async fn wait_for_local_tmux_any_prompt(pane_id: &str) -> Result<(), ToolError> {
     const MAX_POLLS: usize = 72000;
+    // Poll at fixed intervals until prompt marker appears or timeout budget is exhausted.
     for _ in 0..MAX_POLLS {
         let capture = capture_local_tmux_pane(pane_id).await?;
         if latest_prompt_marker(&capture).is_some() {
@@ -217,6 +228,7 @@ pub(crate) async fn wait_for_container_tmux_any_prompt(
     pane_id: &str,
 ) -> Result<(), ToolError> {
     const MAX_POLLS: usize = 72000;
+    // Poll at fixed intervals until prompt marker appears or timeout budget is exhausted.
     for _ in 0..MAX_POLLS {
         let capture = capture_container_tmux_pane(ctx, pane_id).await?;
         if latest_prompt_marker(&capture).is_some() {
@@ -236,12 +248,14 @@ mod tests {
 
     #[test]
     fn build_capture_pane_command_uses_defaults() {
+        // Default options should include joined wrapped lines and target selection.
         let cmd = build_capture_pane_command("%1", &CapturePaneOptions::default());
         assert_eq!(cmd, "tmux capture-pane -p -J -t '%1'");
     }
 
     #[test]
     fn full_history_capture_options_sets_explicit_history_bounds() {
+        // Full-history helper should force both start/end to tmux history sentinel.
         let opts = full_history_capture_options();
         assert_eq!(opts.start.as_deref(), Some("-"));
         assert_eq!(opts.end.as_deref(), Some("-"));
@@ -249,6 +263,7 @@ mod tests {
 
     #[test]
     fn build_capture_pane_command_honors_requested_flags() {
+        // Command builder should map each option to expected tmux flags.
         let cmd = build_capture_pane_command(
             "%11",
             &CapturePaneOptions {
@@ -271,6 +286,7 @@ mod tests {
 
     #[test]
     fn fallback_from_alternate_screen_only_when_requested() {
+        // Alternate-screen fallback should trigger only on matching error + option flag.
         let err = ToolError::ExecutionFailed(
             "failed to capture tmux pane: no alternate screen".to_string(),
         );

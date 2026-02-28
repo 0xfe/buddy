@@ -30,6 +30,7 @@ pub(crate) async fn run_ssh_tmux_process(
                 "run_shell wait=false does not support stdin input".into(),
             ));
         }
+        // No-wait mode only dispatches command and returns a polling hint.
         send_tmux_line(target, control_path, pane_id, remote_command).await?;
         return Ok(ExecOutput {
             exit_code: 0,
@@ -59,6 +60,7 @@ pub(crate) async fn run_ssh_tmux_process(
         let workdir_q = shell_quote(&workdir);
         let input_q = shell_quote(&input_file);
         let stage_cmd = format!("mkdir -p {workdir_q}; cat > {input_q}");
+        // Stage stdin in remote temp file because tmux send-keys cannot pipe bytes directly.
         let staged = run_ssh_raw_process(target, control_path, &stage_cmd, Some(input)).await?;
         ensure_success(staged, "failed to stage tmux stdin".into())?;
         run_command = format!("{run_command} < {input_q}");
@@ -82,6 +84,7 @@ pub(crate) async fn run_ssh_tmux_process(
     .await;
 
     if let Some(workdir_q) = staged_workdir {
+        // Best-effort cleanup of staged stdin temp directory.
         let _ =
             run_ssh_raw_process(target, control_path, &format!("rm -rf {workdir_q}"), None).await;
     }
@@ -102,6 +105,7 @@ pub(crate) async fn run_local_tmux_process(
                 "run_shell wait=false does not support stdin input".into(),
             ));
         }
+        // No-wait mode only dispatches command and returns a polling hint.
         send_local_tmux_line(pane_id, command).await?;
         return Ok(ExecOutput {
             exit_code: 0,
@@ -128,6 +132,7 @@ pub(crate) async fn run_local_tmux_process(
         let workdir_q = shell_quote(&workdir);
         let input_q = shell_quote(&input_file);
         let stage_cmd = format!("mkdir -p {workdir_q}; cat > {input_q}");
+        // Stage stdin in temp file because tmux send-keys cannot pipe bytes directly.
         let staged = run_sh_process("sh", &stage_cmd, Some(input)).await?;
         ensure_success(staged, "failed to stage tmux stdin".into())?;
         run_command = format!("{run_command} < {input_q}");
@@ -148,6 +153,7 @@ pub(crate) async fn run_local_tmux_process(
     .await;
 
     if let Some(workdir_q) = staged_workdir {
+        // Best-effort cleanup of staged stdin temp directory.
         let _ = run_sh_process("sh", &format!("rm -rf {workdir_q}"), None).await;
     }
 
@@ -168,6 +174,7 @@ pub(crate) async fn run_container_tmux_process(
                 "run_shell wait=false does not support stdin input".into(),
             ));
         }
+        // No-wait mode only dispatches command and returns a polling hint.
         send_container_tmux_line(ctx, pane_id, command).await?;
         return Ok(ExecOutput {
             exit_code: 0,
@@ -194,6 +201,7 @@ pub(crate) async fn run_container_tmux_process(
         let workdir_q = shell_quote(&workdir);
         let input_q = shell_quote(&input_file);
         let stage_cmd = format!("mkdir -p {workdir_q}; cat > {input_q}");
+        // Stage stdin in temp file because tmux send-keys cannot pipe bytes directly.
         let staged = run_container_tmux_sh_process(ctx, &stage_cmd, Some(input)).await?;
         ensure_success(staged, "failed to stage tmux stdin".into())?;
         run_command = format!("{run_command} < {input_q}");
@@ -215,6 +223,7 @@ pub(crate) async fn run_container_tmux_process(
     .await;
 
     if let Some(workdir_q) = staged_workdir {
+        // Best-effort cleanup of staged stdin temp directory.
         let _ = run_container_tmux_sh_process(ctx, &format!("rm -rf {workdir_q}"), None).await;
     }
 
@@ -231,6 +240,7 @@ async fn wait_for_tmux_result(
 ) -> Result<ExecOutput, ToolError> {
     let started_at = Instant::now();
     loop {
+        // Parse continuously until command completion marker appears.
         let capture = capture_tmux_pane(target, control_path, pane_id).await?;
         if let Some(parsed) = parse_tmux_capture_output(&capture, start_command_id, command) {
             return parsed;
@@ -255,6 +265,7 @@ async fn wait_for_local_tmux_result(
 ) -> Result<ExecOutput, ToolError> {
     let started_at = Instant::now();
     loop {
+        // Parse continuously until command completion marker appears.
         let capture = capture_local_tmux_pane(pane_id).await?;
         if let Some(parsed) = parse_tmux_capture_output(&capture, start_command_id, command) {
             return parsed;
@@ -280,6 +291,7 @@ async fn wait_for_container_tmux_result(
 ) -> Result<ExecOutput, ToolError> {
     let started_at = Instant::now();
     loop {
+        // Parse continuously until command completion marker appears.
         let capture = capture_container_tmux_pane(ctx, pane_id).await?;
         if let Some(parsed) = parse_tmux_capture_output(&capture, start_command_id, command) {
             return parsed;
@@ -303,6 +315,7 @@ pub(crate) fn parse_tmux_capture_output(
     command: &str,
 ) -> Option<Result<ExecOutput, ToolError>> {
     let lines: Vec<&str> = capture.lines().collect();
+    // Anchor parsing on the most recent matching start marker.
     let start_idx = lines.iter().enumerate().rev().find_map(|(idx, line)| {
         parse_prompt_marker(line)
             .and_then(|marker| (marker.command_id == start_command_id).then_some(idx))
@@ -321,6 +334,7 @@ pub(crate) fn parse_tmux_capture_output(
     };
 
     let expected_completion_id = start_command_id.saturating_add(1);
+    // Completion is the next prompt marker with larger command id.
     let completion_prompt = lines[start_idx + 1..]
         .iter()
         .enumerate()
@@ -337,6 +351,7 @@ pub(crate) fn parse_tmux_capture_output(
         ))));
     }
 
+    // Extract output between markers and strip echoed command line/noise.
     let mut output = lines[start_idx + 1..end_idx]
         .iter()
         .map(|line| (*line).to_string())
@@ -369,6 +384,7 @@ pub(crate) fn parse_prompt_marker(line: &str) -> Option<PromptMarker> {
 }
 
 fn parse_prompt_marker_with_prefix(line: &str, prefix: &str) -> Option<PromptMarker> {
+    // Expected marker shape: `[buddy <id>: <exit>] ...`.
     let start = line.find(prefix)?;
     let tail = &line[start + prefix.len()..];
     let colon = tail.find(':')?;
@@ -388,6 +404,7 @@ pub(crate) fn latest_prompt_marker(capture: &str) -> Option<PromptMarker> {
 }
 
 fn drop_echoed_command_line(lines: &mut Vec<String>, command: &str) {
+    // Interactive shells usually echo submitted command as first captured line.
     let trimmed_command = command.trim();
     if trimmed_command.is_empty() {
         return;
@@ -400,6 +417,7 @@ fn drop_echoed_command_line(lines: &mut Vec<String>, command: &str) {
 }
 
 fn unique_token(target: &str, remote_command: &str) -> String {
+    // Token guards against collisions when staging stdin temp files.
     let mut hasher = DefaultHasher::new();
     target.hash(&mut hasher);
     remote_command.hash(&mut hasher);
@@ -418,6 +436,7 @@ mod tests {
 
     #[test]
     fn parse_prompt_marker_extracts_id_and_status() {
+        // Parser should handle both current and legacy prompt marker prefixes.
         let line = "[buddy 42: 127] dev@host:~$ ";
         let marker = parse_prompt_marker(line).expect("prompt marker");
         assert_eq!(marker.command_id, 42);
@@ -431,6 +450,7 @@ mod tests {
 
     #[test]
     fn latest_prompt_marker_uses_most_recent_marker() {
+        // Latest marker helper should scan from end of capture.
         let capture = "[buddy 8: 0] one\noutput\n[buddy 9: 1] two";
         let marker = latest_prompt_marker(capture).expect("latest marker");
         assert_eq!(marker.command_id, 9);
@@ -439,6 +459,7 @@ mod tests {
 
     #[test]
     fn parse_tmux_output_between_prompt_markers() {
+        // Parser should isolate output between matching start/completion markers.
         let capture = "if [ \"${BUDDY_PROMPT_LAYOUT:-}\" != \"v3\" ]; then ... fi\n\
 [buddy 1: 0] dev@host:~$ \n\
 dev@host:~$ ls -la\n\
@@ -467,6 +488,7 @@ err.txt\n\
 
     #[test]
     fn parse_tmux_output_waits_for_completion_prompt() {
+        // Parser should return None until completion marker appears.
         let capture = "[buddy 10: 0] dev@host:~$ \n\
 dev@host:~$ echo hi\n\
 hi\n"
@@ -476,6 +498,7 @@ hi\n"
 
     #[test]
     fn parse_tmux_output_reads_nonzero_exit_code_from_prompt() {
+        // Completion marker exit status should propagate into ExecOutput.
         let capture = "[buddy 12: 0] dev@host:~$ \n\
 dev@host:~$ missing_command\n\
 zsh: command not found: missing_command\n\
@@ -490,6 +513,7 @@ zsh: command not found: missing_command\n\
 
     #[test]
     fn parse_tmux_output_ignores_repeated_start_marker() {
+        // Parser should anchor to most recent matching start marker instance.
         let capture = "[buddy 30: 0] dev@host:~$ \n\
 old output\n\
 [buddy 30: 0] dev@host:~$ \n\
@@ -506,6 +530,7 @@ file.txt\n\
 
     #[test]
     fn parse_tmux_output_rejects_unexpected_next_id() {
+        // Parser should reject captures where next prompt id skips expected sequence.
         let capture = "[buddy 20: 0] dev@host:~$ \n\
 dev@host:~$ echo hi\n\
 hi\n\
@@ -522,6 +547,7 @@ hi\n\
 
     #[test]
     fn parse_tmux_output_errors_if_start_marker_is_missing() {
+        // If capture advanced past start marker, parser should report explicit error.
         let capture = "[buddy 41: 0] dev@host:~$ \noutput\n[buddy 42: 0] dev@host:~$";
         let result = parse_tmux_capture_output(capture, 40, "ls").expect("parse frame");
         match result {

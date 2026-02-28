@@ -18,6 +18,7 @@ const MAX_RESULTS: usize = 8;
 
 /// Tool that searches the web via DuckDuckGo.
 pub struct WebSearchTool {
+    /// Reused HTTP client for HTML endpoint queries.
     http: reqwest::Client,
 }
 
@@ -41,6 +42,7 @@ impl Default for WebSearchTool {
 
 #[derive(Deserialize)]
 struct Args {
+    /// Search phrase to submit to DuckDuckGo.
     query: String,
 }
 
@@ -71,6 +73,7 @@ impl Tool for WebSearchTool {
     }
 
     async fn execute(&self, arguments: &str, _context: &ToolContext) -> Result<String, ToolError> {
+        // Parse call arguments and construct endpoint URL.
         let args: Args = serde_json::from_str(arguments)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
 
@@ -79,6 +82,7 @@ impl Tool for WebSearchTool {
             urlencoded(&args.query)
         );
 
+        // Request HTML page and parse result blocks.
         let html = self
             .http
             .get(&url)
@@ -94,6 +98,7 @@ impl Tool for WebSearchTool {
             return wrap_result(empty_results_message(&args.query, &html));
         }
 
+        // Render deterministic numbered output for model readability.
         let mut output = String::new();
         for (i, r) in results.iter().enumerate().take(MAX_RESULTS) {
             output.push_str(&format!(
@@ -109,8 +114,11 @@ impl Tool for WebSearchTool {
 }
 
 struct SearchResult {
+    /// Result title text.
     title: String,
+    /// Result destination URL.
     url: String,
+    /// Short snippet text when available.
     snippet: String,
 }
 
@@ -148,6 +156,7 @@ fn parse_ddg_results(html: &str) -> Vec<SearchResult> {
             .map(|elem| decode_html_entities(&extract_element_text(&elem)))
             .unwrap_or_default();
 
+        // Keep only complete result rows with title and URL.
         results.push(SearchResult {
             title: decode_html_entities(&title),
             url,
@@ -173,6 +182,7 @@ fn parse_ddg_results(html: &str) -> Vec<SearchResult> {
         if title.is_empty() || url.is_empty() {
             continue;
         }
+        // Fallback rows do not have snippets because container structure changed.
         results.push(SearchResult {
             title: decode_html_entities(&title),
             url,
@@ -184,6 +194,7 @@ fn parse_ddg_results(html: &str) -> Vec<SearchResult> {
 }
 
 fn extract_element_text(element: &scraper::ElementRef<'_>) -> String {
+    // Collapse all whitespace so output remains stable across HTML formatting differences.
     element
         .text()
         .collect::<Vec<_>>()
@@ -196,10 +207,12 @@ fn extract_element_text(element: &scraper::ElementRef<'_>) -> String {
 }
 
 fn empty_results_message(query: &str, html: &str) -> String {
+    // Empty query yields a generic no-results response.
     if query.trim().is_empty() {
         return "No results found.".to_string();
     }
 
+    // Detect genuine "no results" pages versus parser/layout mismatch.
     let lower = html.to_ascii_lowercase();
     if lower.contains("no results")
         || lower.contains("did not match")
@@ -231,6 +244,7 @@ fn urlencoded(s: &str) -> String {
 
 /// Decode common HTML entities.
 fn decode_html_entities(s: &str) -> String {
+    // Keep this intentionally small and dependency-free for common DDG payloads.
     s.replace("&amp;", "&")
         .replace("&lt;", "<")
         .replace("&gt;", ">")
@@ -248,22 +262,26 @@ mod tests {
 
     #[test]
     fn urlencoded_alphanumeric_passthrough() {
+        // Unreserved alphanumeric characters should remain unchanged.
         assert_eq!(urlencoded("hello123"), "hello123");
         assert_eq!(urlencoded("ABC"), "ABC");
     }
 
     #[test]
     fn urlencoded_unreserved_chars_passthrough() {
+        // RFC3986 unreserved punctuation should remain unchanged.
         assert_eq!(urlencoded("-_.~"), "-_.~");
     }
 
     #[test]
     fn urlencoded_space_becomes_plus() {
+        // Spaces should become plus for query-string style encoding.
         assert_eq!(urlencoded("hello world"), "hello+world");
     }
 
     #[test]
     fn urlencoded_special_chars_percent_encoded() {
+        // Reserved/special characters should be percent-encoded.
         assert_eq!(urlencoded("a&b"), "a%26b");
         assert_eq!(urlencoded("a=b"), "a%3Db");
         assert_eq!(urlencoded("a+b"), "a%2Bb");
@@ -274,6 +292,7 @@ mod tests {
 
     #[test]
     fn decode_entities_all_known() {
+        // Entity decoder should handle the curated set used in parsed results.
         assert_eq!(decode_html_entities("&amp;"), "&");
         assert_eq!(decode_html_entities("&lt;"), "<");
         assert_eq!(decode_html_entities("&gt;"), ">");
@@ -287,11 +306,13 @@ mod tests {
 
     #[test]
     fn parse_ddg_results_empty_html() {
+        // Empty responses should yield no parsed results.
         assert!(parse_ddg_results("").is_empty());
     }
 
     #[test]
     fn parse_ddg_results_from_result_container() {
+        // Standard DDG container layout should parse title/url/snippet.
         let html = r#"
             <div class="result results_links results_links_deep web-result">
               <a class="result__a" href="https://example.com">Example Title</a>
@@ -308,6 +329,7 @@ mod tests {
 
     #[test]
     fn parse_ddg_results_handles_attribute_reordering() {
+        // HTML attribute order should not affect CSS selector parsing.
         let html = r#"
             <div class="result">
               <a href="https://example.com" rel="noopener" class="result__a">Title</a>
@@ -322,6 +344,7 @@ mod tests {
 
     #[test]
     fn parse_ddg_results_falls_back_to_link_scan() {
+        // Fallback parser path should still recover results when containers move.
         let html = r#"
             <section>
               <a class="result__a" href="https://fallback.example">Fallback title</a>
@@ -337,6 +360,7 @@ mod tests {
 
     #[test]
     fn parse_ddg_results_respects_max_limit() {
+        // Parser should cap output size to protect context budget.
         let mut html = String::new();
         for idx in 0..(MAX_RESULTS + 3) {
             html.push_str(&format!(
@@ -350,12 +374,14 @@ mod tests {
 
     #[test]
     fn empty_results_message_reports_parser_breakage() {
+        // Non-empty query + unparsable page should signal layout/parser mismatch.
         let msg = empty_results_message("rust", "<html><body>unexpected layout</body></html>");
         assert!(msg.contains("could not parse"), "message: {msg}");
     }
 
     #[test]
     fn empty_results_message_preserves_true_no_results() {
+        // Known no-result responses should keep the simple message.
         let msg = empty_results_message("rust", "<html><body>No results found</body></html>");
         assert_eq!(msg, "No results found.");
     }
@@ -364,6 +390,7 @@ mod tests {
 
     #[test]
     fn web_search_tool_name() {
+        // Exported tool name must match the declared function name.
         assert_eq!(WebSearchTool::default().name(), "web_search");
     }
 }

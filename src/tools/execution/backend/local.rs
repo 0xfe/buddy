@@ -25,6 +25,7 @@ impl LocalTmuxContext {
         stdin: Option<&[u8]>,
         wait: ShellWait,
     ) -> Result<ExecOutput, ToolError> {
+        // Ensure pane exists and prompt bootstrap is active before dispatching.
         let pane_id = self.ensure_prompt_ready().await?;
         run_local_tmux_process(&pane_id, command, stdin, wait).await
     }
@@ -32,6 +33,7 @@ impl LocalTmuxContext {
     pub(in crate::tools::execution) async fn ensure_prompt_ready(
         &self,
     ) -> Result<String, ToolError> {
+        // Fast-path: configured pane still exists.
         let configured_pane = self.configured_tmux_pane.lock().await.clone();
         if let Some(pane_id) = configured_pane {
             if local_tmux_pane_exists(&pane_id).await? {
@@ -39,6 +41,7 @@ impl LocalTmuxContext {
             }
         }
 
+        // Slow-path: recreate/rebind pane and (re)install prompt markers when created.
         let ensured = ensure_local_tmux_pane(&self.tmux_session).await?;
         let mut configured = self.configured_tmux_pane.lock().await;
         if ensured.created {
@@ -52,6 +55,7 @@ impl LocalTmuxContext {
 }
 
 async fn local_tmux_pane_exists(pane_id: &str) -> Result<bool, ToolError> {
+    // Probe pane ids via tmux list output to avoid stateful assumptions.
     let pane_q = shell_quote(pane_id);
     let probe =
         format!("tmux list-panes -a -F '#{{pane_id}}' | grep -Fx -- {pane_q} >/dev/null 2>&1");
@@ -90,6 +94,7 @@ impl ExecutionBackendOps for LocalBackend {
     }
 
     async fn capture_pane(&self, options: CapturePaneOptions) -> Result<String, ToolError> {
+        // Local non-tmux backend can only capture when currently inside a tmux pane.
         let pane_target = options
             .target
             .as_deref()
@@ -102,6 +107,7 @@ impl ExecutionBackendOps for LocalBackend {
     }
 
     async fn send_keys(&self, options: SendKeysOptions) -> Result<String, ToolError> {
+        // Local non-tmux backend can only inject keys when currently inside tmux.
         let pane_target = options
             .target
             .as_deref()
@@ -120,6 +126,7 @@ impl ExecutionBackendOps for LocalBackend {
         wait: ShellWait,
     ) -> Result<ExecOutput, ToolError> {
         if matches!(wait, ShellWait::NoWait) {
+            // No-wait mode dispatches into current tmux pane for asynchronous polling.
             let pane_id = local_tmux_pane_target().ok_or_else(|| {
                 ToolError::ExecutionFailed(
                     "run_shell wait=false requires an active tmux session".into(),
@@ -178,6 +185,7 @@ impl ExecutionBackendOps for LocalTmuxContext {
     }
 
     async fn capture_pane(&self, options: CapturePaneOptions) -> Result<String, ToolError> {
+        // Managed tmux backend defaults to its configured shared pane.
         let pane_target = if let Some(target) = options.target.as_deref() {
             target.to_string()
         } else {
@@ -187,6 +195,7 @@ impl ExecutionBackendOps for LocalTmuxContext {
     }
 
     async fn send_keys(&self, options: SendKeysOptions) -> Result<String, ToolError> {
+        // Managed tmux backend defaults to its configured shared pane.
         let pane_target = if let Some(target) = options.target.as_deref() {
             target.to_string()
         } else {
@@ -215,6 +224,7 @@ impl ExecutionBackendOps for LocalTmuxContext {
 
 pub(in crate::tools::execution) async fn ensure_not_in_managed_local_tmux_pane(
 ) -> Result<(), ToolError> {
+    // Prevent recursive self-management by rejecting launches inside the shared pane.
     let Some(current_pane) = local_tmux_pane_target() else {
         return Ok(());
     };
@@ -261,6 +271,7 @@ pub(in crate::tools::execution) fn local_tmux_pane_target() -> Option<String> {
 pub(in crate::tools::execution) fn local_tmux_allowed() -> bool {
     #[cfg(test)]
     {
+        // Unit tests default to synthetic mode unless explicitly opted into real tmux.
         std::env::var("BUDDY_TEST_USE_REAL_TMUX")
             .or_else(|_| std::env::var("AGENT_TEST_USE_REAL_TMUX"))
             .ok()
@@ -279,6 +290,7 @@ mod tests {
 
     #[test]
     fn managed_tmux_window_name_detection_accepts_new_and_legacy_names() {
+        // Window-name matcher should recognize both current and legacy names.
         assert!(is_managed_tmux_window_name("shared"));
         assert!(is_managed_tmux_window_name(" shared "));
         assert!(is_managed_tmux_window_name("buddy-shared"));
@@ -288,6 +300,7 @@ mod tests {
 
     #[test]
     fn local_tmux_is_disabled_by_default_in_unit_tests() {
+        // Tests should be hermetic unless real tmux mode is explicitly enabled.
         assert!(!local_tmux_allowed());
         assert!(local_tmux_pane_target().is_none());
     }

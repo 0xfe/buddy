@@ -14,6 +14,7 @@ use crate::tools::execution::types::{
 /// `created_flag` is `1` only when this invocation had to create a new pane.
 /// Reusing an existing pane (even if it had to be re-titled) returns `0`.
 pub(crate) fn ensure_tmux_pane_script(tmux_session: &str) -> String {
+    // Script is generated once per ensure call so session/window names stay quoted.
     let session_q = shell_quote(tmux_session);
     let window_q = shell_quote(TMUX_WINDOW_NAME);
     let pane_title_q = shell_quote(TMUX_PANE_TITLE);
@@ -64,6 +65,7 @@ pub(crate) async fn ensure_tmux_pane(
     control_path: &std::path::Path,
     tmux_session: &str,
 ) -> Result<EnsuredTmuxPane, ToolError> {
+    // Run provisioning script remotely and parse `<pane>\n<created>`.
     let script = ensure_tmux_pane_script(tmux_session);
     let output = run_ssh_raw_process(target, control_path, &script, None).await?;
     let output = ensure_success(output, "failed to prepare tmux session pane".into())?;
@@ -75,6 +77,7 @@ pub(crate) async fn ensure_tmux_pane(
 pub(crate) async fn ensure_local_tmux_pane(
     tmux_session: &str,
 ) -> Result<EnsuredTmuxPane, ToolError> {
+    // Run provisioning script locally and parse `<pane>\n<created>`.
     let script = ensure_tmux_pane_script(tmux_session);
     let output = run_sh_process("sh", &script, None).await?;
     let output = ensure_success(output, "failed to prepare local tmux session pane".into())?;
@@ -87,6 +90,7 @@ pub(crate) async fn ensure_container_tmux_pane(
     ctx: &ContainerTmuxContext,
     tmux_session: &str,
 ) -> Result<EnsuredTmuxPane, ToolError> {
+    // Run provisioning script in container and parse `<pane>\n<created>`.
     let script = ensure_tmux_pane_script(tmux_session);
     let output = run_container_tmux_sh_process(ctx, &script, None).await?;
     let output = ensure_success(
@@ -99,6 +103,7 @@ pub(crate) async fn ensure_container_tmux_pane(
 
 /// Parse pane ID and created flag returned by `ensure_tmux_pane_script`.
 pub(crate) fn parse_ensured_tmux_pane(output: &str) -> Option<EnsuredTmuxPane> {
+    // Output format is strict to keep error handling deterministic.
     let mut lines = output.lines();
     let pane_id = lines.next()?.trim();
     let created_raw = lines.next()?.trim();
@@ -122,6 +127,7 @@ mod tests {
 
     #[test]
     fn ensure_tmux_pane_script_uses_explicit_session_window_target() {
+        // Provisioning script should include all required session/window/pane operations.
         let script = ensure_tmux_pane_script("buddy");
         assert!(script.contains("CREATED=0"));
         assert!(script.contains("CREATED=1"));
@@ -133,6 +139,7 @@ mod tests {
 
     #[test]
     fn parse_ensured_tmux_pane_reads_pane_and_created_flag() {
+        // Parser should accept valid two-line payload and reject malformed forms.
         assert_eq!(
             parse_ensured_tmux_pane("%3\n1"),
             Some(EnsuredTmuxPane {

@@ -35,6 +35,7 @@ impl SshContext {
         wait: ShellWait,
     ) -> Result<ExecOutput, ToolError> {
         if let Some(session) = &self.tmux_session {
+            // tmux-backed SSH uses managed pane execution for polling/no-wait behavior.
             let pane_id = self.ensure_prompt_ready(session).await?;
             run_ssh_tmux_process(
                 &self.target,
@@ -47,6 +48,7 @@ impl SshContext {
             .await
         } else {
             if matches!(wait, ShellWait::NoWait) {
+                // No-wait dispatch requires a persistent tmux pane.
                 return Err(ToolError::ExecutionFailed(
                     "run_shell wait=false requires a tmux-backed execution target".into(),
                 ));
@@ -64,6 +66,7 @@ impl SshContext {
         &self,
         tmux_session: &str,
     ) -> Result<String, ToolError> {
+        // Fast-path: configured pane still exists.
         let configured_pane = self.configured_tmux_pane.lock().await.clone();
         if let Some(pane_id) = configured_pane {
             if self.tmux_pane_exists(&pane_id).await? {
@@ -71,6 +74,7 @@ impl SshContext {
             }
         }
 
+        // Slow-path: ensure pane and initialize prompt markers for new panes.
         let ensured = ensure_tmux_pane(&self.target, &self.control_path, tmux_session).await?;
         let mut configured = self.configured_tmux_pane.lock().await;
         if ensured.created {
@@ -83,6 +87,7 @@ impl SshContext {
     }
 
     async fn tmux_pane_exists(&self, pane_id: &str) -> Result<bool, ToolError> {
+        // Probe remote pane IDs using existing SSH control socket.
         let pane_q = crate::tools::execution::process::shell_quote(pane_id);
         let probe =
             format!("tmux list-panes -a -F '#{{pane_id}}' | grep -Fx -- {pane_q} >/dev/null 2>&1");
@@ -132,6 +137,7 @@ impl ExecutionBackendOps for SshContext {
     }
 
     async fn capture_pane(&self, options: CapturePaneOptions) -> Result<String, ToolError> {
+        // SSH capture only works when a managed tmux session is configured.
         let tmux_session = self.tmux_session.as_deref().ok_or_else(|| {
             ToolError::ExecutionFailed(
                 "capture-pane is unavailable: no tmux session for this ssh target".into(),
@@ -146,6 +152,7 @@ impl ExecutionBackendOps for SshContext {
     }
 
     async fn send_keys(&self, options: SendKeysOptions) -> Result<String, ToolError> {
+        // SSH key injection only works when a managed tmux session is configured.
         let tmux_session = self.tmux_session.as_deref().ok_or_else(|| {
             ToolError::ExecutionFailed(
                 "send-keys is unavailable: no tmux session for this ssh target".into(),
@@ -201,6 +208,7 @@ pub(in crate::tools::execution) fn set_ssh_close_hook_for_tests(hook: Option<Ssh
 pub(in crate::tools::execution) fn close_ssh_control_connection(target: &str, control_path: &Path) {
     #[cfg(test)]
     {
+        // Test hook allows asserting cleanup without spawning ssh binaries.
         if let Some(hook) = ssh_close_hook_slot()
             .lock()
             .expect("ssh close hook lock")
@@ -224,6 +232,7 @@ pub(in crate::tools::execution) fn close_ssh_control_connection(target: &str, co
 }
 
 pub(in crate::tools::execution) fn build_ssh_control_path(target: &str) -> PathBuf {
+    // Include PID and timestamp to avoid collisions across concurrent runs.
     let mut hasher = DefaultHasher::new();
     target.hash(&mut hasher);
     std::process::id().hash(&mut hasher);
@@ -237,11 +246,13 @@ pub(in crate::tools::execution) fn build_ssh_control_path(target: &str) -> PathB
 }
 
 pub(in crate::tools::execution) fn default_tmux_session_name_for_agent(agent_name: &str) -> String {
+    // Prefix session names for easier discovery/cleanup.
     let suffix = sanitize_tmux_session_suffix(agent_name);
     format!("buddy-{suffix}")
 }
 
 fn sanitize_tmux_session_suffix(raw: &str) -> String {
+    // Keep session suffix shell-safe and bounded for tmux compatibility.
     let mut out = String::new();
     let mut previous_dash = false;
     for ch in raw.trim().chars().flat_map(char::to_lowercase) {
@@ -283,6 +294,7 @@ mod tests {
 
     #[test]
     fn tmux_session_name_uses_agent_name() {
+        // Agent names should be normalized and prefixed consistently.
         assert_eq!(
             default_tmux_session_name_for_agent("agent-mo"),
             "buddy-agent-mo"
@@ -295,12 +307,14 @@ mod tests {
 
     #[test]
     fn tmux_session_name_falls_back_when_agent_name_is_empty() {
+        // Empty agent names should map to deterministic fallback session suffix.
         assert_eq!(default_tmux_session_name_for_agent(""), "buddy-agent-mo");
         assert_eq!(default_tmux_session_name_for_agent("   "), "buddy-agent-mo");
     }
 
     #[test]
     fn ssh_context_drop_triggers_control_cleanup() {
+        // Dropping SSH contexts should always invoke control-socket cleanup.
         let observed = Arc::new(std::sync::Mutex::new(None::<(String, PathBuf)>));
         let observed_clone = Arc::clone(&observed);
         set_ssh_close_hook_for_tests(Some(Box::new(move |target, path| {
@@ -330,6 +344,7 @@ mod tests {
 
     #[tokio::test]
     async fn ssh_backend_rejects_no_wait_without_tmux() {
+        // No-wait mode should be rejected when backend lacks tmux support.
         let ctx = SshContext {
             target: "dev@example.com".to_string(),
             control_path: PathBuf::from("/tmp/buddy-test.sock"),

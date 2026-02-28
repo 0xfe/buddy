@@ -45,6 +45,7 @@ pub use types::{CapturePaneOptions, SendKeysOptions, ShellWait, TmuxAttachInfo, 
 /// Runtime-execution backend shared across tool instances.
 #[derive(Clone)]
 pub struct ExecutionContext {
+    /// Erased backend implementation selected at startup.
     inner: Arc<dyn ExecutionBackendOps>,
 }
 
@@ -64,6 +65,7 @@ impl ExecutionContext {
         requested_tmux_session: Option<String>,
         agent_name: &str,
     ) -> Result<Self, ToolError> {
+        // Reject empty session names early for clearer user feedback.
         if requested_tmux_session
             .as_ref()
             .is_some_and(|name| name.trim().is_empty())
@@ -80,6 +82,7 @@ impl ExecutionContext {
             ));
         }
 
+        // Reuse or create the managed pane and ensure prompt markers are installed.
         let tmux_session = requested_tmux_session
             .unwrap_or_else(|| default_tmux_session_name_for_agent(agent_name));
         ensure_not_in_managed_local_tmux_pane().await?;
@@ -119,6 +122,7 @@ impl ExecutionContext {
         requested_tmux_session: Option<String>,
         agent_name: &str,
     ) -> Result<Self, ToolError> {
+        // Validate user-provided identifiers before probing backend capabilities.
         let container = container.into();
         if container.trim().is_empty() {
             return Err(ToolError::ExecutionFailed(
@@ -179,6 +183,7 @@ impl ExecutionContext {
         requested_tmux_session: Option<String>,
         agent_name: &str,
     ) -> Result<Self, ToolError> {
+        // Validate basic SSH/tmux arguments before opening control sockets.
         let target = target.into();
         if target.trim().is_empty() {
             return Err(ToolError::ExecutionFailed(
@@ -195,6 +200,7 @@ impl ExecutionContext {
         }
 
         let control_path = build_ssh_control_path(&target);
+        // Open persistent control master so subsequent commands are fast and deterministic.
         let open_result = run_process(
             "ssh",
             &[
@@ -215,6 +221,7 @@ impl ExecutionContext {
             "failed to open persistent ssh connection".to_string(),
         )?;
 
+        // Probe remote tmux and create managed session when available/required.
         let tmux_session_result: Result<Option<String>, ToolError> = async {
             let tmux_probe = run_ssh_raw_process(
                 &target,
@@ -251,6 +258,7 @@ impl ExecutionContext {
         let tmux_session = match tmux_session_result {
             Ok(name) => name,
             Err(err) => {
+                // Ensure control socket is closed on setup failures.
                 close_ssh_control_connection(&target, &control_path);
                 return Err(err);
             }
@@ -265,6 +273,7 @@ impl ExecutionContext {
                         if let Err(err) =
                             ensure_tmux_prompt_setup(&target, &control_path, &ensured.pane_id).await
                         {
+                            // Prompt bootstrap failed; close persistent SSH resources.
                             close_ssh_control_connection(&target, &control_path);
                             return Err(err);
                         }
@@ -324,6 +333,7 @@ impl ExecutionContext {
 
     /// Capture pane output using tmux in the active execution backend.
     pub async fn capture_pane(&self, options: CapturePaneOptions) -> Result<String, ToolError> {
+        // Delay is applied here so all backends share consistent timing behavior.
         let mut normalized = options;
         if normalized.delay > Duration::ZERO {
             sleep(normalized.delay).await;
@@ -334,6 +344,7 @@ impl ExecutionContext {
 
     /// Send keys directly to a tmux pane.
     pub async fn send_keys(&self, mut options: SendKeysOptions) -> Result<String, ToolError> {
+        // Require at least one actionable key/text/enter intent.
         if options.keys.is_empty()
             && options
                 .literal_text
@@ -346,6 +357,7 @@ impl ExecutionContext {
             ));
         }
         if options.delay > Duration::ZERO {
+            // Delay is consumed here so backend implementations stay focused on transport.
             sleep(options.delay).await;
             options.delay = Duration::ZERO;
         }
@@ -378,6 +390,7 @@ mod tests {
 
     #[test]
     fn local_tmux_summary_and_capture_availability() {
+        // Local tmux contexts should expose summary, attach info, and startup pane metadata.
         let ctx = ExecutionContext {
             inner: Arc::new(LocalTmuxContext {
                 tmux_session: "buddy-dev".to_string(),
@@ -403,6 +416,7 @@ mod tests {
 
     #[test]
     fn container_tmux_summary_and_capture_availability() {
+        // Container tmux contexts should include engine/container details in summaries.
         let ctx = ExecutionContext {
             inner: Arc::new(ContainerTmuxContext {
                 engine: ContainerEngine {
@@ -435,6 +449,7 @@ mod tests {
 
     #[test]
     fn ssh_tmux_summary_and_attach_metadata() {
+        // SSH tmux contexts should expose target and attach metadata for UI hints.
         let ctx = ExecutionContext {
             inner: Arc::new(SshContext {
                 target: "dev@host".to_string(),
