@@ -4,10 +4,10 @@
 
 - Program status: Active
 - Current milestone: `M4` (split `config.rs` and `auth.rs`)
-- Current task: `M4.1` (move config types/defaults into `config/{types,defaults}.rs`)
+- Current task: `M4.2` (extract config source/env/resolve/init/selector modules with stable re-exports)
 - Next steps:
-  1. Land `M4.1` with behavior-preserving config type/default extraction.
-  2. Continue `M4.2` + `M4.3` with clear module boundaries and stable re-exports.
+  1. Land `M4.2` with behavior-preserving config loader/source/env split and stable facade exports.
+  2. Continue `M4.3` with auth submodule decomposition while preserving public API.
   3. Keep `cargo test` green after each M4 task slice.
 
 ## Maintainer Instructions
@@ -147,7 +147,7 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 
 ## M4: Split `config.rs` and `auth.rs`
 
-- [ ] M4.1 Move config types/defaults into `config/{types,defaults}.rs`; keep loader behavior unchanged. — `<commit-id>`
+- [x] M4.1 Move config types/defaults into `config/{types,defaults}.rs`; keep loader behavior unchanged. — `b3cd0ab`
 - [ ] M4.2 Extract config source/env/resolve/init/selector logic into dedicated modules; keep public re-exports. — `<commit-id>`
 - [ ] M4.3 Split auth provider/openai/store/crypto/browser/error modules with same public API. — `<commit-id>`
 - [ ] M4.4 Add precedence and migration characterization tests (including legacy compatibility paths). — `<commit-id>`
@@ -230,3 +230,4 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 - 2026-02-28: Completed `M3.4`: moved backend implementations to `backend/{local,container,ssh}.rs`, including ssh lifecycle cleanup/test hooks and local tmux safety helpers. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `bfb153c`.
 - 2026-02-28: Completed `M3.5`: relocated execution regression tests into process/backend/tmux modules and added explicit no-wait constraint tests for non-tmux container/ssh backends. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `21a7a6a`.
 - 2026-02-28: Incorporated architecture feedback into this plan: documented UI/REPL boundary smell (`render`/`tui`/`cli_event_renderer`/`repl_support`) and cross-cutting tmux abstraction needs, then added `M8` with concrete extraction gates (`ui`, `repl`, `tmux`). Validation: doc-only planning update. Commit: `21f1fcb`.
+- 2026-02-28: Completed `M4.1`: moved config constants/model profile defaults into `src/config/defaults.rs` and moved config data model/default impls into `src/config/types.rs`; converted `src/config.rs` into `src/config/mod.rs` facade while preserving load/resolve/init behavior and existing tests. Validation: `cargo test -q` (green). Commit: `b3cd0ab`.
