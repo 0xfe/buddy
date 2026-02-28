@@ -10,15 +10,19 @@ use crate::config::{ApiConfig, Config};
 use crate::error::AgentError;
 use crate::render::Renderer;
 use crate::runtime::{
-    MetricsEvent, ModelEvent, RuntimeEvent, RuntimeEventEnvelope, TaskEvent, TaskRef, ToolEvent,
-    WarningEvent,
+    MetricsEvent, ModelEvent, RuntimeEvent, RuntimeEventEnvelope, TaskEvent, ToolEvent,
 };
 use crate::tokens::{self, TokenTracker};
-use crate::tools::{ToolContext, ToolRegistry, ToolStreamEvent};
+use crate::tools::{ToolContext, ToolRegistry};
 use crate::types::{ChatRequest, Message, Role};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{mpsc, watch};
+
+mod events;
+mod prompt_aug;
+
+pub use events::AgentUiEvent;
 
 const CANCELLED_BY_USER_TOOL_RESULT: &str = "operation cancelled by user";
 const CANCELLED_BY_USER_PROMPT_RESPONSE: &str = "operation cancelled by user";
@@ -76,37 +80,6 @@ pub struct HistoryCompactionReport {
     pub estimated_after: u64,
     pub removed_messages: usize,
     pub removed_turns: usize,
-}
-
-/// Background UI events emitted by an agent running in background mode.
-#[derive(Debug, Clone)]
-pub enum AgentUiEvent {
-    Warning {
-        task_id: u64,
-        message: String,
-    },
-    TokenUsage {
-        task_id: u64,
-        prompt_tokens: u64,
-        completion_tokens: u64,
-        session_total: u64,
-    },
-    ReasoningTrace {
-        task_id: u64,
-        field: String,
-        trace: String,
-    },
-    ToolCall {
-        task_id: u64,
-        name: String,
-        args: String,
-    },
-    ToolResult {
-        task_id: u64,
-        name: String,
-        args: String,
-        result: String,
-    },
 }
 
 /// Stream-capable runner facade around [`Agent`].
@@ -280,31 +253,6 @@ impl Agent {
         Ok(())
     }
 
-    /// Suppress live stderr traces while the agent runs in a background task.
-    pub fn set_live_output_suppressed(&mut self, suppressed: bool) {
-        self.suppress_live_output = suppressed;
-    }
-
-    /// Route live UI events for background-mode rendering in the foreground UI loop.
-    pub fn set_live_output_sink(
-        &mut self,
-        sink: Option<(u64, mpsc::UnboundedSender<AgentUiEvent>)>,
-    ) {
-        self.live_output_sink = sink;
-    }
-
-    /// Route normalized runtime events to a dedicated stream consumer.
-    ///
-    /// This is a migration bridge while the CLI still consumes `AgentUiEvent`.
-    /// Events forwarded here are adapted into `RuntimeEventEnvelope`.
-    pub fn set_runtime_event_sink(
-        &mut self,
-        sink: Option<(u64, mpsc::UnboundedSender<RuntimeEventEnvelope>)>,
-    ) {
-        self.runtime_event_sink = sink;
-        self.runtime_event_seq = 0;
-    }
-
     /// Register a cancellation signal for the current in-flight request.
     pub fn set_cancellation_receiver(&mut self, rx: Option<watch::Receiver<bool>>) {
         self.cancellation_rx = rx;
@@ -313,171 +261,6 @@ impl Agent {
     fn cancellation_requested(&self) -> bool {
         self.cancellation_rx.as_ref().is_some_and(|rx| *rx.borrow())
     }
-
-    fn current_task_id(&self) -> Option<u64> {
-        self.live_output_sink
-            .as_ref()
-            .map(|(task_id, _)| *task_id)
-            .or_else(|| {
-                self.runtime_event_sink
-                    .as_ref()
-                    .map(|(task_id, _)| *task_id)
-            })
-    }
-
-    fn current_task_ref(&self) -> Option<TaskRef> {
-        self.runtime_event_sink
-            .as_ref()
-            .map(|(task_id, _)| TaskRef::from_task_id(*task_id))
-    }
-
-    fn emit_ui_event(&mut self, event: AgentUiEvent) -> bool {
-        self.live_output_sink
-            .as_ref()
-            .is_some_and(|(_, tx)| tx.send(event).is_ok())
-    }
-
-    fn emit_runtime_event(&mut self, event: RuntimeEvent) -> bool {
-        let Some((_, tx)) = &self.runtime_event_sink else {
-            return false;
-        };
-        let envelope = RuntimeEventEnvelope::new(self.runtime_event_seq, event);
-        self.runtime_event_seq = self.runtime_event_seq.saturating_add(1);
-        tx.send(envelope).is_ok()
-    }
-
-    fn warn_live(&mut self, msg: &str) {
-        if let Some(task) = self.current_task_ref() {
-            let _ = self.emit_runtime_event(RuntimeEvent::Warning(WarningEvent {
-                task: Some(task),
-                message: msg.to_string(),
-            }));
-        }
-
-        if self.suppress_live_output {
-            let Some(task_id) = self.current_task_id() else {
-                self.renderer.warn(msg);
-                return;
-            };
-            let _ = self.emit_ui_event(AgentUiEvent::Warning {
-                task_id,
-                message: msg.to_string(),
-            });
-            // In runtime/background mode the CLI consumes RuntimeEvent stream, so avoid
-            // duplicate direct stderr rendering from the embedded renderer.
-            return;
-        }
-        self.renderer.warn(msg);
-    }
-
-    fn token_usage_live(&mut self, prompt: u64, completion: u64, session_total: u64) {
-        if self.suppress_live_output {
-            let Some(task_id) = self.current_task_id() else {
-                self.renderer.token_usage(prompt, completion, session_total);
-                return;
-            };
-            let _ = self.emit_ui_event(AgentUiEvent::TokenUsage {
-                task_id,
-                prompt_tokens: prompt,
-                completion_tokens: completion,
-                session_total,
-            });
-            return;
-        }
-        self.renderer.token_usage(prompt, completion, session_total);
-    }
-
-    fn reasoning_trace_live(&mut self, field: &str, trace: &str) {
-        if let Some(task) = self.current_task_ref() {
-            let _ = self.emit_runtime_event(RuntimeEvent::Model(ModelEvent::ReasoningDelta {
-                task,
-                field: field.to_string(),
-                delta: trace.to_string(),
-            }));
-        }
-
-        if self.suppress_live_output {
-            let Some(task_id) = self.current_task_id() else {
-                self.renderer.reasoning_trace(field, trace);
-                return;
-            };
-            let _ = self.emit_ui_event(AgentUiEvent::ReasoningTrace {
-                task_id,
-                field: field.to_string(),
-                trace: trace.to_string(),
-            });
-            return;
-        }
-        self.renderer.reasoning_trace(field, trace);
-    }
-
-    fn tool_call_live(&mut self, name: &str, args: &str) {
-        if self.suppress_live_output {
-            let Some(task_id) = self.current_task_id() else {
-                self.renderer.tool_call(name, args);
-                return;
-            };
-            let _ = self.emit_ui_event(AgentUiEvent::ToolCall {
-                task_id,
-                name: name.to_string(),
-                args: args.to_string(),
-            });
-            return;
-        }
-        self.renderer.tool_call(name, args);
-    }
-
-    fn tool_result_live(&mut self, name: &str, args: &str, result: &str) {
-        if self.suppress_live_output {
-            let Some(task_id) = self.current_task_id() else {
-                self.renderer.tool_result(result);
-                return;
-            };
-            let _ = self.emit_ui_event(AgentUiEvent::ToolResult {
-                task_id,
-                name: name.to_string(),
-                args: args.to_string(),
-                result: result.to_string(),
-            });
-            return;
-        }
-        self.renderer.tool_result(result);
-    }
-
-    fn emit_tool_stream_event(&mut self, tool_name: &str, event: ToolStreamEvent) {
-        let Some(task) = self.current_task_ref() else {
-            return;
-        };
-        let runtime_event = match event {
-            ToolStreamEvent::Started { detail } => RuntimeEvent::Tool(ToolEvent::CallStarted {
-                task,
-                name: tool_name.to_string(),
-                detail,
-            }),
-            ToolStreamEvent::StdoutChunk { chunk } => RuntimeEvent::Tool(ToolEvent::StdoutChunk {
-                task,
-                name: tool_name.to_string(),
-                chunk,
-            }),
-            ToolStreamEvent::StderrChunk { chunk } => RuntimeEvent::Tool(ToolEvent::StderrChunk {
-                task,
-                name: tool_name.to_string(),
-                chunk,
-            }),
-            ToolStreamEvent::Info { message } => RuntimeEvent::Tool(ToolEvent::Info {
-                task,
-                name: tool_name.to_string(),
-                message,
-            }),
-            ToolStreamEvent::Completed { detail } => RuntimeEvent::Tool(ToolEvent::Completed {
-                task,
-                name: tool_name.to_string(),
-                detail,
-            }),
-        };
-        let _ = self.emit_runtime_event(runtime_event);
-    }
-
     /// Send a user message and run the full agentic loop.
     ///
     /// Returns the model's final text response. If the model invokes tools,
@@ -496,15 +279,6 @@ impl Agent {
             }
             return Ok(CANCELLED_BY_USER_PROMPT_RESPONSE.to_string());
         }
-        if let Err(err) = self.enforce_context_budget() {
-            if let Some(task) = self.current_task_ref() {
-                let _ = self.emit_runtime_event(RuntimeEvent::Task(TaskEvent::Failed {
-                    task,
-                    message: err.to_string(),
-                }));
-            }
-            return Err(err);
-        }
 
         let mut iterations = 0;
 
@@ -520,6 +294,7 @@ impl Agent {
                 return Err(AgentError::MaxIterationsReached);
             }
 
+            self.refresh_dynamic_tmux_snapshot_prompt().await;
             if let Err(err) = self.enforce_context_budget() {
                 if let Some(task) = self.current_task_ref() {
                     let _ = self.emit_runtime_event(RuntimeEvent::Task(TaskEvent::Failed {
@@ -1442,6 +1217,46 @@ mod tests {
         }
     }
 
+    struct RecordingClient {
+        responses: StdMutex<VecDeque<ChatResponse>>,
+        requests: StdMutex<Vec<ChatRequest>>,
+    }
+
+    impl RecordingClient {
+        fn new(responses: Vec<ChatResponse>) -> Self {
+            Self {
+                responses: StdMutex::new(responses.into()),
+                requests: StdMutex::new(Vec::new()),
+            }
+        }
+
+        fn requests(&self) -> Vec<ChatRequest> {
+            self.requests.lock().expect("requests lock").clone()
+        }
+    }
+
+    #[async_trait]
+    impl ModelClient for RecordingClient {
+        async fn chat(&self, request: &ChatRequest) -> Result<ChatResponse, ApiError> {
+            self.requests
+                .lock()
+                .expect("requests lock")
+                .push(request.clone());
+            self.responses
+                .lock()
+                .expect("responses lock")
+                .pop_front()
+                .ok_or_else(|| ApiError::InvalidResponse("no mock response queued".to_string()))
+        }
+    }
+
+    #[async_trait]
+    impl ModelClient for std::sync::Arc<RecordingClient> {
+        async fn chat(&self, request: &ChatRequest) -> Result<ChatResponse, ApiError> {
+            (**self).chat(request).await
+        }
+    }
+
     struct EchoTool;
 
     #[async_trait]
@@ -1472,6 +1287,52 @@ mod tests {
             _context: &crate::tools::ToolContext,
         ) -> Result<String, ToolError> {
             Ok("tool-ok".to_string())
+        }
+    }
+
+    struct SnapshotCaptureTool {
+        snapshots: StdMutex<VecDeque<String>>,
+    }
+
+    #[async_trait]
+    impl crate::tools::Tool for SnapshotCaptureTool {
+        fn name(&self) -> &'static str {
+            "capture-pane"
+        }
+
+        fn definition(&self) -> ToolDefinition {
+            ToolDefinition {
+                tool_type: "function".to_string(),
+                function: FunctionDefinition {
+                    name: "capture-pane".to_string(),
+                    description: "capture pane".to_string(),
+                    parameters: json!({
+                        "type": "object",
+                        "properties": {}
+                    }),
+                },
+            }
+        }
+
+        async fn execute(
+            &self,
+            _arguments: &str,
+            _context: &crate::tools::ToolContext,
+        ) -> Result<String, ToolError> {
+            let snapshot = self
+                .snapshots
+                .lock()
+                .expect("snapshot lock")
+                .pop_front()
+                .unwrap_or_else(|| "snapshot-empty".to_string());
+            Ok(json!({
+                "harness_timestamp": {
+                    "source": "harness",
+                    "unix_millis": 1
+                },
+                "result": snapshot
+            })
+            .to_string())
         }
     }
 
@@ -1570,5 +1431,83 @@ mod tests {
             "task_completed",
         ];
         assert_eq!(labels, expected);
+    }
+
+    #[tokio::test]
+    async fn tmux_snapshot_prompt_is_replaced_each_request() {
+        let first = ChatResponse {
+            id: "r1".to_string(),
+            choices: vec![Choice {
+                index: 0,
+                message: Message {
+                    role: Role::Assistant,
+                    content: None,
+                    tool_calls: Some(vec![ToolCall {
+                        id: "call_1".to_string(),
+                        call_type: "function".to_string(),
+                        function: FunctionCall {
+                            name: "echo_tool".to_string(),
+                            arguments: "{\"value\":\"x\"}".to_string(),
+                        },
+                    }]),
+                    tool_call_id: None,
+                    name: None,
+                    extra: BTreeMap::new(),
+                },
+                finish_reason: Some("tool_calls".to_string()),
+            }],
+            usage: None,
+        };
+        let second = ChatResponse {
+            id: "r2".to_string(),
+            choices: vec![Choice {
+                index: 0,
+                message: Message {
+                    role: Role::Assistant,
+                    content: Some("done".to_string()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                    name: None,
+                    extra: BTreeMap::new(),
+                },
+                finish_reason: Some("stop".to_string()),
+            }],
+            usage: None,
+        };
+
+        let client = std::sync::Arc::new(RecordingClient::new(vec![first, second]));
+        let mut config = Config::default();
+        config.agent.system_prompt = "base system prompt".to_string();
+        config.display.show_tool_calls = false;
+        config.display.show_tokens = false;
+
+        let mut tools = ToolRegistry::new();
+        tools.register(SnapshotCaptureTool {
+            snapshots: StdMutex::new(VecDeque::from(vec![
+                "snapshot-one".to_string(),
+                "snapshot-two".to_string(),
+            ])),
+        });
+        tools.register(EchoTool);
+
+        let mut agent = Agent::with_client(config, tools, Box::new(client.clone()));
+        let out = agent.send("run").await.expect("send succeeds");
+        assert_eq!(out, "done");
+
+        let requests = client.requests();
+        assert_eq!(requests.len(), 2);
+        let first_system = requests[0].messages[0]
+            .content
+            .as_deref()
+            .unwrap_or_default();
+        let second_system = requests[1].messages[0]
+            .content
+            .as_deref()
+            .unwrap_or_default();
+
+        assert!(first_system.contains("snapshot-one"));
+        assert!(!first_system.contains("snapshot-two"));
+        assert!(second_system.contains("snapshot-two"));
+        assert!(!second_system.contains("snapshot-one"));
     }
 }
