@@ -3,12 +3,12 @@
 ## Status
 
 - Program status: Active
-- Current milestone: `M7` (documentation and architectural clean-up)
-- Current task: `M7.1` (update `DESIGN.md` module map + features for final structure)
+- Current milestone: `M8` (UI/REPL/tmux consolidation)
+- Current task: `M8.1` (introduce `src/ui` facade and migrate renderer contracts)
 - Next steps:
-  1. Land `M7.1` with updated architecture/module map and feature inventory in `DESIGN.md`.
-  2. Complete `M7.2` docs sync (`README.md`, `docs/architecture.md`, `ai-state.md`).
-  3. Add `docs/refactor-playbook.md` in `M7.3` and close the documentation gate.
+  1. Start `M8.1`: introduce `src/ui` facade and migrate renderer contracts behind it.
+  2. Execute `M8.2`/`M8.3`: move runtime rendering + REPL helper boundaries under the new facades.
+  3. Execute `M8.4`/`M8.5`: consolidate tmux behavior behind one domain API and remove transition shims.
 
 ## Maintainer Instructions
 
@@ -179,9 +179,9 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 
 ## M7: Documentation and architectural clean-up
 
-- [ ] M7.1 Update `DESIGN.md` module map + features for final structure. — `<commit-id>`
-- [ ] M7.2 Update `README.md`, `docs/architecture.md`, and `ai-state.md` with new layout and extension points. — `<commit-id>`
-- [ ] M7.3 Add `docs/refactor-playbook.md` summarizing module boundaries and refactor rationale. — `<commit-id>`
+- [x] M7.1 Update `DESIGN.md` module map + features for final structure. — `11cd2d9`
+- [x] M7.2 Update `README.md`, `docs/architecture.md`, and `ai-state.md` with new layout and extension points. — `26b94cb`
+- [x] M7.3 Add `docs/refactor-playbook.md` summarizing module boundaries and refactor rationale. — `a2d0f53`
 - Acceptance gate:
   1. Docs match code structure.
   2. New contributors can navigate module boundaries without reverse-engineering.
@@ -241,3 +241,6 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 - 2026-02-28: Completed `M6.1`: extracted API client concerns into `src/api/client/{auth,retry,transport}.rs` and kept `src/api/client/mod.rs` as orchestration facade (`ApiClient`) with unchanged runtime behavior and retry/login semantics. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `f0fe7e2`.
 - 2026-02-28: Completed `M6.2`: split `/responses` protocol internals into `src/api/responses/{request_builder,response_parser,sse_parser}.rs` with `src/api/responses/mod.rs` request facade. Preserved payload shape, streaming parser behavior, and reasoning extraction semantics. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `460fdb1`.
 - 2026-02-28: Completed `M6.3`: added protocol fixture coverage in `src/api/mod.rs` asserting semantic equivalence between completions and responses normalized structures for text and tool-call flows. Validation: `cargo test -q` (green). Commit: `047fe2e`.
+- 2026-02-28: Completed `M7.1`: updated `DESIGN.md` architecture graph, runtime/features path references, API module references, and data-flow examples to align with post-M6 module layout. Validation: `cargo test -q` (green). Commit: `11cd2d9`.
+- 2026-02-28: Completed `M7.2`: synced docs to the new module layout by adding `docs/architecture.md`, updating `README.md` with documentation/extension-point pointers, and refreshing `ai-state.md` path references/topology snapshot. Validation: `cargo test -q` (green). Commit: `26b94cb`.
+- 2026-02-28: Completed `M7.3`: added `docs/refactor-playbook.md` documenting module-boundary rules and behavior-preserving refactor workflow; linked it from README. Validation: `cargo test -q` (green). Commit: `a2d0f53`.
