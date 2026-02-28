@@ -4,10 +4,10 @@
 
 - Program status: Active
 - Current milestone: `M4` (split `config.rs` and `auth.rs`)
-- Current task: `M4.3` (split auth provider/openai/store/crypto/browser/error with stable facade API)
+- Current task: `M4.4` (add precedence and migration characterization tests)
 - Next steps:
-  1. Land `M4.3` with behavior-preserving auth submodule extraction and stable re-exports.
-  2. Complete `M4.4` characterization coverage for precedence/migration edge cases.
+  1. Land `M4.4` with explicit precedence/migration characterization tests for config/auth compatibility paths.
+  2. Advance to `M5` agent/runtime decomposition after M4 acceptance gate.
   3. Keep `cargo test` green after each M4 task slice.
 
 ## Maintainer Instructions
@@ -149,7 +149,7 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 
 - [x] M4.1 Move config types/defaults into `config/{types,defaults}.rs`; keep loader behavior unchanged. — `b3cd0ab`
 - [x] M4.2 Extract config source/env/resolve/init/selector logic into dedicated modules; keep public re-exports. — `a570ff7`
-- [ ] M4.3 Split auth provider/openai/store/crypto/browser/error modules with same public API. — `<commit-id>`
+- [x] M4.3 Split auth provider/openai/store/crypto/browser/error modules with same public API. — `c616588`
 - [ ] M4.4 Add precedence and migration characterization tests (including legacy compatibility paths). — `<commit-id>`
 - Acceptance gate:
   1. Config/auth behavior and precedence preserved.
@@ -232,3 +232,4 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 - 2026-02-28: Incorporated architecture feedback into this plan: documented UI/REPL boundary smell (`render`/`tui`/`cli_event_renderer`/`repl_support`) and cross-cutting tmux abstraction needs, then added `M8` with concrete extraction gates (`ui`, `repl`, `tmux`). Validation: doc-only planning update. Commit: `21f1fcb`.
 - 2026-02-28: Completed `M4.1`: moved config constants/model profile defaults into `src/config/defaults.rs` and moved config data model/default impls into `src/config/types.rs`; converted `src/config.rs` into `src/config/mod.rs` facade while preserving load/resolve/init behavior and existing tests. Validation: `cargo test -q` (green). Commit: `b3cd0ab`.
 - 2026-02-28: Completed `M4.2`: extracted config loading concerns into dedicated modules (`src/config/{loader,sources,env,resolve,init,selector}.rs`) while keeping `src/config/mod.rs` as the public facade and preserving existing behavior/tests. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `a570ff7`.
+- 2026-02-28: Completed `M4.3`: decomposed `src/auth.rs` into `src/auth/{error,types,provider,openai,store,crypto,browser}.rs` with `src/auth/mod.rs` facade and preserved auth API behavior (login flow, token refresh, encrypted provider storage, legacy compatibility shims). Validation: `cargo fmt`, `cargo test -q` (green). Commit: `c616588`.
