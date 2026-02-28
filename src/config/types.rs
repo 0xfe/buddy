@@ -48,7 +48,7 @@ impl Default for Config {
         let models = default_models_map();
         let mut agent = AgentConfig::default();
         agent.model = DEFAULT_MODEL_PROFILE_NAME.into();
-        let api = super::resolve_active_api_with(
+        let api = super::resolve::resolve_active_api_with(
             &models,
             &agent.model,
             None,
@@ -123,7 +123,7 @@ pub struct ModelConfig {
 
 impl ModelConfig {
     pub(super) fn resolved_model_name(&self, profile_name: &str) -> String {
-        super::normalized_option(&self.model).unwrap_or_else(|| profile_name.to_string())
+        super::resolve::normalized_option(&self.model).unwrap_or_else(|| profile_name.to_string())
     }
 }
 
@@ -329,8 +329,12 @@ pub struct LoadedConfig {
 /// Result of explicit global config initialization (`buddy init`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GlobalConfigInitResult {
-    Created { path: std::path::PathBuf },
-    AlreadyInitialized { path: std::path::PathBuf },
+    Created {
+        path: std::path::PathBuf,
+    },
+    AlreadyInitialized {
+        path: std::path::PathBuf,
+    },
     Overwritten {
         path: std::path::PathBuf,
         backup_path: std::path::PathBuf,
