@@ -3,12 +3,12 @@
 ## Status
 
 - Program status: Active
-- Current milestone: `M1` (CLI/runtime orchestration decomposition)
-- Current task: `M1.3` (extract REPL loop dispatch and reduce remaining orchestration in `main.rs`)
+- Current milestone: `M2` (split `repl_support.rs` and `cli_event_renderer.rs`)
+- Current task: `M2.1` (split `repl_support.rs` into focused submodules)
 - Next steps:
-  1. Land `M1.3` by isolating REPL loop command routing into a dedicated module.
-  2. Land `M1.4` by migrating/refining moved helper tests into new module-local suites.
-  3. Re-run `cargo test` and continue milestone-by-milestone commit discipline.
+  1. Land `M2.1` with a re-export facade and no behavior drift.
+  2. Land `M2.2` by splitting `cli_event_renderer.rs` into event handler modules.
+  3. Preserve full test green at each extraction slice.
 
 ## Maintainer Instructions
 
@@ -97,8 +97,8 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 
 - [x] M1.1 Extract model/session/startup helper functions into `src/app/commands/{model,session}.rs` and `src/app/startup.rs` (no behavior change). — `84af672`
 - [x] M1.2 Extract approval and task lifecycle helpers into `src/app/{approval,tasks}.rs`; keep runtime command semantics unchanged. — `84af672`
-- [ ] M1.3 Extract REPL loop dispatch into `src/app/repl_loop.rs`, remove duplicate slash-command routing code paths. — `<commit-id>`
-- [ ] M1.4 Migrate/expand unit tests from `main.rs` into new modules and keep binary tests passing. — `<commit-id>`
+- [x] M1.3 Extract REPL loop dispatch into `src/app/repl_loop.rs`, remove duplicate slash-command routing code paths. — `5cceba8`
+- [x] M1.4 Migrate/expand unit tests from `main.rs` into new modules and keep binary tests passing. — `5cceba8`
 - Acceptance gate:
   1. `main.rs` reduced to CLI wiring + high-level orchestration only.
   2. All existing main-level behaviors preserved (model/session/login/approval flows).
@@ -187,3 +187,4 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 
 - 2026-02-28: Created system-wide modularization plan after auditing `main`, `execution`, `agent`, `runtime`, `config`, `auth`, and `api` modules. M1 started. Commit: `84af672`.
 - 2026-02-28: Completed `M1.1` + `M1.2` in one behavior-preserving slice: extracted `src/app/commands/{model,session}.rs`, `src/app/startup.rs`, `src/app/approval.rs`, and `src/app/tasks.rs`; rewired `main.rs` to use new modules. `main.rs` reduced from 2593 LOC to 1825 LOC. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `84af672`.
+- 2026-02-28: Completed `M1.3` + `M1.4`: added `src/app/repl_loop.rs` to centralize shared slash-command dispatch for normal/approval REPL paths (`/ps`, `/kill`, `/timeout`, `/approve`), removed duplicated routing logic in `main.rs`, and migrated command/helper tests from `main.rs` into `src/app/{approval,startup,commands/*}.rs`. `main.rs` reduced further from 1825 LOC to 1624 LOC. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `5cceba8`.
