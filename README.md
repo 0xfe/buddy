@@ -57,9 +57,9 @@ buddy login
 # If credentials are corrupted/stale:
 buddy login --reset
 
-# Interactive mode on local machine, this creates a tmux session named buddy-...
+# Interactive mode on local machine, this creates a tmux session named buddy-<agent.name>
 buddy
-tmux attach -t buddy-xxxx # if you want to watch or co-work with buddy
+tmux attach -t buddy-agent-mo # if you want to watch or co-work with buddy
 
 # Operate a remote ssh host (in a tmux session on the host)
 buddy --ssh user@hostname
@@ -96,6 +96,14 @@ buddy resume --last
 
 Buddy tracks context usage continuously. It warns as usage rises, attempts automatic compaction before hard-limit failures, and if still over budget it refuses the send with guidance to run `/compact` or `/session new`.
 REPL input history is persisted to `~/.config/buddy/history` (disable with `display.persist_history = false`).
+
+## Documentation map
+
+- [`DESIGN.md`](DESIGN.md): full feature inventory and detailed behavior notes.
+- [`docs/architecture.md`](docs/architecture.md): module boundaries and extension points.
+- [`docs/tools.md`](docs/tools.md): built-in tool schemas, guardrails, and behavior.
+- [`docs/remote-execution.md`](docs/remote-execution.md): local/container/ssh/tmux execution model.
+- [`docs/terminal-repl.md`](docs/terminal-repl.md): REPL input, rendering, and runtime event UX.
 
 
 ## Developers
@@ -203,6 +211,21 @@ Runtime/event embedding is available through the runtime actor API:
 cargo run --example alternate_frontend -- "list files"
 ```
 
+### Extension points
+
+- Model transport/runtime integration:
+  - `src/api/mod.rs` exposes the `ModelClient` trait.
+  - `src/runtime/{schema,mod}.rs` exposes runtime command/event channels.
+- Tools:
+  - Implement `Tool` in `src/tools/mod.rs` and register in `main.rs`.
+  - Shared execution backends are in `src/tools/execution/*`.
+- Terminal/runtime rendering:
+  - `src/render.rs` exposes the `RenderSink` contract.
+  - `src/cli_event_renderer/*` converts runtime events into render actions.
+- Config/auth:
+  - `src/config/*` handles layered config loading and profile resolution.
+  - `src/auth/*` handles provider login flows and encrypted credential storage.
+
 ## Configuring
 
 Configuration is loaded with this precedence (highest wins):
@@ -255,6 +278,7 @@ api_key_env = "OPENROUTER_API_KEY"
 model = "z-ai/glm-5"
 
 [agent]
+name = "agent-mo"                           # default tmux session suffix: buddy-agent-mo
 model = "gpt-codex"                         # active profile key from [models.<name>]
 # system_prompt = "Optional additional operator instructions appended to the built-in template."
 max_iterations = 20                         # safety cap on tool-use loops
@@ -290,6 +314,7 @@ persist_history = true                     # persist REPL input history to ~/.co
 buddy [OPTIONS] [COMMAND]
 
 Commands:
+  init [--force]          Initialize ~/.config/buddy with default config files
   exec <PROMPT>           Execute one prompt and exit
   resume [SESSION_ID]     Resume saved session by id (or use --last)
   login [MODEL_PROFILE]   Login/check/reset provider auth for profile (defaults to [agent].model; shared per provider)
@@ -309,7 +334,7 @@ Options:
   -V, --version              Print version
 ```
 
-At startup, the system prompt is rendered from one compiled template with runtime placeholders (enabled tools, execution target, and optional `[agent].system_prompt` operator instructions). When `--container` or `--ssh` is set, the rendered prompt includes explicit remote-target guidance.
+At startup, the system prompt is rendered from one compiled template with runtime placeholders (enabled tools, execution target, optional `[agent].system_prompt` operator instructions, and tmux pane snapshot context when reattaching to an existing managed tmux pane). When `--container` or `--ssh` is set, the rendered prompt includes explicit remote-target guidance.
 
 `buddy exec` is non-interactive. If `tools.shell_confirm=true`, exec fails closed unless you explicitly pass `--dangerously-auto-approve`.
 
@@ -320,14 +345,16 @@ Buddy performs profile preflight validation at startup and on `/model` switches 
 
 | Tool | Description |
 |------|-------------|
-| `run_shell` | Execute shell commands. Output truncated to 4K chars. Optional user confirmation and denylist guardrails via `tools.shell_denylist`. `wait` can be `true` (default), `false` (tmux-backed targets; return immediately), or a timeout duration string like `10m`. Emits structured tool stream events (`started`, `stdout`, `stderr`, `completed`) to runtime consumers. Respects `--container`, `--ssh`, and `--tmux`. |
+| `run_shell` | Execute shell commands. Output truncated to 4K chars. Optional user confirmation and denylist guardrails via `tools.shell_denylist`. `wait` can be `true` (default), `false` (tmux-backed targets; return immediately), or a timeout duration string like `10m`. Requires safety metadata args: `risk`, `mutation`, `privesc`, `why`. Emits structured tool stream events (`started`, `stdout`, `stderr`, `completed`) to runtime consumers. Respects `--container`, `--ssh`, and `--tmux`. |
 | `fetch_url` | HTTP GET a URL, return body as text. Truncated to 8K chars. Uses `[network].fetch_timeout_secs`. Blocks localhost/private/link-local targets by default, with optional tools-domain allow/deny policy. |
 | `read_file` | Read a file's contents. Truncated to 8K chars. Respects `--container`, `--ssh`, and `--tmux`. |
 | `write_file` | Write content to a file. Creates or overwrites. Respects `--container`, `--ssh`, and `--tmux`. Blocks sensitive directories by default and can be scoped with `tools.files_allowed_paths`. |
 | `web_search` | Search DuckDuckGo and return top results with titles, URLs, and snippets. No API key needed. Emits a parser-layout diagnostic when a page cannot be parsed. |
 | `capture-pane` | Capture tmux pane output (with common `capture-pane` flags and optional delay) to inspect interactive/stuck terminal state. By default it uses tmux screenshot behavior (current visible pane content). |
-| `send-keys` | Inject tmux keys/text into a pane (Ctrl-C/Ctrl-Z/Enter/arrows/literal text) for interactive control. |
+| `send-keys` | Inject tmux keys/text into a pane (Ctrl-C/Ctrl-Z/Enter/arrows/literal text) for interactive control. Requires safety metadata args: `risk`, `mutation`, `privesc`, `why`. |
 | `time` | Return harness-recorded current wall-clock time in multiple common formats (epoch + UTC text formats). |
+
+All tool responses use a JSON envelope with `result` and `harness_timestamp` fields.
 
 ### Context window catalog
 

@@ -1,6 +1,16 @@
 # AI State (dense)
 
-- Crate: `buddy` (lib + bin). Entry: `src/main.rs`, core loop: `src/agent.rs`.
+- Crate: `buddy` (lib + bin). Entry: `src/main.rs`, core loop: `src/agent/mod.rs`.
+- Architecture index:
+  - module map + extension points: `docs/architecture.md`
+  - behavior/feature inventory: `DESIGN.md`
+- Current post-M6 module topology snapshot:
+  - `src/main.rs`, `src/cli.rs`, `src/app/*` => CLI wiring + orchestration.
+  - `src/runtime/{schema,mod,approvals,sessions,tasks}.rs` => runtime command/event actor.
+  - `src/cli_event_renderer/*` + `src/repl_support/*` + `src/tui/*` => runtime-to-terminal presentation.
+  - `src/agent/*` => agent loop + history/normalization/prompt augmentation.
+  - `src/api/*` + `src/auth/*` + `src/config/*` => model transport/auth/config resolution.
+  - `src/tools/*` + `src/tools/execution/*` => tool registry + local/container/ssh/tmux execution.
 - Current broad remediation roadmap for Claude review findings:
   - `docs/plans/2026-02-27-claude-feedback-remediation-plan.md`
   - Source review document: `docs/plans/claude-feedback-0.md`
@@ -41,7 +51,7 @@
     - none from the remediation scoped backlog (`D3` intentionally WNF).
   - Repro/runbook:
     - `docs/playbook-remediation.md` contains reproducible commands and baseline checks.
-- Runtime schema scaffolding added in `src/runtime.rs`:
+- Runtime schema scaffolding added in `src/runtime/mod.rs`:
   - `RuntimeCommand`, `RuntimeEvent`, `RuntimeEventEnvelope`
   - adapter helpers from `AgentUiEvent` for incremental migration
 - Shared text safety helper module:
@@ -52,7 +62,7 @@
   - `ModelClient` trait (`src/api/mod.rs`) abstracts model backend for deterministic tests/mocks.
   - `Agent::with_client(...)` supports dependency injection; `AgentRunner` facade added for stream-capable execution entry point.
   - `Agent::send(...)` now emits direct runtime lifecycle/model/tool/metrics events to runtime sink (independent of UI display flags).
-- Runtime actor integration in `src/runtime.rs`:
+- Runtime actor integration in `src/runtime/mod.rs`:
   - `spawn_runtime(...)`, `spawn_runtime_with_agent(...)`, and `spawn_runtime_with_shared_agent(...)`.
   - Handles submit/cancel/model-switch/session commands plus explicit approval command routing (`RuntimeCommand::Approve`).
   - Both `buddy exec` and interactive REPL prompt execution now consume runtime command/event flow.
@@ -63,12 +73,12 @@
   - `ToolContext` can emit `ToolStreamEvent` values (`Started`, `StdoutChunk`, `StderrChunk`, `Info`, `Completed`).
   - `ToolRegistry` now has `execute_with_context(...)` for runtime-aware execution and keeps `execute(...)` compatibility wrapper.
 - CLI/runtime decoupling upgrade:
-  - Runtime event translation/rendering moved to `src/cli_event_renderer.rs`.
+  - Runtime event translation/rendering moved to `src/cli_event_renderer/mod.rs`.
   - `src/main.rs` now delegates runtime-event rendering through that adapter.
   - `examples/alternate_frontend.rs` demonstrates non-default frontend parity via runtime commands/events.
 - Startup auto-creates `~/.config/buddy/buddy.toml` when missing (materialized from compiled `src/templates/buddy.toml`).
 - Explicit init flow exists via `buddy init` (`--force` writes `buddy.toml.<unix-seconds>.bak` then overwrites).
-- API protocol: OpenAI-compatible Chat Completions + Responses API (per-profile `api = "completions" | "responses"` in `src/config.rs`; wire handling in `src/api/` modules).
+- API protocol: OpenAI-compatible Chat Completions + Responses API (per-profile `api = "completions" | "responses"` in `src/config/mod.rs`; wire handling in `src/api/` modules).
 - Tool loop:
   1. push user msg
   2. call API with full history + tool defs
@@ -78,13 +88,24 @@
 
 ## Important recent changes
 
+- Tool safety/timestamp + tmux startup context updates:
+  - Added `[agent].name` (default `agent-mo`) in config/template; default managed tmux session now uses `buddy-<agent.name>`.
+  - Managed tmux window name is now `shared` (legacy `buddy-shared` still recognized for compatibility checks).
+  - Execution contexts now track whether startup reused an existing managed tmux pane and expose `capture_startup_existing_tmux_pane()`.
+  - Startup captures existing-pane screenshot text and injects it into system prompt context, with guidance to call out missing shell prompts.
+  - `run_shell` and `send-keys` now require safety metadata args: `risk`, `mutation`, `privesc`, `why`.
+  - Runtime approval events now carry optional safety metadata; approval UI now renders risk + reason lines and highlights `(privileged)`/`(mutation)` markers in the approval prompt.
+  - All built-in tools now return a JSON envelope: `{ "harness_timestamp": {...}, "result": ... }`.
+  - Added shared helper module: `src/tools/result_envelope.rs`.
+  - CLI tool-result rendering now unwraps enveloped payloads (`tool_result_display_text`, envelope-aware shell parser).
+
 - Milestone 7 closure updates:
-  - `src/tools/execution.rs`:
+  - `src/tools/execution/mod.rs`:
     - `ExecutionContext` now stores `Arc<dyn ExecutionBackendOps>` instead of a large backend enum match dispatcher.
     - Backend-specific behavior lives in concrete implementations (`LocalBackend`, `LocalTmuxContext`, `ContainerContext`, `ContainerTmuxContext`, `SshContext`).
     - Shared `CommandBackend` trait centralizes shell-backed read/write command paths.
   - Deprecation policy and warnings:
-    - `src/config.rs` adds `load_config_with_diagnostics(...)`.
+    - `src/config/mod.rs` adds `load_config_with_diagnostics(...)`.
     - Startup now warns once per run for deprecated compatibility paths (`AGENT_*`, `agent.toml`, `[api]`, `.agentx`, legacy auth profile records).
     - New migration doc: `docs/deprecations.md` (removal target after `v0.4`).
   - Config loader/testability refactor:
@@ -95,23 +116,23 @@
     - Added mock-renderer tests for `/session`, `/model`, and runtime warning render routing.
   - Parser property tests:
     - Feature-gated suite via `cargo test --features fuzz-tests`.
-    - Added property tests for Responses SSE event payload parsing (`src/api/responses.rs`) and shell wait-duration parsing (`src/tools/shell.rs`).
+    - Added property tests for Responses SSE event payload parsing (`src/api/responses/mod.rs`) and shell wait-duration parsing (`src/tools/shell.rs`).
   - `D3` plugin mechanism status:
     - Marked will-not-fix for current scope; revisit only if concrete operator demand appears.
 
 - Responses/login/subcommand upgrade:
   - `src/api/` is now split by concern:
-    - `src/api/client.rs` (shared auth + dispatch),
+    - `src/api/client/mod.rs` (shared auth + dispatch),
     - `src/api/completions.rs` (`/chat/completions`),
-    - `src/api/responses.rs` (`/responses` payload/parsing/SSE handling),
+    - `src/api/responses/mod.rs` (`/responses` payload/parsing/SSE handling),
     - `src/api/policy.rs` (provider-specific runtime rules).
   - OpenAI login-backed Responses requests now force `store = false` and `stream = true`, then internally consume SSE until `response.completed` so the rest of the agent loop stays non-streaming.
   - Responses SSE parsing now follows event-block semantics (multiline `data:` payloads and comment lines).
   - `ApiError::Status` now carries optional `retry_after_secs`; `ApiClient` retries transient failures and adds protocol mismatch hints for common 404 endpoint errors.
-  - Added profile fields in `src/config.rs`:
+  - Added profile fields in `src/config/mod.rs`:
     - `api` (`completions` / `responses`)
     - `auth` (`api-key` / `login`)
-  - Added encrypted login token storage in `src/auth.rs`:
+  - Added encrypted login token storage in `src/auth/mod.rs`:
     - file path: `~/.config/buddy/auth.json`
     - Unix perms: `0600`
     - Machine-derived KEK + random DEK wrapping with per-record AEAD nonces.
@@ -131,7 +152,7 @@
 - Config/template/bootstrap refresh:
   - Config schema migrated from single `[api]` to profile map `[models.<name>]` (also accepts `[model.<name>]` alias), with active profile selected by `[agent].model`.
   - Runtime model profile switch now uses one command: `/model [name|index]` (`/model` with no args opens arrow-key picker and Esc cancels).
-  - API key source options are per profile: `api_key`, `api_key_env`, `api_key_file` (`src/config.rs`), with strict mutual exclusivity validation.
+  - API key source options are per profile: `api_key`, `api_key_env`, `api_key_file` (`src/config/mod.rs`), with strict mutual exclusivity validation.
   - Network timeout policy is configurable under `[network]`:
     - `api_timeout_secs` (model API HTTP timeout)
     - `fetch_timeout_secs` (`fetch_url` HTTP timeout)
@@ -155,16 +176,16 @@
     - `make install` -> installs `buddy` to `~/.local/bin`
 
 - tmux startup/session UX updates:
-  - `ensure_tmux_pane_script()` creates new sessions directly with `buddy-shared` as the initial window (`tmux new-session -d -s "$SESSION" -n "$WINDOW"`), avoiding the extra default window.
-  - Missing `buddy-shared` windows are created with `tmux new-window -d -t "$SESSION" -n "$WINDOW"` (no explicit `session:` target), avoiding index-collision errors like `create window failed: index 3 in use`.
-  - Managed setup now assumes a single shared pane in `buddy-shared` (operators can add panes/windows manually).
+  - `ensure_tmux_pane_script()` creates new sessions directly with `shared` as the initial window (`tmux new-session -d -s "$SESSION" -n "$WINDOW"`), avoiding the extra default window.
+  - Missing `shared` windows are created with `tmux new-window -d -t "$SESSION" -n "$WINDOW"` (no explicit `session:` target), avoiding index-collision errors like `create window failed: index 3 in use`.
+  - Managed setup now assumes a single shared pane in `shared` (operators can add panes/windows manually).
   - Tmux-backed execution is now the default when shell/file tools are enabled (local/container/ssh), with optional `--tmux [session]` override.
   - `ExecutionContext::tmux_attach_info()` exposes attach metadata; startup now renders a compact banner:
     - `• buddy running on <target> with model <model>`
     - `  attach with: <tmux attach command>`
   - Prompt-layout initialization (`BUDDY_PROMPT_LAYOUT`, etc.) runs only when the managed pane is newly created; existing panes are reused without re-init.
   - After first-time prompt setup, buddy sends `clear` so first attach lands on a fresh screen.
-  - Local tmux startup still rejects startup when the current pane window name is `buddy-shared`, with guidance to run buddy from a different terminal/pane.
+  - Local tmux startup still rejects startup when the current pane window name is managed (`shared` or legacy `buddy-shared`), with guidance to run buddy from a different terminal/pane.
 
 - Session lifecycle changes:
   - Sessions are now ID-based (`xxxx-xxxx-xxxx-xxxx`) instead of a fixed `default` name.
@@ -229,7 +250,7 @@
     - Tool defaults use tmux screenshot behavior (visible pane content) unless explicit `start`/`end` bounds are provided.
     - If alternate-screen capture is requested but unavailable, it now falls back to main-pane capture with a notice instead of hard failing.
     - Intended for interactive/full-screen apps and stuck-command diagnosis.
-    - Implemented in `src/tools/capture_pane.rs`, backed by shared execution API in `src/tools/execution.rs`.
+    - Implemented in `src/tools/capture_pane.rs`, backed by shared execution API in `src/tools/execution/mod.rs`.
   - `time`:
     - Returns harness-recorded wall-clock time (not remote shell time) in multiple common formats (unix epoch, ISO-8601 UTC, RFC-2822 UTC, date/time UTC).
     - Implemented in `src/tools/time.rs`.
@@ -291,7 +312,7 @@
 
 - Session persistence added:
   - New module: `src/session.rs` storing ID-based sessions under `.buddyx/sessions`.
-  - Agent state snapshot/restore support lives in `src/agent.rs` (`snapshot_session`, `restore_session`, `reset_session`).
+  - Agent state snapshot/restore support lives in `src/agent/mod.rs` (`snapshot_session`, `restore_session`, `reset_session`).
   - Interactive mode now creates a fresh generated session ID on plain startup and persists active session state on prompt completion.
   - CLI resume support:
     - `buddy resume <session-id>`
@@ -305,7 +326,7 @@
 
 - Shell spinner + prompt UX updates:
   - `run_shell` now always shows a spinner while the command itself is executing (in `src/tools/shell.rs`), even when shell confirmation is enabled.
-  - Generic tool spinner in `src/agent.rs` now skips `run_shell` to avoid spinner/confirmation prompt collisions.
+  - Generic tool spinner in `src/agent/mod.rs` now skips `run_shell` to avoid spinner/confirmation prompt collisions.
   - Background sends now forward tool-call/reasoning/token events to the foreground REPL loop via channel, so activity remains visible while preserving stable input editing.
   - REPL prompt now shows:
     - local: `> `
@@ -316,17 +337,17 @@
   - New CLI flags:
     - `--container <id/name>`: execute `run_shell`, `read_file`, `write_file` inside container.
     - `--ssh user@host`: execute those tools on remote host via persistent SSH ControlMaster session.
-    - `--tmux [session]`: tmux-backed execution (default auto session `buddy-xxxx`) local by default, or on `--ssh` / `--container` target.
-  - New backend module: `src/tools/execution.rs`.
+    - `--tmux [session]`: tmux-backed execution (default session `buddy-<agent.name>`) local by default, or on `--ssh` / `--container` target.
+  - New backend module: `src/tools/execution/mod.rs`.
     - Supports `local`, `container`, and `ssh` execution contexts.
     - Detects whether `docker` frontend is actually podman-compatible by probing version output.
     - Initializes SSH master connection at startup and keeps it alive for the app lifetime.
-    - Local `--tmux` creates/reuses a persistent local session (default `buddy-xxxx`) with the same shared-pane prompt-marker protocol used by SSH+tmux.
+    - Local `--tmux` creates/reuses a persistent local session (default `buddy-<agent.name>`) with the same shared-pane prompt-marker protocol used by SSH+tmux.
     - `--container ... --tmux` creates/reuses a persistent tmux session inside the container and enables the same `wait=false`/`capture-pane`/`send-keys` workflow.
     - If remote `tmux` exists, SSH auto-creates/reuses a stable per-target session (or uses `--tmux` name).
-    - Default tmux session naming is short (`buddy-xxxx`, 4-hex suffix) for local, container, and SSH targets.
+    - Default tmux session naming is `buddy-<agent.name>` for local, container, and SSH targets.
     - All SSH tool commands run inside that tmux session; if session is deleted, it is recreated on next command.
-    - SSH tmux now uses a stable shared window (`buddy-shared`) and reuses the same pane across commands.
+    - SSH tmux now uses a stable shared window (`shared`) and reuses the same pane across commands.
     - Commands are injected into that persistent pane (`tmux send-keys`) so humans and the agent can observe the same live terminal state.
     - Prompt customization is now applied once per pane lifecycle (during SSH/tmux setup, and again only if tmux recreates a different pane), not before every command.
     - Prompt setup is versioned (`BUDDY_PROMPT_LAYOUT=v3`) so existing panes with old prompt config are upgraded on reconnect.
@@ -389,7 +410,7 @@
   - `src/tui/progress.rs` provides spinner primitives and RAII `ProgressHandle`.
   - `src/tui/renderer.rs` exposes `Renderer::progress(label)` and `Renderer::progress_with_metrics(...)`.
   - Spinner is TTY-only, updates in place with elapsed time, and clears when dropped.
-  - `src/agent.rs` now wraps model calls in progress status (`calling model ...`).
+  - `src/agent/mod.rs` now wraps model calls in progress status (`calling model ...`).
   - Tool execution now shows progress (`running tool ...`) except `run_shell` (which handles its own progress to keep confirmation UX stable).
   - `Renderer` now supports global progress suppression used by interactive background-task mode.
 
@@ -409,7 +430,7 @@
   - Approval input flow now inserts a blank line after the entered approval response for cleaner separation from following output.
 
 - Reasoning trace display added:
-  - `src/agent.rs` now detects provider fields containing `reasoning` / `thinking` / `thought` in assistant message `extra`.
+  - `src/agent/mod.rs` now detects provider fields containing `reasoning` / `thinking` / `thought` in assistant message `extra`.
   - Matching fields are rendered to stderr via `Renderer::reasoning_trace(...)`.
   - Rendering now extracts text-only reasoning content; null and metadata-only JSON payloads are suppressed.
   - Empty assistant turns are sanitized before request dispatch to avoid strict-provider follow-up failures.
@@ -444,3 +465,23 @@
 - `cargo fmt`
 - `cargo test` (currently passing all unit + doc tests)
 - `cargo test --test model_regression -- --ignored --nocapture` (explicit live-network regression suite; not run by default)
+
+## 2026-02-28 quick delta
+
+- Dynamic tmux screenshot context is now refreshed before **every** model request in `Agent::send`:
+  - `src/agent/mod.rs` executes `capture-pane` internally when available.
+  - The primary system message is rewritten in place each iteration (no stale screenshot accumulation).
+  - Added test `tmux_snapshot_prompt_is_replaced_each_request`.
+- Tmux shared-pane management tightened:
+  - `src/tools/execution/mod.rs` now tracks pane title `shared` (`TMUX_PANE_TITLE`).
+  - `ensure_tmux_pane_script` finds pane by title first; if missing, it adopts/creates one and titles it.
+  - New SSH session bootstrap now creates session with `-n shared` to avoid extra default windows.
+- Approval header rendering tweak:
+  - `src/main.rs` prints `• low risk shell command ...` (no parentheses).
+  - `low` risk is now bold green.
+- Prompt context percent display fix:
+  - `src/main.rs` now floors non-zero usage to at least `1%` (avoids confusing `0%` churn for tiny-but-nonzero usage).
+- Main refactor pass:
+  - Added `src/repl_support/mod.rs` with shared REPL/task state + parsing helpers.
+  - `src/cli_event_renderer/mod.rs` now imports helper logic from `repl_support`.
+  - `src/main.rs` shed those helper definitions and imports them from module instead.
