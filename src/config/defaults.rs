@@ -7,17 +7,25 @@ use std::collections::BTreeMap;
 
 use super::{ApiProtocol, AuthMode, ModelConfig};
 
+/// Embedded default `buddy.toml` template written by `buddy init`.
 pub(super) const DEFAULT_BUDDY_CONFIG_TEMPLATE: &str = include_str!("../templates/buddy.toml");
+/// Default profile key selected when no profile is specified.
 pub(super) const DEFAULT_MODEL_PROFILE_NAME: &str = "gpt-codex";
+/// Default provider model ID used by the default profile.
 pub(super) const DEFAULT_MODEL_ID: &str = "gpt-5.3-codex";
+/// Default OpenAI-compatible API base URL.
 pub(super) const DEFAULT_API_BASE_URL: &str = "https://api.openai.com/v1";
+/// Default timeout for model API requests.
 pub(super) const DEFAULT_API_TIMEOUT_SECS: u64 = 120;
+/// Default timeout for `fetch_url` tool requests.
 pub(super) const DEFAULT_FETCH_TIMEOUT_SECS: u64 = 20;
+/// Default operator/agent display name.
 pub(super) const DEFAULT_AGENT_NAME: &str = "agent-mo";
 
 /// Default set of model profiles bundled with Buddy.
 pub(super) fn default_models_map() -> BTreeMap<String, ModelConfig> {
     let mut models = BTreeMap::new();
+    // First-party OpenAI profile using login-based auth by default.
     models.insert(
         DEFAULT_MODEL_PROFILE_NAME.to_string(),
         ModelConfig {
@@ -31,6 +39,7 @@ pub(super) fn default_models_map() -> BTreeMap<String, ModelConfig> {
             context_limit: None,
         },
     );
+    // Alternate OpenAI profile targeting the `spark` variant.
     models.insert(
         "gpt-spark".to_string(),
         ModelConfig {
@@ -44,6 +53,7 @@ pub(super) fn default_models_map() -> BTreeMap<String, ModelConfig> {
             context_limit: None,
         },
     );
+    // OpenRouter profile pre-wired for DeepSeek with env-based key lookup.
     models.insert(
         "openrouter-deepseek".to_string(),
         ModelConfig {
@@ -57,6 +67,7 @@ pub(super) fn default_models_map() -> BTreeMap<String, ModelConfig> {
             context_limit: None,
         },
     );
+    // OpenRouter profile pre-wired for GLM family models.
     models.insert(
         "openrouter-glm".to_string(),
         ModelConfig {
@@ -70,6 +81,7 @@ pub(super) fn default_models_map() -> BTreeMap<String, ModelConfig> {
             context_limit: None,
         },
     );
+    // Moonshot Kimi profile with explicit provider endpoint and env key.
     models.insert(
         "kimi".to_string(),
         ModelConfig {

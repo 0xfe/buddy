@@ -48,6 +48,7 @@ pub fn load_config_with_diagnostics(
 }
 
 #[cfg(test)]
+/// Test seam for dependency-injected config loading.
 fn load_config_with_diagnostics_from_sources<FRead, FEnv, FRoot>(
     path_override: Option<&str>,
     read_file: FRead,
@@ -68,6 +69,7 @@ where
 }
 
 #[cfg(test)]
+/// Test seam for dependency-injected config resolution.
 fn resolve_config_from_file_config<FEnv, FRead>(
     parsed: FileConfig,
     key_override: Option<String>,
@@ -122,11 +124,13 @@ pub fn select_model_profile(config: &mut Config, profile_name: &str) -> Result<(
 }
 
 #[cfg(test)]
+/// Test seam for path-targeted default-config creation.
 fn ensure_default_global_config_at_path(path: &Path) -> Result<(), ConfigError> {
     init::ensure_default_global_config_at_path(path)
 }
 
 #[cfg(test)]
+/// Test seam for path-targeted default-config initialization.
 fn initialize_default_global_config_at_path(
     path: &Path,
     force: bool,
@@ -135,6 +139,7 @@ fn initialize_default_global_config_at_path(
 }
 
 #[cfg(test)]
+/// Test seam exposing API-key precedence/source resolution behavior.
 fn resolve_api_key<FEnv, FRead>(
     model: &ModelConfig,
     key_override: Option<String>,
@@ -149,6 +154,7 @@ where
     resolve::resolve_api_key(model, key_override, env_lookup, read_file, path_prefix)
 }
 
+/// Resolve the effective config root directory (`$XDG_CONFIG_HOME` or `~/.config`).
 pub fn config_root_dir() -> Option<PathBuf> {
     init::config_root_dir()
 }
@@ -159,6 +165,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
+    // Verifies built-in default config values remain stable and complete.
     #[test]
     fn defaults_are_sensible() {
         let c = Config::default();
@@ -182,6 +189,7 @@ mod tests {
         assert_eq!(c.network.fetch_timeout_secs, DEFAULT_FETCH_TIMEOUT_SECS);
     }
 
+    // Verifies partial TOML merges with defaults and activates selected profile.
     #[test]
     fn parse_partial_toml() {
         let toml = r#"
@@ -205,6 +213,7 @@ mod tests {
         assert!(c.display.persist_history);
     }
 
+    // Verifies tool security policy fields deserialize correctly from TOML.
     #[test]
     fn parse_fetch_security_policy() {
         let toml = r#"
@@ -232,6 +241,7 @@ mod tests {
         assert_eq!(c.tools.shell_denylist, vec!["rm -rf /", "mkfs"]);
     }
 
+    // Ensures blank/whitespace agent names normalize back to default identity.
     #[test]
     fn blank_agent_name_falls_back_to_default() {
         let toml = r#"
@@ -247,6 +257,7 @@ mod tests {
         assert_eq!(c.agent.name, "agent-mo");
     }
 
+    // Verifies network timeout overrides deserialize from TOML.
     #[test]
     fn parse_network_timeouts() {
         let toml = r#"
@@ -259,6 +270,7 @@ mod tests {
         assert_eq!(c.network.fetch_timeout_secs, 12);
     }
 
+    // Verifies legacy `[model.*]` alias table is still accepted.
     #[test]
     fn parse_model_alias_table() {
         let toml = r#"
@@ -274,6 +286,7 @@ mod tests {
         assert_eq!(c.api.base_url, "https://api.moonshot.ai/v1");
     }
 
+    // Verifies per-profile protocol/auth enums resolve into runtime API config.
     #[test]
     fn parse_model_api_and_auth_modes() {
         let toml = r#"
@@ -291,6 +304,7 @@ mod tests {
         assert_eq!(c.api.auth, AuthMode::Login);
     }
 
+    // Ensures missing `agent.model` defaults to the first available profile.
     #[test]
     fn missing_agent_model_defaults_to_first_profile() {
         let toml = r#"
@@ -302,6 +316,7 @@ mod tests {
         assert_eq!(c.api.model, "kimi");
     }
 
+    // Ensures empty config input still yields sane defaults.
     #[test]
     fn parse_empty_string() {
         let c = parse_file_config_for_test("").unwrap();
@@ -309,6 +324,7 @@ mod tests {
         assert_eq!(c.api.model, "gpt-5.3-codex");
     }
 
+    // Ensures mutually exclusive API-key source validation is enforced.
     #[test]
     fn api_key_sources_are_mutually_exclusive() {
         let model = ModelConfig {
@@ -328,6 +344,7 @@ mod tests {
         assert!(msg.contains("only one of models.gpt-codex.api_key"));
     }
 
+    // Ensures env-sourced API keys are resolved from configured env var names.
     #[test]
     fn api_key_env_source_is_resolved() {
         let model = ModelConfig {
@@ -347,6 +364,7 @@ mod tests {
         assert_eq!(resolved, "env-secret");
     }
 
+    // Ensures missing env key sources degrade to empty strings (not hard errors).
     #[test]
     fn missing_api_key_env_source_defaults_to_empty() {
         let model = ModelConfig {
@@ -365,6 +383,7 @@ mod tests {
         assert!(resolved.is_empty());
     }
 
+    // Ensures file-sourced API keys trim trailing newlines from key files.
     #[test]
     fn api_key_file_source_is_trimmed() {
         let model = ModelConfig {
@@ -387,6 +406,7 @@ mod tests {
         assert_eq!(resolved, "file-secret");
     }
 
+    // Ensures explicit runtime/API-key override takes precedence over file source.
     #[test]
     fn explicit_api_key_env_override_wins() {
         let model = ModelConfig {
@@ -406,6 +426,7 @@ mod tests {
         assert_eq!(resolved, "override");
     }
 
+    // Ensures profile switching updates both `agent.model` and active API fields.
     #[test]
     fn select_model_profile_updates_active_api() {
         let mut config = parse_file_config_for_test(
@@ -430,6 +451,7 @@ mod tests {
         assert_eq!(config.api.model, "moonshot-v1");
     }
 
+    // Ensures bootstrap helper writes the embedded default config template.
     #[test]
     fn ensure_default_global_config_writes_template() {
         let tmp_root = std::env::temp_dir().join(format!(
@@ -450,6 +472,7 @@ mod tests {
         std::fs::remove_dir_all(&tmp_root).unwrap();
     }
 
+    // Ensures non-force init preserves existing config files unchanged.
     #[test]
     fn initialize_global_config_returns_already_initialized_without_force() {
         let tmp_root = std::env::temp_dir().join(format!(
@@ -476,6 +499,7 @@ mod tests {
         std::fs::remove_dir_all(&tmp_root).unwrap();
     }
 
+    // Ensures force init overwrites current config and emits a backup file.
     #[test]
     fn initialize_global_config_force_overwrites_and_creates_backup() {
         let tmp_root = std::env::temp_dir().join(format!(
@@ -517,6 +541,7 @@ mod tests {
         std::fs::remove_dir_all(&tmp_root).unwrap();
     }
 
+    // Ensures explicit legacy file naming (`agent.toml`) emits deprecation diagnostics.
     #[test]
     fn diagnostics_warn_for_explicit_legacy_agent_toml_path() {
         let tmp_root = std::env::temp_dir().join(format!(
@@ -552,6 +577,7 @@ mod tests {
         std::fs::remove_dir_all(&tmp_root).unwrap();
     }
 
+    // Ensures legacy top-level `[api]` section emits migration diagnostics.
     #[test]
     fn diagnostics_warn_when_legacy_api_section_is_used() {
         let tmp_root = std::env::temp_dir().join(format!(
@@ -588,6 +614,7 @@ mod tests {
         std::fs::remove_dir_all(&tmp_root).unwrap();
     }
 
+    // Verifies source precedence prefers local `buddy.toml` over global config.
     #[test]
     fn injected_sources_prefer_local_buddy_toml_over_global() {
         let mut files = BTreeMap::<String, String>::new();
@@ -628,6 +655,7 @@ mod tests {
         assert_eq!(loaded.config.api.base_url, "https://local.example/v1");
     }
 
+    // Verifies env overrides apply after file parsing in injected-source path.
     #[test]
     fn injected_sources_apply_env_overrides() {
         let mut files = BTreeMap::<String, String>::new();
@@ -663,6 +691,7 @@ mod tests {
         assert_eq!(loaded.config.network.fetch_timeout_secs, 3);
     }
 
+    // Verifies legacy env aliases are still honored and flagged.
     #[test]
     fn injected_sources_warn_for_legacy_env_aliases() {
         let mut files = BTreeMap::<String, String>::new();
@@ -692,6 +721,7 @@ mod tests {
             .any(|msg| msg.contains("AGENT_MODEL")));
     }
 
+    // Verifies canonical env vars win over corresponding legacy aliases.
     #[test]
     fn injected_sources_prefer_canonical_env_over_legacy_alias() {
         let mut files = BTreeMap::<String, String>::new();
@@ -722,6 +752,7 @@ mod tests {
             .any(|msg| msg.contains("AGENT_MODEL")));
     }
 
+    // Verifies explicit path override outranks both local and global config files.
     #[test]
     fn injected_sources_explicit_path_override_beats_local_and_global() {
         let mut files = BTreeMap::<String, String>::new();
@@ -773,6 +804,7 @@ mod tests {
         assert_eq!(loaded.config.api.base_url, "https://explicit.example/v1");
     }
 
+    /// Test helper that wires an in-memory file/env view into the loader.
     fn load_config_with_sources_for_test(
         path_override: Option<&str>,
         files: BTreeMap<String, String>,
@@ -793,6 +825,7 @@ mod tests {
         )
     }
 
+    /// Test helper for parsing TOML into runtime `Config` with default injections.
     fn parse_file_config_for_test(toml_text: &str) -> Result<Config, ConfigError> {
         let parsed: FileConfig = toml::from_str(toml_text)?;
         let mut diagnostics = ConfigDiagnostics::default();

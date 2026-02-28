@@ -16,8 +16,10 @@ use super::defaults::{
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ApiProtocol {
+    /// OpenAI-style `/chat/completions` payload shape.
     #[default]
     Completions,
+    /// OpenAI-style `/responses` payload shape.
     Responses,
 }
 
@@ -25,8 +27,10 @@ pub enum ApiProtocol {
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum AuthMode {
+    /// Static API key auth (inline/env/file sourced).
     #[default]
     ApiKey,
+    /// Login-token auth (provider credentials loaded from local token store).
     Login,
 }
 
@@ -37,19 +41,25 @@ pub struct Config {
     pub api: ApiConfig,
     /// Configured model profiles keyed by profile name.
     pub models: BTreeMap<String, ModelConfig>,
+    /// Agent behavior/runtime parameters.
     pub agent: AgentConfig,
+    /// Tool enablement and policy controls.
     pub tools: ToolsConfig,
+    /// Network timeout defaults.
     pub network: NetworkConfig,
+    /// Output/UI display preferences.
     pub display: DisplayConfig,
 }
 
 impl Default for Config {
     fn default() -> Self {
         let models = default_models_map();
+        // Default agent points to the default bundled profile key.
         let agent = AgentConfig {
             model: DEFAULT_MODEL_PROFILE_NAME.into(),
             ..AgentConfig::default()
         };
+        // Resolve active API exactly as runtime would (env/file hooks disabled here).
         let api = super::resolve::resolve_active_api_with(
             &models,
             &agent.model,
@@ -72,10 +82,15 @@ impl Default for Config {
 /// Resolved API connection settings used by the runtime HTTP client.
 #[derive(Debug, Clone)]
 pub struct ApiConfig {
+    /// Provider base URL (e.g., `https://api.openai.com/v1`).
     pub base_url: String,
+    /// Resolved API key value (possibly empty for login/local endpoints).
     pub api_key: String,
+    /// Concrete provider model ID to request.
     pub model: String,
+    /// API wire protocol variant used for request/response formatting.
     pub protocol: ApiProtocol,
+    /// Auth mechanism associated with this profile.
     pub auth: AuthMode,
     /// Selected profile key (for login-token lookup and UX messaging).
     pub profile: String,
@@ -108,14 +123,20 @@ impl ApiConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct ModelConfig {
+    /// Profile-specific API base URL.
     #[serde(alias = "base_url")]
     pub api_base_url: String,
+    /// Provider protocol for this profile.
     #[serde(default)]
     pub api: ApiProtocol,
+    /// Auth mechanism for this profile.
     #[serde(default)]
     pub auth: AuthMode,
+    /// Inline literal API key (mutually exclusive with env/file sources).
     pub api_key: String,
+    /// Environment variable name to read API key from.
     pub api_key_env: Option<String>,
+    /// File path to read API key text from.
     pub api_key_file: Option<String>,
     /// Optional concrete model id; defaults to the profile key when omitted.
     pub model: Option<String>,
@@ -124,6 +145,7 @@ pub struct ModelConfig {
 }
 
 impl ModelConfig {
+    /// Resolve concrete model ID, defaulting to the profile key when absent.
     pub(super) fn resolved_model_name(&self, profile_name: &str) -> String {
         super::resolve::normalized_option(&self.model).unwrap_or_else(|| profile_name.to_string())
     }
@@ -152,10 +174,13 @@ pub struct AgentConfig {
     pub name: String,
     /// Active model-profile key (must exist under `[models.<name>]`).
     pub model: String,
+    /// Additional operator instructions appended to system prompt rendering.
     pub system_prompt: String,
     /// Safety cap on agentic loop iterations.
     pub max_iterations: usize,
+    /// Optional model temperature override.
     pub temperature: Option<f64>,
+    /// Optional nucleus-sampling override.
     pub top_p: Option<f64>,
 }
 
@@ -178,7 +203,9 @@ impl Default for AgentConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct ToolsConfig {
+    /// Enable `run_shell` tool registration.
     pub shell_enabled: bool,
+    /// Enable `fetch_url` tool registration.
     pub fetch_enabled: bool,
     /// Optional confirmation prompt for `fetch_url` tool executions.
     pub fetch_confirm: bool,
@@ -186,10 +213,12 @@ pub struct ToolsConfig {
     pub fetch_allowed_domains: Vec<String>,
     /// Domain denylist for `fetch_url`. Matches exact domain and subdomains.
     pub fetch_blocked_domains: Vec<String>,
+    /// Enable filesystem read/write tools.
     pub files_enabled: bool,
     /// Optional allowlist roots for `write_file`. When non-empty, writes are
     /// only permitted under one of these paths.
     pub files_allowed_paths: Vec<String>,
+    /// Enable web search tool registration.
     pub search_enabled: bool,
     /// Whether to prompt the user before running shell commands.
     pub shell_confirm: bool,
@@ -209,6 +238,7 @@ impl Default for ToolsConfig {
             files_allowed_paths: Vec::new(),
             search_enabled: true,
             shell_confirm: true,
+            // Conservative baseline denylist for dangerous shell operations.
             shell_denylist: vec![
                 "rm -rf /".to_string(),
                 "mkfs".to_string(),
@@ -225,8 +255,11 @@ impl Default for ToolsConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct DisplayConfig {
+    /// Enable ANSI colorized terminal output.
     pub color: bool,
+    /// Show token usage stats in UI/status lines.
     pub show_tokens: bool,
+    /// Show tool-call metadata in output stream.
     pub show_tool_calls: bool,
     /// Persist REPL input history under `~/.config/buddy/history`.
     pub persist_history: bool,
@@ -265,24 +298,36 @@ impl Default for NetworkConfig {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub(super) struct FileConfig {
+    /// Parsed modern model-profile table (`[models.<name>]`).
     #[serde(alias = "model")]
     pub(super) models: BTreeMap<String, ModelConfig>,
     /// Legacy compatibility for older configs that still use `[api]`.
+    /// Legacy flat API section kept for compatibility migration.
     pub(super) api: Option<LegacyApiConfig>,
+    /// Agent section from config file.
     pub(super) agent: AgentConfig,
+    /// Tool section from config file.
     pub(super) tools: ToolsConfig,
+    /// Network section from config file.
     pub(super) network: NetworkConfig,
+    /// Display section from config file.
     pub(super) display: DisplayConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub(super) struct LegacyApiConfig {
+    /// Legacy base URL field from `[api]`.
     pub(super) base_url: String,
+    /// Legacy inline API key field from `[api]`.
     pub(super) api_key: String,
+    /// Legacy env API key source from `[api]`.
     pub(super) api_key_env: Option<String>,
+    /// Legacy file API key source from `[api]`.
     pub(super) api_key_file: Option<String>,
+    /// Legacy model ID field from `[api]`.
     pub(super) model: String,
+    /// Legacy context limit override field from `[api]`.
     pub(super) context_limit: Option<usize>,
 }
 
@@ -300,6 +345,7 @@ impl Default for LegacyApiConfig {
 }
 
 impl LegacyApiConfig {
+    /// Convert legacy `[api]` shape into a modern single-profile model config.
     pub(super) fn into_model_config(self) -> ModelConfig {
         ModelConfig {
             api_base_url: self.base_url,
@@ -324,21 +370,30 @@ pub struct ConfigDiagnostics {
 /// Configuration payload plus load-time diagnostics.
 #[derive(Debug, Clone)]
 pub struct LoadedConfig {
+    /// Fully resolved runtime config.
     pub config: Config,
+    /// Warnings/deprecations collected during load.
     pub diagnostics: ConfigDiagnostics,
 }
 
 /// Result of explicit global config initialization (`buddy init`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GlobalConfigInitResult {
+    /// Config file was newly created.
     Created {
+        /// Path written.
         path: std::path::PathBuf,
     },
+    /// Config file already existed and was left unchanged.
     AlreadyInitialized {
+        /// Existing config path.
         path: std::path::PathBuf,
     },
+    /// Existing config was overwritten after backup.
     Overwritten {
+        /// Path rewritten with template content.
         path: std::path::PathBuf,
+        /// Backup file path containing previous config.
         backup_path: std::path::PathBuf,
     },
 }

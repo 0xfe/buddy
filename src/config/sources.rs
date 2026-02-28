@@ -1,4 +1,7 @@
 //! Config-file source discovery and legacy-source diagnostics.
+//!
+//! Source order implements the project precedence contract:
+//! explicit path > local files > global files > built-in defaults.
 
 use std::path::{Path, PathBuf};
 
@@ -8,14 +11,21 @@ use super::ConfigDiagnostics;
 
 #[derive(Debug, Clone)]
 pub(super) enum ConfigSource {
+    /// Config loaded from explicit `--config` path.
     Explicit(PathBuf),
+    /// Config loaded from local `./buddy.toml`.
     LocalBuddy,
+    /// Config loaded from legacy local `./agent.toml`.
     LocalLegacyAgent,
+    /// Config loaded from modern global config path.
     GlobalBuddy,
+    /// Config loaded from legacy global config path.
     GlobalLegacyAgent(PathBuf),
+    /// No file found; runtime defaults were used.
     BuiltInDefaults,
 }
 
+/// Read config text from the highest-precedence available source.
 pub(super) fn read_config_text_with_sources<FRead, FRoot>(
     path_override: Option<&str>,
     read_file: &FRead,
@@ -25,18 +35,21 @@ where
     FRead: Fn(&Path) -> Result<String, std::io::Error>,
     FRoot: Fn() -> Option<PathBuf>,
 {
+    // 1) Explicit override path from CLI takes absolute precedence.
     if let Some(p) = path_override {
         let path = PathBuf::from(p);
         let text = read_file(&path)?;
         return Ok((text, ConfigSource::Explicit(path)));
     }
 
+    // 2) Local modern config, then local legacy fallback.
     if let Ok(text) = read_file(Path::new("buddy.toml")) {
         return Ok((text, ConfigSource::LocalBuddy));
     }
     if let Ok(text) = read_file(Path::new("agent.toml")) {
         return Ok((text, ConfigSource::LocalLegacyAgent));
     }
+    // 3) Global modern config, then global legacy fallback.
     if let Some(dir) = config_root() {
         let buddy_global = dir.join("buddy").join("buddy.toml");
         if let Ok(text) = read_file(&buddy_global) {
@@ -48,9 +61,11 @@ where
         }
     }
 
+    // 4) Nothing found; caller will parse empty config into defaults.
     Ok((String::new(), ConfigSource::BuiltInDefaults))
 }
 
+/// Record compatibility diagnostics when config came from legacy sources.
 pub(super) fn collect_legacy_source_warnings(
     source: &ConfigSource,
     diagnostics: &mut ConfigDiagnostics,

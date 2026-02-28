@@ -1,4 +1,7 @@
 //! Config-path helpers and default config initialization routines.
+//!
+//! All writes use race-safe create semantics where possible to avoid
+//! clobbering user files when multiple processes bootstrap simultaneously.
 
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -66,6 +69,7 @@ pub(super) fn ensure_default_global_config_at_path(path: &Path) -> Result<(), Co
     }
 }
 
+/// Initialize a config file at an explicit path, with optional force overwrite.
 pub(super) fn initialize_default_global_config_at_path(
     path: &Path,
     force: bool,
@@ -80,6 +84,7 @@ pub(super) fn initialize_default_global_config_at_path(
                 path: path.to_path_buf(),
             });
         }
+        // Preserve existing file before replacing it with the latest template.
         let backup_path = timestamped_backup_path(path);
         std::fs::copy(path, &backup_path)?;
         std::fs::write(path, DEFAULT_BUDDY_CONFIG_TEMPLATE)?;
@@ -106,6 +111,7 @@ pub(super) fn initialize_default_global_config_at_path(
     }
 }
 
+/// Build a non-colliding backup path in the same directory as `path`.
 fn timestamped_backup_path(path: &Path) -> PathBuf {
     let file_name = path
         .file_name()
@@ -116,6 +122,7 @@ fn timestamped_backup_path(path: &Path) -> PathBuf {
         .unwrap_or_default()
         .as_secs();
 
+    // Prefer deterministic timestamped names and add numeric suffixes on collision.
     for suffix in 0..1000usize {
         let candidate_name = if suffix == 0 {
             format!("{file_name}.{timestamp}.bak")
@@ -128,12 +135,14 @@ fn timestamped_backup_path(path: &Path) -> PathBuf {
         }
     }
 
+    // Very unlikely fallback if all deterministic names already exist.
     path.with_file_name(format!(
         "{file_name}.{timestamp}.{}.bak",
         std::process::id()
     ))
 }
 
+/// Resolve the base config directory from env/home conventions.
 pub fn config_root_dir() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("XDG_CONFIG_HOME") {
         let trimmed = path.trim();

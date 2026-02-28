@@ -9,6 +9,8 @@ use std::net::IpAddr;
 
 /// Validate that the currently active profile can be used for requests.
 pub fn validate_active_profile_ready(config: &Config) -> Result<(), String> {
+    // Validate URL and model shape first so later auth errors are not masking
+    // malformed profile data.
     let base_url = validate_base_url(config)?;
     validate_model_name(config)?;
 
@@ -19,6 +21,7 @@ pub fn validate_active_profile_ready(config: &Config) -> Result<(), String> {
     }
 }
 
+/// Validate API base URL syntax and scheme.
 fn validate_base_url(config: &Config) -> Result<String, String> {
     let trimmed = config.api.base_url.trim();
     if trimmed.is_empty() {
@@ -53,6 +56,7 @@ fn validate_base_url(config: &Config) -> Result<String, String> {
     Ok(trimmed.to_string())
 }
 
+/// Ensure profile resolution produced a non-empty runtime model id.
 fn validate_model_name(config: &Config) -> Result<(), String> {
     if config.api.model.trim().is_empty() {
         return Err(format!(
@@ -63,11 +67,13 @@ fn validate_model_name(config: &Config) -> Result<(), String> {
     Ok(())
 }
 
+/// Validate `auth = "api-key"` configuration and key source resolution.
 fn validate_api_key_mode(
     config: &Config,
     profile: Option<&ModelConfig>,
     base_url: &str,
 ) -> Result<(), String> {
+    // Runtime API config already carries a concrete key value when available.
     if !config.api.api_key.trim().is_empty() {
         return Ok(());
     }
@@ -108,6 +114,7 @@ fn validate_api_key_mode(
     ))
 }
 
+/// Validate login-based auth configuration and credential availability.
 fn validate_login_mode(config: &Config) -> Result<(), String> {
     if !supports_openai_login(&config.api.base_url) {
         return Err(format!(
@@ -136,6 +143,8 @@ fn validate_login_mode(config: &Config) -> Result<(), String> {
     }
 }
 
+/// Return true for localhost/loopback endpoints where API key auth is
+/// intentionally optional in many local runtimes.
 fn is_localhost_endpoint(base_url: &str) -> bool {
     let Ok(parsed) = reqwest::Url::parse(base_url) else {
         return false;
@@ -156,6 +165,7 @@ mod tests {
     use super::*;
     use crate::config::{ApiProtocol, Config};
 
+    // Ensures empty resolved model names fail fast with actionable messaging.
     #[test]
     fn preflight_rejects_empty_model_name() {
         let mut cfg = Config::default();
@@ -164,6 +174,7 @@ mod tests {
         assert!(err.contains("empty model name"), "err: {err}");
     }
 
+    // Ensures unsupported URL schemes are rejected before network I/O.
     #[test]
     fn preflight_rejects_non_http_base_url() {
         let mut cfg = Config::default();
@@ -172,6 +183,7 @@ mod tests {
         assert!(err.contains("unsupported scheme"), "err: {err}");
     }
 
+    // Ensures missing configured env key sources produce targeted guidance.
     #[test]
     fn preflight_rejects_empty_api_key_env_source() {
         let mut cfg = Config::default();
@@ -198,6 +210,7 @@ mod tests {
         assert!(err.contains("TEST_KEY"), "err: {err}");
     }
 
+    // Ensures localhost-style endpoints remain usable without explicit API keys.
     #[test]
     fn preflight_allows_localhost_without_key_source() {
         let mut cfg = Config::default();

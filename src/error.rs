@@ -1,4 +1,7 @@
 //! Unified error types for the agent.
+//!
+//! The codebase intentionally uses hand-written enums and `From` conversions
+//! instead of a macro-based error crate to keep dependency surface minimal.
 
 use std::fmt;
 
@@ -33,8 +36,11 @@ impl std::error::Error for ToolError {}
 /// Errors when loading or parsing configuration.
 #[derive(Debug)]
 pub enum ConfigError {
+    /// Filesystem I/O failure while reading/writing config.
     Io(std::io::Error),
+    /// TOML deserialization failure for config text.
     Toml(toml::de::Error),
+    /// Semantically invalid config value or conflict.
     Invalid(String),
 }
 
@@ -73,8 +79,11 @@ pub enum ApiError {
     Http(reqwest::Error),
     /// Non-2xx status from the API.
     Status {
+        /// HTTP status code returned by the upstream provider.
         code: u16,
+        /// Response body (often provider error payload).
         body: String,
+        /// Parsed Retry-After hint (seconds), if provided.
         retry_after_secs: Option<u64>,
     },
     /// Login-based auth is configured but no usable login exists.
@@ -138,8 +147,11 @@ impl ApiError {
 /// Top-level error type for the agent.
 #[derive(Debug)]
 pub enum AgentError {
+    /// Configuration load/validation failure.
     Config(ConfigError),
+    /// HTTP/API layer failure.
     Api(ApiError),
+    /// Tool execution/parsing failure.
     Tool(ToolError),
     /// Model returned no choices in the response.
     EmptyResponse,
@@ -195,6 +207,7 @@ impl From<ToolError> for AgentError {
 mod tests {
     use super::*;
 
+    // Ensures user-facing tool parse/execution errors are clearly formatted.
     #[test]
     fn tool_error_display() {
         assert_eq!(
@@ -207,6 +220,7 @@ mod tests {
         );
     }
 
+    // Ensures std::io::Error converts into a prefixed config error message.
     #[test]
     fn config_error_from_io() {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
@@ -216,6 +230,7 @@ mod tests {
         assert!(s.contains("file not found"));
     }
 
+    // Ensures TOML parse failures map to the dedicated config variant.
     #[test]
     fn config_error_from_toml() {
         let toml_err: toml::de::Error = toml::from_str::<toml::Value>("x = [unclosed").unwrap_err();
@@ -223,12 +238,14 @@ mod tests {
         assert!(e.to_string().starts_with("toml:"));
     }
 
+    // Ensures custom validation errors preserve their payload text.
     #[test]
     fn config_error_invalid_message() {
         let e = ConfigError::Invalid("api key source conflict".into());
         assert_eq!(e.to_string(), "invalid config: api key source conflict");
     }
 
+    // Ensures high-level agent errors have stable, actionable display strings.
     #[test]
     fn agent_error_display_variants() {
         assert_eq!(
@@ -249,12 +266,14 @@ mod tests {
         );
     }
 
+    // Ensures tool errors upcast into `AgentError` without losing detail.
     #[test]
     fn agent_error_from_tool_error() {
         let ae = AgentError::from(ToolError::ExecutionFailed("oops".into()));
         assert!(ae.to_string().contains("oops"), "got: {ae}");
     }
 
+    // Ensures config errors upcast into `AgentError` with the expected prefix.
     #[test]
     fn agent_error_from_config_error() {
         let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");

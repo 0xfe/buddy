@@ -1,4 +1,7 @@
 //! Active model-profile selection helpers.
+//!
+//! This module updates both `agent.model` and resolved runtime API settings so
+//! profile switches are immediately reflected in subsequent requests.
 
 use crate::error::ConfigError;
 
@@ -15,6 +18,7 @@ pub fn select_model_profile(config: &mut Config, profile_name: &str) -> Result<(
         ));
     }
 
+    // Resolve profile with the same env/key-file semantics used at startup.
     let resolved_api = resolve_active_api_with(
         &config.models,
         selected,
@@ -34,6 +38,7 @@ pub fn select_model_profile(config: &mut Config, profile_name: &str) -> Result<(
     Ok(())
 }
 
+/// Read runtime API key override from canonical/legacy env vars.
 fn api_key_override_env() -> Option<String> {
     api_key_override_with(&|name| std::env::var(name).ok())
 }

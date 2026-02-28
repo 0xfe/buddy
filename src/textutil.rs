@@ -10,6 +10,7 @@ pub fn safe_prefix_by_bytes(text: &str, max_bytes: usize) -> &str {
         return text;
     }
 
+    // Walk backwards to the nearest UTF-8 code point boundary.
     let mut end = max_bytes;
     while end > 0 && !text.is_char_boundary(end) {
         end -= 1;
@@ -39,11 +40,13 @@ pub fn truncate_with_suffix_by_chars(text: &str, max_chars: usize, suffix: &str)
 mod tests {
     use super::*;
 
+    // Ensures short ASCII strings are returned untouched.
     #[test]
     fn safe_prefix_by_bytes_keeps_full_ascii_when_short() {
         assert_eq!(safe_prefix_by_bytes("hello", 10), "hello");
     }
 
+    // Ensures byte-limited truncation never splits a multi-byte character.
     #[test]
     fn safe_prefix_by_bytes_avoids_mid_codepoint_cut() {
         let s = "aé🙂";
@@ -51,6 +54,7 @@ mod tests {
         assert_eq!(safe_prefix_by_bytes(s, 3), "aé");
     }
 
+    // Ensures byte-based truncation works correctly with emoji and suffixes.
     #[test]
     fn truncate_with_suffix_by_bytes_handles_unicode() {
         let s = "🙂🙂🙂";
@@ -58,6 +62,7 @@ mod tests {
         assert_eq!(out, "🙂...[truncated]");
     }
 
+    // Ensures char-based truncation counts Unicode scalar values, not bytes.
     #[test]
     fn truncate_with_suffix_by_chars_limits_by_character_count() {
         let out = truncate_with_suffix_by_chars("ab🙂cd", 3, "...");

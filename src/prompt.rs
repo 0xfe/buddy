@@ -6,26 +6,34 @@
 
 use std::collections::BTreeMap;
 
+/// Embedded prompt template rendered at runtime with environment/tool context.
 const SYSTEM_PROMPT_TEMPLATE: &str = include_str!("templates/system_prompt.template");
 
 /// The execution target selected by CLI flags.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExecutionTarget<'a> {
+    /// Operate on the current local machine.
     Local,
+    /// Operate against a named container target.
     Container(&'a str),
+    /// Operate against a remote SSH host.
     Ssh(&'a str),
 }
 
 /// Parameters used to compile the system prompt template.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SystemPromptParams<'a> {
+    /// Runtime execution destination used to render target-specific cautions.
     pub execution_target: ExecutionTarget<'a>,
+    /// Tool names exposed to the model in this session.
     pub enabled_tools: Vec<&'a str>,
+    /// Optional operator-supplied additive instructions.
     pub custom_instructions: Option<&'a str>,
 }
 
 /// Render the single system prompt template using runtime parameters.
 pub fn render_system_prompt(params: SystemPromptParams<'_>) -> String {
+    // Keep variable binding deterministic for stable renders in tests and logs.
     let mut vars = BTreeMap::<&str, String>::new();
     vars.insert(
         "REMOTE_TARGET_NOTE",
@@ -43,6 +51,7 @@ pub fn render_system_prompt(params: SystemPromptParams<'_>) -> String {
     normalize_blank_lines(&render_template(SYSTEM_PROMPT_TEMPLATE, &vars))
 }
 
+/// Replace `{{KEY}}` placeholders in `template` with values from `vars`.
 fn render_template(template: &str, vars: &BTreeMap<&str, String>) -> String {
     let mut rendered = template.to_string();
     for (key, value) in vars {
@@ -52,6 +61,7 @@ fn render_template(template: &str, vars: &BTreeMap<&str, String>) -> String {
     rendered
 }
 
+/// Render a contextual reminder when tools are pointed at non-local environments.
 fn render_remote_target_note(target: ExecutionTarget<'_>) -> String {
     match target {
         ExecutionTarget::Local => String::new(),
@@ -74,6 +84,7 @@ fn render_remote_target_note(target: ExecutionTarget<'_>) -> String {
     }
 }
 
+/// Render the enabled tool list expected by the system prompt template.
 fn render_enabled_tools(enabled_tools: &[&str]) -> String {
     if enabled_tools.is_empty() {
         return "- none".to_string();
@@ -86,6 +97,7 @@ fn render_enabled_tools(enabled_tools: &[&str]) -> String {
         .join("\n")
 }
 
+/// Render the optional operator instructions block when non-empty.
 fn render_custom_instructions(custom: Option<&str>) -> String {
     let Some(custom) = custom.map(str::trim).filter(|s| !s.is_empty()) else {
         return String::new();
@@ -93,6 +105,7 @@ fn render_custom_instructions(custom: Option<&str>) -> String {
     format!("Additional operator instructions:\n{custom}")
 }
 
+/// Collapse repeated blank lines and trim trailing whitespace per line.
 fn normalize_blank_lines(text: &str) -> String {
     let mut out = String::new();
     let mut previous_blank = false;
@@ -116,6 +129,7 @@ fn normalize_blank_lines(text: &str) -> String {
 mod tests {
     use super::*;
 
+    // Ensures template render preserves core static policy text.
     #[test]
     fn prompt_contains_static_core_text() {
         let prompt = render_system_prompt(SystemPromptParams {
@@ -132,6 +146,7 @@ mod tests {
         assert!(prompt.contains("valid Markdown"));
     }
 
+    // Ensures container mode injects a remote-target warning block.
     #[test]
     fn prompt_renders_remote_note_for_container() {
         let prompt = render_system_prompt(SystemPromptParams {
@@ -142,6 +157,7 @@ mod tests {
         assert!(prompt.contains("remote container target (`devbox`)"));
     }
 
+    // Ensures SSH mode injects the corresponding remote-target warning block.
     #[test]
     fn prompt_renders_remote_note_for_ssh() {
         let prompt = render_system_prompt(SystemPromptParams {
@@ -152,6 +168,7 @@ mod tests {
         assert!(prompt.contains("remote SSH host target (`user@host`)"));
     }
 
+    // Confirms tool names are emitted as a Markdown bullet list.
     #[test]
     fn prompt_renders_enabled_tools_list() {
         let prompt = render_system_prompt(SystemPromptParams {
@@ -164,6 +181,7 @@ mod tests {
         assert!(prompt.contains("- `time`"));
     }
 
+    // Ensures optional operator instructions are included verbatim when set.
     #[test]
     fn prompt_renders_custom_instructions() {
         let prompt = render_system_prompt(SystemPromptParams {

@@ -11,10 +11,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Subdirectory under each session root that contains per-session JSON files.
 const SESSIONS_DIR: &str = "sessions";
+/// Canonical file extension for persisted sessions.
 const SESSION_FILE_EXT: &str = "json";
+/// On-disk schema version for [`PersistedSession`].
 const SESSION_FILE_VERSION: u32 = 1;
+/// Preferred modern session root.
 const DEFAULT_SESSION_ROOT: &str = ".buddyx";
+/// Legacy session root retained for backward compatibility.
 const LEGACY_SESSION_ROOT: &str = ".agentx";
 
 /// True when default-open logic will resolve to the legacy `.agentx` root.
@@ -28,22 +33,30 @@ pub fn default_uses_legacy_root() -> bool {
 /// Lightweight listing metadata shown by `/session`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionSummary {
+    /// Stable session identifier.
     pub id: String,
+    /// Last save timestamp in Unix epoch milliseconds.
     pub updated_at_millis: u64,
 }
 
 /// Filesystem-backed storage for named REPL sessions.
 #[derive(Debug, Clone)]
 pub struct SessionStore {
+    /// Directory containing `*.json` session files.
     sessions_dir: PathBuf,
 }
 
+/// On-disk payload shape for persisted sessions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PersistedSession {
+    /// File-format version for forward compatibility checks.
     version: u32,
+    /// Stable session identifier (legacy alias keeps older `name` payloads loadable).
     #[serde(alias = "name")]
     id: String,
+    /// Last update timestamp used for "recent sessions" ordering.
     updated_at_millis: u64,
+    /// Serialized conversation state snapshot.
     state: AgentSessionSnapshot,
 }
 
@@ -100,6 +113,8 @@ impl SessionStore {
         let json = serde_json::to_vec_pretty(&payload)
             .map_err(|e| format!("failed to serialize session {session_id}: {e}"))?;
         let path = self.session_path(session_id);
+        // Write to a sibling temporary file first so partial writes do not
+        // corrupt the last known-good session snapshot.
         let tmp_path = path.with_extension("json.tmp");
         fs::write(&tmp_path, json).map_err(|e| {
             format!(
@@ -107,6 +122,7 @@ impl SessionStore {
                 tmp_path.display()
             )
         })?;
+        // Rename is atomic on most filesystems, making this "all or nothing".
         fs::rename(&tmp_path, &path).map_err(|e| {
             format!(
                 "failed to move session file into place {}: {e}",
@@ -137,6 +153,8 @@ impl SessionStore {
     /// Return all sessions ordered by most recent use.
     pub fn list(&self) -> Result<Vec<SessionSummary>, String> {
         let mut sessions = Vec::new();
+        // Best-effort listing: unreadable or malformed files are skipped so one
+        // bad file does not break session browsing.
         for entry in
             fs::read_dir(&self.sessions_dir).map_err(|e| format!("failed to list sessions: {e}"))?
         {
@@ -160,6 +178,7 @@ impl SessionStore {
             });
         }
 
+        // Most recently updated first; ID tiebreak keeps output deterministic.
         sessions.sort_by(|a, b| {
             b.updated_at_millis
                 .cmp(&a.updated_at_millis)
@@ -173,12 +192,14 @@ impl SessionStore {
         Ok(self.list()?.into_iter().next().map(|s| s.id))
     }
 
+    /// Build the on-disk path for a session identifier.
     fn session_path(&self, session_id: &str) -> PathBuf {
         self.sessions_dir
             .join(format!("{session_id}.{SESSION_FILE_EXT}"))
     }
 }
 
+/// Validate user/model provided session IDs before touching the filesystem.
 fn validate_session_id(session_id: &str) -> Result<(), String> {
     let trimmed = session_id.trim();
     if trimmed.is_empty() {
@@ -198,10 +219,12 @@ fn validate_session_id(session_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Return true when the path has the canonical session extension.
 fn is_session_file(path: &Path) -> bool {
     path.extension().and_then(|e| e.to_str()) == Some(SESSION_FILE_EXT)
 }
 
+/// Current Unix timestamp in milliseconds.
 fn now_unix_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -212,6 +235,7 @@ fn now_unix_millis() -> u64 {
 /// Generate a unique-ish hex session id (`xxxx-xxxx-xxxx-xxxx`).
 pub fn generate_session_id() -> String {
     let mut bytes = [0u8; 8];
+    // OS RNG is sufficient for low-collision opaque IDs.
     OsRng.fill_bytes(&mut bytes);
     let hex = format!("{:016x}", u64::from_be_bytes(bytes));
     format!(
@@ -231,8 +255,10 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
 
+    /// Per-process counter to avoid temp-dir name collisions in fast test runs.
     static NEXT_TMP_ID: AtomicU64 = AtomicU64::new(1);
 
+    /// Build a minimal session snapshot fixture.
     fn test_snapshot() -> AgentSessionSnapshot {
         AgentSessionSnapshot {
             messages: vec![Message::user("hello")],
@@ -246,6 +272,7 @@ mod tests {
         }
     }
 
+    /// Build an isolated temporary session store for each test.
     fn test_store() -> SessionStore {
         let unique = NEXT_TMP_ID.fetch_add(1, Ordering::Relaxed);
         let root =
@@ -253,6 +280,7 @@ mod tests {
         SessionStore::open(root).expect("temp store should open")
     }
 
+    // Ensures persisted snapshots round-trip through disk serialization.
     #[test]
     fn save_and_load_round_trip() {
         let store = test_store();
@@ -264,6 +292,7 @@ mod tests {
         assert_eq!(loaded.tracker.last_completion_tokens, 34);
     }
 
+    // Ensures listing order prefers most recently written sessions.
     #[test]
     fn list_orders_by_last_update() {
         let store = test_store();
@@ -276,6 +305,7 @@ mod tests {
         assert_eq!(sessions[0].id, "b");
     }
 
+    // Ensures `resolve_last` mirrors list ordering semantics.
     #[test]
     fn resolve_last_returns_latest_session() {
         let store = test_store();
@@ -286,6 +316,7 @@ mod tests {
         assert_eq!(last.as_deref(), Some("second"));
     }
 
+    // Ensures invalid identifiers are rejected before filesystem writes.
     #[test]
     fn invalid_session_id_is_rejected() {
         let store = test_store();
@@ -295,6 +326,7 @@ mod tests {
         assert!(err.contains("session id"));
     }
 
+    // Ensures generated IDs use the documented grouped-hex shape.
     #[test]
     fn generate_session_id_is_hex_groups() {
         let id = generate_session_id();
@@ -306,6 +338,7 @@ mod tests {
             .all(|part| part.chars().all(|ch| ch.is_ascii_hexdigit())));
     }
 
+    // Ensures ID allocation retries until a distinct on-disk file path is found.
     #[test]
     fn create_new_session_allocates_distinct_ids() {
         let store = test_store();

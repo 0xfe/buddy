@@ -25,6 +25,7 @@ pub struct TokenTracker {
 }
 
 impl TokenTracker {
+    /// Create a fresh tracker for a model with the provided context limit.
     pub fn new(context_limit: usize) -> Self {
         Self {
             context_limit,
@@ -112,25 +113,33 @@ fn json_value_char_count(value: &Value) -> usize {
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 enum ModelMatchKind {
+    /// Rule matches when candidate model name equals pattern.
     Exact,
+    /// Rule matches when candidate model name starts with pattern.
     Prefix,
+    /// Rule matches when candidate model name contains pattern.
     Contains,
 }
 
 /// A single context-window match rule from `models.toml`.
 #[derive(Debug, Clone, Deserialize)]
 struct ModelContextRule {
+    /// Matching strategy used for this rule.
     #[serde(rename = "match")]
     kind: ModelMatchKind,
+    /// Pattern compared against normalized model IDs.
     pattern: String,
+    /// Context window applied when the rule matches.
     context_window: usize,
 }
 
 /// Embedded model context catalog loaded from `templates/models.toml`.
 #[derive(Debug, Clone, Deserialize)]
 struct ModelCatalog {
+    /// Fallback context window when no explicit rule matches.
     #[serde(default = "default_unknown_context_limit")]
     default_context_window: usize,
+    /// Ordered rule list (first match wins).
     #[serde(default)]
     rule: Vec<ModelContextRule>,
 }
@@ -143,6 +152,8 @@ impl ModelCatalog {
             return None;
         }
 
+        // Match both full provider/model IDs and provider-stripped tails so
+        // catalog rules can stay concise.
         let mut candidates = vec![normalized.clone()];
         if let Some((_, tail)) = normalized.rsplit_once('/') {
             if !tail.is_empty() && tail != normalized {
@@ -168,6 +179,7 @@ impl ModelCatalog {
 /// Parsed once at runtime from the embedded `templates/models.toml`.
 static MODEL_CATALOG: OnceLock<Option<ModelCatalog>> = OnceLock::new();
 
+/// Parse and cache the embedded model catalog once per process.
 fn model_catalog() -> Option<&'static ModelCatalog> {
     MODEL_CATALOG
         .get_or_init(|| toml::from_str(include_str!("templates/models.toml")).ok())
@@ -179,11 +191,14 @@ fn model_catalog() -> Option<&'static ModelCatalog> {
 fn normalize_model_name(model: &str) -> String {
     let m = model.trim().to_lowercase();
     match m.split_once(':') {
+        // Drop provider-specific suffixes like `:free` so rules do not need
+        // duplicate entries for every suffix variant.
         Some((base, _)) => base.trim().to_string(),
         None => m,
     }
 }
 
+/// Default context window when no catalog signal exists.
 fn default_unknown_context_limit() -> usize {
     8_192
 }
@@ -245,6 +260,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    // Ensures built-in catalog parsing works and key model mappings stay stable.
     #[test]
     fn context_limit_lookup_uses_catalog_rules() {
         assert!(model_catalog().is_some());
@@ -264,6 +280,7 @@ mod tests {
         assert_eq!(default_context_limit("unknown-model"), 8_192);
     }
 
+    // Ensures exact/prefix/contains match modes all resolve as expected.
     #[test]
     fn catalog_rule_matching_variants() {
         let catalog: ModelCatalog = toml::from_str(
@@ -296,6 +313,7 @@ mod tests {
         assert_eq!(catalog.lookup("no-match"), None);
     }
 
+    // Ensures heuristic estimation produces plausible non-zero token counts.
     #[test]
     fn estimate_messages_basic() {
         let msgs = vec![
@@ -308,6 +326,7 @@ mod tests {
         assert!(est < 100);
     }
 
+    // Ensures per-call and running totals are both updated by `record`.
     #[test]
     fn tracker_record() {
         let mut t = TokenTracker::new(1000);
@@ -319,6 +338,7 @@ mod tests {
         assert_eq!(t.last_completion_tokens, 30);
     }
 
+    // Ensures arithmetic uses saturation to avoid u64 overflow panics/wrap.
     #[test]
     fn tracker_record_saturates_totals() {
         let mut t = TokenTracker::new(1000);
@@ -330,6 +350,7 @@ mod tests {
         assert_eq!(t.session_total(), u64::MAX);
     }
 
+    // Ensures usage threshold warning fires once estimates exceed 80%.
     #[test]
     fn approaching_limit() {
         let t = TokenTracker::new(100);
@@ -339,6 +360,7 @@ mod tests {
         assert!(t.is_approaching_limit(&msgs));
     }
 
+    // Ensures model-visible JSON extras are included in rough size estimates.
     #[test]
     fn estimate_includes_extra_message_fields() {
         let mut msg = Message::user("hello");

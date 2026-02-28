@@ -1,4 +1,7 @@
 //! CLI argument parsing via clap.
+//!
+//! This module defines the user-facing command surface and leaves all runtime
+//! behavior to higher-level orchestration code (`main.rs` / `agent.rs`).
 
 use clap::{Parser, Subcommand};
 
@@ -44,6 +47,7 @@ pub struct Args {
     )]
     pub dangerously_auto_approve: bool,
 
+    /// Optional subcommand. When omitted, the binary runs in interactive REPL mode.
     #[command(subcommand)]
     pub command: Option<Command>,
 }
@@ -88,12 +92,14 @@ mod tests {
     use super::{Args, Command};
     use clap::Parser;
 
+    // Verifies the baseline UX contract: no subcommand means "start REPL".
     #[test]
     fn no_args_defaults_to_repl_mode() {
         let args = Args::parse_from(["buddy"]);
         assert!(args.command.is_none());
     }
 
+    // Confirms one-shot execution captures prompt text as a positional argument.
     #[test]
     fn exec_subcommand_parses_prompt() {
         let args = Args::parse_from(["buddy", "exec", "hello"]);
@@ -103,6 +109,7 @@ mod tests {
         ));
     }
 
+    // Guards the init overwrite flag wiring.
     #[test]
     fn init_subcommand_supports_force_flag() {
         let args = Args::parse_from(["buddy", "init", "--force"]);
@@ -112,6 +119,7 @@ mod tests {
         ));
     }
 
+    // Ensures `login` accepts an explicit model profile without mutating flags.
     #[test]
     fn login_subcommand_accepts_optional_model() {
         let args = Args::parse_from(["buddy", "login", "gpt-codex"]);
@@ -122,6 +130,7 @@ mod tests {
         ));
     }
 
+    // Ensures optional login control flags can be combined.
     #[test]
     fn login_subcommand_accepts_reset_and_check_flags() {
         let args = Args::parse_from(["buddy", "login", "gpt-codex", "--reset", "--check"]);
@@ -132,6 +141,7 @@ mod tests {
         ));
     }
 
+    // Confirms explicit session IDs parse as the positional resume target.
     #[test]
     fn resume_subcommand_accepts_session_id() {
         let args = Args::parse_from(["buddy", "resume", "a1b2-c3d4"]);
@@ -141,6 +151,7 @@ mod tests {
         ));
     }
 
+    // Ensures `--last` toggles the expected branch for resume lookup.
     #[test]
     fn resume_subcommand_supports_last_flag() {
         let args = Args::parse_from(["buddy", "resume", "--last"]);
@@ -150,6 +161,7 @@ mod tests {
         ));
     }
 
+    // Ensures optional tmux session naming works in local mode.
     #[test]
     fn tmux_parses_without_remote_flags() {
         let args = Args::parse_from(["buddy", "--tmux", "buddy-dev"]);
@@ -157,6 +169,7 @@ mod tests {
         assert!(args.ssh.is_none());
     }
 
+    // Ensures tmux targeting also works when container execution is selected.
     #[test]
     fn tmux_parses_with_container() {
         let args = Args::parse_from(["buddy", "--container", "dev", "--tmux", "buddy-dev"]);
@@ -164,6 +177,7 @@ mod tests {
         assert_eq!(args.tmux, Some(Some("buddy-dev".to_string())));
     }
 
+    // Guards the high-risk bypass flag parse path for `buddy exec`.
     #[test]
     fn dangerously_auto_approve_flag_parses() {
         let args = Args::parse_from(["buddy", "--dangerously-auto-approve", "exec", "hi"]);
