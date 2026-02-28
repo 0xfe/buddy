@@ -42,22 +42,24 @@ tool-use chains.
 
 ## Core Structures
 
-### `Agent` — `src/agent.rs`
+### `Agent` — `src/agent/mod.rs`
 
 The agent owns everything needed to run a conversation:
 
 ```rust
 pub struct Agent {
-    client: ApiClient,        // HTTP client for /responses or /chat/completions
+    client: Box<dyn ModelClient>, // transport client (ApiClient in production)
     config: Config,           // Model name, temperature, limits, ...
     tools: ToolRegistry,      // All registered tools
     messages: Vec<Message>,   // Full conversation history
     tracker: TokenTracker,    // Token accounting
     renderer: Renderer,       // Colorized terminal output
 
-    // Background mode wiring (see below)
+    // Runtime/background wiring
     suppress_live_output: bool,
     live_output_sink: Option<(u64, mpsc::UnboundedSender<AgentUiEvent>)>,
+    runtime_event_sink: Option<(u64, mpsc::UnboundedSender<RuntimeEventEnvelope>)>,
+    runtime_event_seq: u64,
     cancellation_rx: Option<watch::Receiver<bool>>,
 }
 ```
@@ -77,9 +79,13 @@ The conversation is a flat `Vec<Message>` with four roles:
 | `assistant` | After every model response (even if it has tool calls) |
 | `tool` | After each tool is executed, carrying the result |
 
-The history grows monotonically. Old messages are never pruned; context-window
-management is handled by warning the user when they approach the limit (see
-[Token Tracking](#token-tracking)).
+History normally grows with each turn, but it is compacted under pressure:
+
+- automatic compaction can run before request submission near hard limits,
+- `/compact` triggers manual compaction to a lower target budget.
+
+Compaction inserts a synthetic system summary so older context remains available
+in compressed form.
 
 ---
 
@@ -97,8 +103,14 @@ self.messages.push(Message::user(user_input));
 
 ### Step 2 — Pre-flight context check
 
-Before entering the loop, the token tracker estimates how full the context
-window is. If it is at or above 80% it emits a warning.
+Before each request, the agent estimates context usage and enforces budget rules:
+
+- warn threshold: `80%` of context window (`CONTEXT_WARNING_FRACTION`),
+- hard threshold: `95%` (`CONTEXT_HARD_LIMIT_FRACTION`),
+- automatic compaction target: `82%` (`CONTEXT_AUTO_COMPACT_TARGET_FRACTION`).
+
+If usage remains above the hard threshold after compaction, the send fails with
+`AgentError::ContextLimitExceeded`.
 
 ### Step 3 — Build the request
 
@@ -123,12 +135,12 @@ reject an empty array are not confused.
 let response = self.client.chat(&request).await?;
 ```
 
-While waiting for the API, a progress spinner is shown. If cancellation is
-active, the call races against the cancellation signal:
+In direct foreground mode, a progress spinner is shown while waiting for the
+API. If cancellation is active, the call races against the cancellation signal:
 
 ```rust
 tokio::select! {
-    _ = wait_for_cancellation(&mut cancel_rx) => { return Ok("cancelled"); }
+    _ = wait_for_cancellation(&mut cancel_rx) => { return Ok("operation cancelled by user"); }
     response = self.client.chat(&request) => response?,
 }
 ```
@@ -155,8 +167,8 @@ fn reasoning_traces(message: &Message) -> Vec<(String, String)> {
 }
 ```
 
-Traces are rendered to stderr (or forwarded as `AgentUiEvent::ReasoningTrace`
-in background mode) so they don't pollute stdout.
+Traces are rendered to stderr in foreground mode and emitted as runtime model
+events in runtime/background mode so they don't pollute stdout.
 
 ### Step 7 — Branch on tool calls
 
@@ -170,7 +182,10 @@ for tc in tool_calls.iter() {
     self.tool_call_live(&tc.function.name, &tc.function.arguments);
 
     // Execute (also cancellable)
-    let result = self.tools.execute(&tc.function.name, &tc.function.arguments).await;
+    let tool_context = ToolContext::with_stream(tool_stream_tx);
+    let result = self.tools
+        .execute_with_context(&tc.function.name, &tc.function.arguments, &tool_context)
+        .await;
 
     // Push the result into history
     self.messages.push(Message::tool_result(&tc.id, &result));
@@ -278,27 +293,16 @@ mode where live output is routed through a channel instead of printed directly:
 
 ```rust
 agent.set_live_output_suppressed(true);
-agent.set_live_output_sink(Some((task_id, event_tx)));
+agent.set_runtime_event_sink(Some((task_id, runtime_event_tx)));
 agent.set_cancellation_receiver(Some(cancel_rx));
 ```
 
-All rendering calls (`warn_live`, `token_usage_live`, `tool_call_live`, etc.)
-check `suppress_live_output`. If set, they emit an `AgentUiEvent` variant
-instead of writing to stderr:
+The modern path emits `RuntimeEventEnvelope` values (`TaskEvent`, `ModelEvent`,
+`ToolEvent`, `MetricsEvent`, `WarningEvent`) consumed by the runtime actor and
+REPL reducer. A legacy `AgentUiEvent` sink still exists for compatibility.
 
-```rust
-enum AgentUiEvent {
-    Warning         { task_id, message },
-    TokenUsage      { task_id, prompt_tokens, completion_tokens, session_total },
-    ReasoningTrace  { task_id, field, trace },
-    ToolCall        { task_id, name, args },
-    ToolResult      { task_id, name, args, result },
-}
-```
-
-The foreground REPL loop reads these events and renders them in the main
-thread, allowing multiple background tasks to run concurrently without
-interleaving their output.
+The foreground REPL loop renders from runtime events while the actor enforces
+execution ordering and approval mediation.
 
 ---
 
@@ -313,6 +317,7 @@ enum AgentError {
     Tool(ToolError),           // tool execution failure
     EmptyResponse,             // no choices in API response
     MaxIterationsReached,      // loop cap hit
+    ContextLimitExceeded { estimated_tokens, context_limit },
 }
 ```
 

@@ -47,7 +47,7 @@ pub trait Tool: Send + Sync {
 
     /// Execute with the JSON argument string the model provided.
     /// Returns a text result that is pushed back into the conversation.
-    async fn execute(&self, arguments: &str) -> Result<String, ToolError>;
+    async fn execute(&self, arguments: &str, context: &ToolContext) -> Result<String, ToolError>;
 }
 ```
 
@@ -56,6 +56,8 @@ pub trait Tool: Send + Sync {
 - Arguments arrive as a raw JSON string (OpenAI's double-encoding). Tools
   deserialise with `serde_json::from_str` and return a `ToolError::InvalidArguments`
   on parse failure.
+- `ToolContext` provides an optional stream sink for incremental events
+  (`started`, `stdout`, `stderr`, `info`, `completed`) consumed by the runtime UI.
 - The return type is always `String`. If execution fails and the error is not
   fatal, formatting the error as a string and returning it lets the model read
   the failure and decide what to do next. The agent loop formats hard errors as
@@ -72,6 +74,7 @@ The registry is a simple `Vec<Box<dyn Tool>>` with three operations:
 registry.register(tool);           // add a tool
 registry.definitions();            // collect ToolDefinition for the API request
 registry.execute(name, args).await // dispatch by name
+registry.execute_with_context(name, args, &ctx).await // dispatch with stream sink
 ```
 
 If `definitions()` is called with no tools registered, the agent omits the
@@ -217,7 +220,8 @@ Search the web via DuckDuckGo's HTML endpoint. No API key is required.
 ```
 
 Returns up to 8 results, each with title, URL, and snippet. The HTML is
-parsed with simple string operations (no external HTML parsing library).
+parsed with `scraper` selectors, with a fallback extractor when the primary
+result container layout changes.
 
 **Example output:**
 
@@ -350,7 +354,7 @@ without shelling out.
 
 ---
 
-## The Execution Backend — `src/tools/execution.rs`
+## The Execution Backend — `src/tools/execution/mod.rs`
 
 `run_shell`, `read_file`, `write_file`, `capture-pane`, and `send-keys` all
 delegate to an `ExecutionContext` rather than running commands directly. This
@@ -428,7 +432,7 @@ for the full design. In brief:
 
 use async_trait::async_trait;
 use serde::Deserialize;
-use super::Tool;
+use super::{Tool, ToolContext};
 use crate::error::ToolError;
 use crate::types::{FunctionDefinition, ToolDefinition};
 
@@ -465,7 +469,7 @@ impl Tool for MyTool {
         }
     }
 
-    async fn execute(&self, arguments: &str) -> Result<String, ToolError> {
+    async fn execute(&self, arguments: &str, _context: &ToolContext) -> Result<String, ToolError> {
         let args: Args = serde_json::from_str(arguments)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
         Ok(format!("processed: {}", args.message))
@@ -480,16 +484,16 @@ impl Tool for MyTool {
 pub mod my_tool;
 ```
 
-### Step 3 — Register in main.rs
+### Step 3 — Register in `src/app/entry.rs`
 
 ```rust
-// src/main.rs (in the tool registration block)
+// src/app/entry.rs (inside build_tools)
 registry.register(MyTool);
 ```
 
 ### Step 4 — Optionally gate behind a config flag
 
-Add `my_tool_enabled: bool` to `ToolsConfig` in `src/config.rs` and wrap the
+Add `my_tool_enabled: bool` to `ToolsConfig` in `src/config/types.rs` and wrap the
 registration:
 
 ```rust

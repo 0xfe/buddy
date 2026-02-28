@@ -70,7 +70,7 @@ src/
 ### Add a new tool
 
 1. Implement `Tool` in a new `src/tools/<name>.rs`.
-2. Register it in `main.rs` via `ToolRegistry`.
+2. Register it in `src/app/entry.rs` via `ToolRegistry` (`build_tools`).
 3. If it needs shell/container/ssh/tmux execution, route through `ExecutionContext` (`src/tools/execution/mod.rs`) instead of direct process calls.
 4. Add unit tests in the tool module.
 

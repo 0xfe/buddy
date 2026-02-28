@@ -2,8 +2,8 @@
 
 The interactive mode is a full-featured terminal UI built on top of `crossterm`.
 It gives the user a readline-style editor, real-time status feedback, background
-task management, and inline command approval — all while keeping background
-agent work running concurrently.
+task management, and inline command approval — all while keeping prompt input
+responsive while tasks run.
 
 ---
 
@@ -11,22 +11,19 @@ agent work running concurrently.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                      main.rs (REPL loop)                     │
+│                 app/repl_mode.rs (REPL loop)                │
 │                                                              │
 │  ┌────────────────────┐    ┌───────────────────────────────┐ │
-│  │   read_repl_line   │    │   Background task pool        │ │
-│  │   with_interrupt() │    │                               │ │
-│  │                    │    │  task 1: agent.send(prompt_a) │ │
-│  │  keyboard events   │    │  task 2: agent.send(prompt_b) │ │
-│  │  slash commands    │◄───│                               │ │
-│  │  approval prompts  │    │  events ──► mpsc channel      │ │
+│  │ read_repl_line_... │    │ runtime actor (src/runtime/*)│ │
+│  │ keyboard/slash/UI  │───►│ RuntimeCommand::SubmitPrompt  │ │
+│  │ approval prompt    │◄───│ RuntimeEventEnvelope stream   │ │
 │  └────────────────────┘    └───────────────────────────────┘ │
 │           │                                                   │
 │           ▼                                                   │
 │  ┌──────────────────────────────────────────────────────┐    │
 │  │                   Renderer                           │    │
 │  │  stdout ← final assistant responses                 │    │
-│  │  stderr ← tool calls, reasoning, tokens, spinners  │    │
+│  │  stderr ← status/tool/reasoning/progress           │    │
 │  └──────────────────────────────────────────────────────┘    │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -35,8 +32,9 @@ The REPL loop and the agent tasks are deliberately separated:
 
 - The **REPL loop** owns the terminal and all input/output; it runs in the
   main async task.
-- **Agent tasks** run as background Tokio tasks. They communicate with the REPL
-  loop exclusively through channels.
+- Prompt execution runs behind the runtime actor command/event interface.
+- The runtime currently permits one active prompt task at a time; task
+  lifecycle is still exposed via task IDs/events for cancellation and UI.
 - **stdout** carries final assistant responses (clean for piping).
 - **stderr** carries all status chrome: tool calls, reasoning traces, spinners,
   token counts.
@@ -157,16 +155,17 @@ When a background task issues a shell confirmation request, the editor surface
 is replaced with an inline approval prompt:
 
 ```
-local$ rm -rf /tmp/work -- approve? [y/N]
+• approve (mutation) command ? [y/n]
 ```
 
-The `<actor>` prefix is color-coded and changes based on the execution target:
+An approval summary block above the prompt shows the actor/target, risk, and
+command snippet. Actor labels vary by execution target:
 
 | Target | Actor prefix |
 |--------|-------------|
 | Local | `local` |
-| SSH | `ssh user@host` |
-| Container | `container:name` |
+| SSH | `ssh:<user@host>` |
+| Container | `container:<name>` |
 
 The user types `y` or `yes` to approve, or leaves blank / types `n` to deny.
 The tool's `ShellApprovalRequest` oneshot channel is resolved immediately.
@@ -213,33 +212,26 @@ Buddy continuously tracks context usage. As the history grows, it warns before t
 
 ---
 
-## Background Task Management
+## Task Management
 
-Every user prompt is spawned as a numbered background task:
+Every user prompt is submitted to the runtime actor as a numbered task:
 
 ```rust
-let task_id: u64 = next_task_id();
-tokio::spawn(async move {
-    agent.set_live_output_suppressed(true);
-    agent.set_live_output_sink(Some((task_id, event_tx)));
-    agent.set_cancellation_receiver(Some(cancel_rx));
-    let result = agent.send(input).await;
-    // send final result via channel
-});
+runtime.send(RuntimeCommand::SubmitPrompt {
+    prompt: input.to_string(),
+    metadata: PromptMetadata { source: Some("repl".into()), correlation_id: None },
+}).await?;
 ```
 
-The REPL loop runs a tight poll (every 80 ms) processing events from all tasks:
+The REPL loop runs a tight poll (every 80 ms) processing runtime events:
 
 ```
-AgentUiEvent::ToolCall       → render tool call snippet to stderr
-AgentUiEvent::ToolResult     → render result snippet to stderr
-AgentUiEvent::ReasoningTrace → render reasoning block to stderr
-AgentUiEvent::TokenUsage     → render token line to stderr
-AgentUiEvent::Warning        → render warning to stderr
+TaskEvent / ModelEvent / ToolEvent / MetricsEvent / WarningEvent
+  → update task state + render status/result output
 ```
 
-Final responses arrive on a separate `oneshot` channel and are printed to
-stdout.
+Final assistant responses are emitted via `ModelEvent::MessageFinal` and
+rendered to stdout when the task completes.
 
 ### Liveness Line
 
@@ -247,10 +239,10 @@ While any task is running, a status line is rendered above the prompt on each
 poll tick:
 
 ```
-⣾ [1] 12s  buddy working  |  [2] 5s  waiting approval
+[|] task #1 running 12s
 ```
 
-This uses a four-frame braille spinner (`|`, `/`, `-`, `\`) and shows elapsed
+This uses a four-frame ASCII spinner (`|`, `/`, `-`, `\`) and shows elapsed
 time per task.
 
 ### Cancellation

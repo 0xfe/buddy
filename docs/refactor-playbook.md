@@ -50,7 +50,7 @@ The modularization split those files into cohesive submodules:
 - Types/defaults belong in `types.rs`/`defaults.rs`; resolution and I/O in dedicated loader modules.
 - Keep explicit precedence behavior stable:
   - env overrides in config loader;
-  - CLI overrides in `main.rs`.
+  - CLI overrides in `src/app/entry.rs` (`apply_cli_overrides`).
 - Keep auth storage/provider logic provider-scoped and profile-agnostic where possible.
 
 ### 5) Tools/execution (`src/tools/*`, `src/tools/execution/*`)

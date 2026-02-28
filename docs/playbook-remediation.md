@@ -1,9 +1,10 @@
-# Remediation Playbook (2026-02-27)
+# Remediation Playbook (Historical: 2026-02-27)
 
 ## Purpose
 
-This playbook is the baseline repro/validation harness for the remediation
-plan in `docs/plans/2026-02-27-claude-feedback-remediation-plan.md`.
+This playbook captures the baseline repro/validation harness used for the
+2026-02-27 remediation plan in
+`docs/plans/2026-02-27-claude-feedback-remediation-plan.md`.
 
 It focuses on:
 
@@ -22,7 +23,7 @@ cargo test
 
 ## Repro Matrix
 
-| ID | Area | Repro Command / Flow | Expected Current Behavior (before fix) |
+| ID | Area | Repro Command / Flow | Historical Baseline Behavior (2026-02-27) |
 | --- | --- | --- | --- |
 | `S1` | shell guardrails | `cargo test tools::shell::tests::execute_confirm_approved_via_broker_runs_command -- --nocapture` | Approval flow works, but no denylist/sandbox policy yet. |
 | `S2` | fetch SSRF | Manual REPL with `fetch_url` against `http://127.0.0.1:<port>` | Request is blocked by default unless explicitly allowed in `tools.fetch_allowed_domains`. |

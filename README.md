@@ -164,6 +164,7 @@ async fn main() {
     let mut tools = ToolRegistry::new();
     tools.register(ShellTool {
         confirm: true,
+        denylist: vec!["rm -rf /".to_string(), "mkfs".to_string()],
         color: true,
         execution: execution.clone(),
         approval: None,
@@ -218,7 +219,7 @@ cargo run --example alternate_frontend -- "list files"
   - `src/api/mod.rs` exposes the `ModelClient` trait.
   - `src/runtime/{schema,mod}.rs` exposes runtime command/event channels.
 - Tools:
-  - Implement `Tool` in `src/tools/mod.rs` and register in `main.rs`.
+  - Implement `Tool` in `src/tools/mod.rs` and register it in `src/app/entry.rs` (`build_tools`).
   - Shared execution backends are in `src/tools/execution/*`.
 - Terminal/runtime rendering:
   - `src/ui/render.rs` exposes the `RenderSink` contract.
@@ -232,7 +233,7 @@ cargo run --example alternate_frontend -- "list files"
 
 Configuration is loaded with this precedence (highest wins):
 
-1. **CLI flags** — `--config`, `--model`, `--base-url`, `--container`, `--ssh`, `--tmux`, `--no-color`
+1. **CLI flags** — `--config`, `--model`, `--base-url`, `--container`, `--ssh`, `--tmux`, `--no-color`, `--dangerously-auto-approve`
 2. **Environment variables** — `BUDDY_API_KEY`, `BUDDY_BASE_URL`, `BUDDY_MODEL`, `BUDDY_API_TIMEOUT_SECS`, `BUDDY_FETCH_TIMEOUT_SECS`
 3. **Local config** — `./buddy.toml` in the current directory
 4. **Global config** — `~/.config/buddy/buddy.toml` (create with `buddy init`; startup also auto-creates if missing)
@@ -316,21 +317,22 @@ persist_history = true                     # persist REPL input history to ~/.co
 buddy [OPTIONS] [COMMAND]
 
 Commands:
-  init [--force]          Initialize ~/.config/buddy with default config files
-  exec <PROMPT>           Execute one prompt and exit
-  resume [SESSION_ID]     Resume saved session by id (or use --last)
-  login [MODEL_PROFILE]   Login/check/reset provider auth for profile (defaults to [agent].model; shared per provider)
+  init                    Initialize ~/.config/buddy with default config files
+  exec                    Execute one prompt and exit
+  resume                  Resume a saved session by ID (or resume the most recent with --last)
+  login                   Login to a provider for a model profile
   help                    Print command help
 
 Options:
-  -c, --config <CONFIG>      Path to config file
+  -c, --config <CONFIG>      Path to config file (default: ./buddy.toml or ~/.config/buddy/buddy.toml)
   -m, --model <MODEL>        Override model profile key (if configured) or raw API model id
       --base-url <BASE_URL>  Override API base URL
-      --container <ID/NAME>  Run shell/files tools with docker/podman exec in this container
-      --ssh <USER@HOST>      Run shell/files tools on this host over persistent ssh
-      --tmux [SESSION]       optional tmux session override (tmux-backed execution is the default when shell/files tools are enabled)
+      --container <CONTAINER>
+                              Run shell/files tools inside a running container
+      --ssh <SSH>            Run shell/files tools on a remote host over SSH
+      --tmux [SESSION]       Optional tmux session name. Without a value, uses `buddy-<agent.name>` for the active target (local, --ssh, or --container)
       --dangerously-auto-approve
-                              in `buddy exec`, bypass run_shell confirmations (dangerous)
+                              In `buddy exec`, bypass shell confirmation prompts and auto-approve `run_shell` commands. Dangerous: use only in trusted contexts
       --no-color             Disable color output
   -h, --help                 Print help
   -V, --version              Print version
