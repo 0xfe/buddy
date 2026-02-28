@@ -4,11 +4,11 @@
 
 - Program status: Active
 - Current milestone: `M1` (CLI/runtime orchestration decomposition)
-- Current task: `M1.1` (extract model/session/startup helper modules from `main.rs`)
+- Current task: `M1.3` (extract REPL loop dispatch and reduce remaining orchestration in `main.rs`)
 - Next steps:
-  1. Land `M1.1` with zero behavior change and passing tests.
-  2. Continue `M1.2` by moving approval/task orchestration helpers out of `main.rs`.
-  3. Keep committing between tasks and append commit IDs to this plan log.
+  1. Land `M1.3` by isolating REPL loop command routing into a dedicated module.
+  2. Land `M1.4` by migrating/refining moved helper tests into new module-local suites.
+  3. Re-run `cargo test` and continue milestone-by-milestone commit discipline.
 
 ## Maintainer Instructions
 
@@ -48,7 +48,7 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 3. `src/app/commands/`: `/model`, `/session`, `/login`, `/status`, `/context` handlers.
 4. `src/app/approval.rs`: approval prompt rendering + decision flow.
 5. `src/app/tasks.rs`: background task lifecycle + timeout/cancel logic.
-6. `src/app/startup_render.rs`: startup/session banner rendering.
+6. `src/app/startup.rs`: startup/session banner rendering.
 
 ### REPL/runtime helpers
 
@@ -95,8 +95,8 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 
 ## M1: Decompose `main.rs` into app modules
 
-- [ ] M1.1 Extract model/session/startup helper functions into `src/app/commands/{model,session}.rs` and `src/app/startup_render.rs` (no behavior change). — `<commit-id>`
-- [ ] M1.2 Extract approval and task lifecycle helpers into `src/app/{approval,tasks}.rs`; keep runtime command semantics unchanged. — `<commit-id>`
+- [x] M1.1 Extract model/session/startup helper functions into `src/app/commands/{model,session}.rs` and `src/app/startup.rs` (no behavior change). — `84af672`
+- [x] M1.2 Extract approval and task lifecycle helpers into `src/app/{approval,tasks}.rs`; keep runtime command semantics unchanged. — `84af672`
 - [ ] M1.3 Extract REPL loop dispatch into `src/app/repl_loop.rs`, remove duplicate slash-command routing code paths. — `<commit-id>`
 - [ ] M1.4 Migrate/expand unit tests from `main.rs` into new modules and keep binary tests passing. — `<commit-id>`
 - Acceptance gate:
@@ -185,4 +185,5 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 
 ## Execution Log
 
-- 2026-02-28: Created system-wide modularization plan after auditing `main`, `execution`, `agent`, `runtime`, `config`, `auth`, and `api` modules. M1 started; next step is extracting model/session/startup helpers from `main.rs`. Commit: `<pending>`.
+- 2026-02-28: Created system-wide modularization plan after auditing `main`, `execution`, `agent`, `runtime`, `config`, `auth`, and `api` modules. M1 started. Commit: `84af672`.
+- 2026-02-28: Completed `M1.1` + `M1.2` in one behavior-preserving slice: extracted `src/app/commands/{model,session}.rs`, `src/app/startup.rs`, `src/app/approval.rs`, and `src/app/tasks.rs`; rewired `main.rs` to use new modules. `main.rs` reduced from 2593 LOC to 1825 LOC. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `84af672`.
