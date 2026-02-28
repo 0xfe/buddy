@@ -3,12 +3,12 @@
 ## Status
 
 - Program status: Active
-- Current milestone: `M4` (split `config.rs` and `auth.rs`)
-- Current task: `M4.4` (add precedence and migration characterization tests)
+- Current milestone: `M5` (split `agent.rs` and `runtime.rs`)
+- Current task: `M5.1` (extract agent event plumbing and prompt augmentation modules)
 - Next steps:
-  1. Land `M4.4` with explicit precedence/migration characterization tests for config/auth compatibility paths.
-  2. Advance to `M5` agent/runtime decomposition after M4 acceptance gate.
-  3. Keep `cargo test` green after each M4 task slice.
+  1. Land `M5.1` with behavior-preserving extraction of agent event/prompt augmentation paths.
+  2. Continue `M5.2` + `M5.3` with stable runtime/agent interfaces and explicit regression tests.
+  3. Keep `cargo test` green after each M5 task slice.
 
 ## Maintainer Instructions
 
@@ -150,7 +150,7 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 - [x] M4.1 Move config types/defaults into `config/{types,defaults}.rs`; keep loader behavior unchanged. — `b3cd0ab`
 - [x] M4.2 Extract config source/env/resolve/init/selector logic into dedicated modules; keep public re-exports. — `a570ff7`
 - [x] M4.3 Split auth provider/openai/store/crypto/browser/error modules with same public API. — `c616588`
-- [ ] M4.4 Add precedence and migration characterization tests (including legacy compatibility paths). — `<commit-id>`
+- [x] M4.4 Add precedence and migration characterization tests (including legacy compatibility paths). — `4cb8bc0`
 - Acceptance gate:
   1. Config/auth behavior and precedence preserved.
   2. Login/token flow and encrypted storage behavior preserved.
@@ -233,3 +233,4 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 - 2026-02-28: Completed `M4.1`: moved config constants/model profile defaults into `src/config/defaults.rs` and moved config data model/default impls into `src/config/types.rs`; converted `src/config.rs` into `src/config/mod.rs` facade while preserving load/resolve/init behavior and existing tests. Validation: `cargo test -q` (green). Commit: `b3cd0ab`.
 - 2026-02-28: Completed `M4.2`: extracted config loading concerns into dedicated modules (`src/config/{loader,sources,env,resolve,init,selector}.rs`) while keeping `src/config/mod.rs` as the public facade and preserving existing behavior/tests. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `a570ff7`.
 - 2026-02-28: Completed `M4.3`: decomposed `src/auth.rs` into `src/auth/{error,types,provider,openai,store,crypto,browser}.rs` with `src/auth/mod.rs` facade and preserved auth API behavior (login flow, token refresh, encrypted provider storage, legacy compatibility shims). Validation: `cargo fmt`, `cargo test -q` (green). Commit: `c616588`.
+- 2026-02-28: Completed `M4.4`: added explicit characterization coverage for config precedence and legacy-env behavior (canonical env over legacy alias, explicit config-path precedence) plus auth legacy-migration behavior (unknown-provider fallback to legacy profile, missing-store default). Validation: `cargo fmt`, `cargo test -q` (green). Commit: `4cb8bc0`.
