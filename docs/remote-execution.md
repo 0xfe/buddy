@@ -86,12 +86,11 @@ command -v tmux >/dev/null 2>&1
 If tmux is present, it creates (or reattaches to) a named session:
 
 ```bash
-tmux has-session -t <session> 2>/dev/null || tmux new-session -d -s <session> -n buddy-shared
+tmux has-session -t <session> 2>/dev/null || tmux new-session -d -s <session> -n shared
 ```
 
-**Default session name:** Derived from a 4-hex-digit hash of the target
-string: `buddy-a3f1`. This is deterministic per host, so restarting the agent
-reconnects to the same session.
+**Default session name:** Derived from config `agent.name`: `buddy-<agent.name>`
+(default `buddy-agent-mo`).
 
 **Custom session name:** Pass `--tmux my-session` to override.
 
@@ -102,7 +101,7 @@ rather than silently falling back to direct SSH.
 
 ## The Shared Pane — `ensure_tmux_pane`
 
-The agent works in a fixed window named `buddy-shared` inside the tmux session.
+The agent works in a fixed window named `shared` inside the tmux session.
 That window has a single shared pane by default; operators can add additional
 panes/windows manually if desired.
 
@@ -119,6 +118,10 @@ PANE="$(tmux list-panes -t "$SESSION:$WINDOW" -F '#{pane_id}' | head -n1)"
 The pane ID (e.g. `%3`) is stored and reused for all subsequent commands. If
 the pane disappears (e.g. the user closes it), `ensure_tmux_pane` recreates it
 on the next command.
+
+When startup reuses an existing managed pane, buddy captures a pane screenshot
+and injects it into the rendered system prompt so the model can detect when no
+shell prompt is currently available.
 
 ---
 

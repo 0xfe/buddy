@@ -33,11 +33,15 @@ pub struct ExecutionContext {
 trait ExecutionBackendOps: Send + Sync {
     fn summary(&self) -> String;
     fn tmux_attach_info(&self) -> Option<TmuxAttachInfo>;
+    fn startup_existing_tmux_pane(&self) -> Option<String>;
     fn capture_pane_available(&self) -> bool;
     async fn capture_pane(&self, options: CapturePaneOptions) -> Result<String, ToolError>;
     async fn send_keys(&self, options: SendKeysOptions) -> Result<String, ToolError>;
-    async fn run_shell_command(&self, command: &str, wait: ShellWait)
-    -> Result<ExecOutput, ToolError>;
+    async fn run_shell_command(
+        &self,
+        command: &str,
+        wait: ShellWait,
+    ) -> Result<ExecOutput, ToolError>;
     async fn read_file(&self, path: &str) -> Result<String, ToolError>;
     async fn write_file(&self, path: &str, content: &str) -> Result<(), ToolError>;
 }
@@ -154,6 +158,7 @@ struct ContainerTmuxContext {
     container: String,
     tmux_session: String,
     configured_tmux_pane: Mutex<Option<String>>,
+    startup_existing_tmux_pane: Option<String>,
 }
 
 struct ContainerEngine {
@@ -167,12 +172,13 @@ enum ContainerEngineKind {
     Podman,
 }
 
-const TMUX_WINDOW_NAME: &str = "buddy-shared";
-const LOCAL_TMUX_SESSION_SEED: &str = "local";
+const TMUX_WINDOW_NAME: &str = "shared";
+const LEGACY_TMUX_WINDOW_NAME: &str = "buddy-shared";
 
 struct LocalTmuxContext {
     tmux_session: String,
     configured_tmux_pane: Mutex<Option<String>>,
+    startup_existing_tmux_pane: Option<String>,
 }
 
 struct SshContext {
@@ -180,6 +186,7 @@ struct SshContext {
     control_path: PathBuf,
     tmux_session: Option<String>,
     configured_tmux_pane: Mutex<Option<String>>,
+    startup_existing_tmux_pane: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -354,7 +361,10 @@ impl ExecutionContext {
     ///
     /// This creates (or reuses) a persistent local tmux session so commands can
     /// be dispatched and polled similarly to SSH+tmux mode.
-    pub async fn local_tmux(requested_tmux_session: Option<String>) -> Result<Self, ToolError> {
+    pub async fn local_tmux(
+        requested_tmux_session: Option<String>,
+        agent_name: &str,
+    ) -> Result<Self, ToolError> {
         if requested_tmux_session
             .as_ref()
             .is_some_and(|name| name.trim().is_empty())
@@ -371,17 +381,20 @@ impl ExecutionContext {
             ));
         }
 
-        let tmux_session = requested_tmux_session.unwrap_or_else(default_local_tmux_session_name);
+        let tmux_session = requested_tmux_session
+            .unwrap_or_else(|| default_tmux_session_name_for_agent(agent_name));
         ensure_not_in_managed_local_tmux_pane().await?;
         let ensured = ensure_local_tmux_pane(&tmux_session).await?;
         if ensured.created {
             ensure_local_tmux_prompt_setup(&ensured.pane_id).await?;
         }
+        let startup_existing_tmux_pane = (!ensured.created).then(|| ensured.pane_id.clone());
 
         Ok(Self {
             inner: Arc::new(LocalTmuxContext {
                 tmux_session,
                 configured_tmux_pane: Mutex::new(Some(ensured.pane_id)),
+                startup_existing_tmux_pane,
             }),
         })
     }
@@ -397,10 +410,7 @@ impl ExecutionContext {
 
         let engine = detect_container_engine().await?;
         Ok(Self {
-            inner: Arc::new(ContainerContext {
-                engine,
-                container,
-            }),
+            inner: Arc::new(ContainerContext { engine, container }),
         })
     }
 
@@ -408,6 +418,7 @@ impl ExecutionContext {
     pub async fn container_tmux(
         container: impl Into<String>,
         requested_tmux_session: Option<String>,
+        agent_name: &str,
     ) -> Result<Self, ToolError> {
         let container = container.into();
         if container.trim().is_empty() {
@@ -425,12 +436,13 @@ impl ExecutionContext {
         }
 
         let engine = detect_container_engine().await?;
-        let default_tmux_session = default_tmux_session_name(&container);
+        let default_tmux_session = default_tmux_session_name_for_agent(agent_name);
         let context = ContainerTmuxContext {
             engine,
             container,
             tmux_session: requested_tmux_session.unwrap_or(default_tmux_session),
             configured_tmux_pane: Mutex::new(None),
+            startup_existing_tmux_pane: None,
         };
 
         let probe =
@@ -446,10 +458,13 @@ impl ExecutionContext {
         if ensured.created {
             ensure_container_tmux_prompt_setup(&context, &ensured.pane_id).await?;
         }
+        let startup_existing_tmux_pane = (!ensured.created).then(|| ensured.pane_id.clone());
         {
             let mut configured = context.configured_tmux_pane.lock().await;
             *configured = Some(ensured.pane_id);
         }
+        let mut context = context;
+        context.startup_existing_tmux_pane = startup_existing_tmux_pane;
 
         Ok(Self {
             inner: Arc::new(context),
@@ -463,6 +478,7 @@ impl ExecutionContext {
     pub async fn ssh(
         target: impl Into<String>,
         requested_tmux_session: Option<String>,
+        agent_name: &str,
     ) -> Result<Self, ToolError> {
         let target = target.into();
         if target.trim().is_empty() {
@@ -510,7 +526,7 @@ impl ExecutionContext {
             .await?;
             if tmux_probe.exit_code == 0 {
                 let session_name = requested_tmux_session
-                    .unwrap_or_else(|| default_tmux_session_name(&target));
+                    .unwrap_or_else(|| default_tmux_session_name_for_agent(agent_name));
                 let session_q = shell_quote(&session_name);
                 let script = format!(
                     "tmux has-session -t {session_q} 2>/dev/null || tmux new-session -d -s {session_q}"
@@ -540,7 +556,9 @@ impl ExecutionContext {
             }
         };
 
-        let configured_tmux_pane = if let Some(session) = tmux_session.as_deref() {
+        let (configured_tmux_pane, startup_existing_tmux_pane) = if let Some(session) =
+            tmux_session.as_deref()
+        {
             match ensure_tmux_pane(&target, &control_path, session).await {
                 Ok(ensured) => {
                     if ensured.created {
@@ -551,7 +569,8 @@ impl ExecutionContext {
                             return Err(err);
                         }
                     }
-                    Some(ensured.pane_id)
+                    let startup_existing = (!ensured.created).then(|| ensured.pane_id.clone());
+                    (Some(ensured.pane_id), startup_existing)
                 }
                 Err(err) => {
                     close_ssh_control_connection(&target, &control_path);
@@ -559,7 +578,7 @@ impl ExecutionContext {
                 }
             }
         } else {
-            None
+            (None, None)
         };
 
         Ok(Self {
@@ -568,6 +587,7 @@ impl ExecutionContext {
                 control_path,
                 tmux_session,
                 configured_tmux_pane: Mutex::new(configured_tmux_pane),
+                startup_existing_tmux_pane,
             }),
         })
     }
@@ -581,6 +601,20 @@ impl ExecutionContext {
     /// tmux session.
     pub fn tmux_attach_info(&self) -> Option<TmuxAttachInfo> {
         self.inner.tmux_attach_info()
+    }
+
+    /// Capture the startup pane when this run attached to a pre-existing managed
+    /// tmux pane. Returns `Ok(None)` when no existing pane was reused.
+    pub async fn capture_startup_existing_tmux_pane(&self) -> Result<Option<String>, ToolError> {
+        let Some(pane_target) = self.inner.startup_existing_tmux_pane() else {
+            return Ok(None);
+        };
+        self.capture_pane(CapturePaneOptions {
+            target: Some(pane_target),
+            ..CapturePaneOptions::default()
+        })
+        .await
+        .map(Some)
     }
 
     /// Whether tmux pane capture is available for this execution backend.
@@ -645,6 +679,10 @@ impl ExecutionBackendOps for LocalBackend {
     }
 
     fn tmux_attach_info(&self) -> Option<TmuxAttachInfo> {
+        None
+    }
+
+    fn startup_existing_tmux_pane(&self) -> Option<String> {
         None
     }
 
@@ -732,6 +770,10 @@ impl ExecutionBackendOps for LocalTmuxContext {
         })
     }
 
+    fn startup_existing_tmux_pane(&self) -> Option<String> {
+        self.startup_existing_tmux_pane.clone()
+    }
+
     fn capture_pane_available(&self) -> bool {
         true
     }
@@ -788,6 +830,10 @@ impl ExecutionBackendOps for ContainerContext {
     }
 
     fn tmux_attach_info(&self) -> Option<TmuxAttachInfo> {
+        None
+    }
+
+    fn startup_existing_tmux_pane(&self) -> Option<String> {
         None
     }
 
@@ -851,6 +897,10 @@ impl ExecutionBackendOps for ContainerTmuxContext {
         })
     }
 
+    fn startup_existing_tmux_pane(&self) -> Option<String> {
+        self.startup_existing_tmux_pane.clone()
+    }
+
     fn capture_pane_available(&self) -> bool {
         true
     }
@@ -909,6 +959,10 @@ impl ExecutionBackendOps for SshContext {
                 target: self.target.clone(),
             },
         })
+    }
+
+    fn startup_existing_tmux_pane(&self) -> Option<String> {
+        self.startup_existing_tmux_pane.clone()
     }
 
     fn capture_pane_available(&self) -> bool {
@@ -1041,15 +1095,43 @@ fn build_ssh_control_path(target: &str) -> PathBuf {
     std::env::temp_dir().join(format!("buddy-ssh-{hash:x}.sock"))
 }
 
-fn default_tmux_session_name(target: &str) -> String {
-    let mut hasher = DefaultHasher::new();
-    target.hash(&mut hasher);
-    let hash = hasher.finish();
-    format!("buddy-{:04x}", (hash & 0xffff) as u16)
+fn default_tmux_session_name_for_agent(agent_name: &str) -> String {
+    let suffix = sanitize_tmux_session_suffix(agent_name);
+    format!("buddy-{suffix}")
 }
 
-fn default_local_tmux_session_name() -> String {
-    default_tmux_session_name(LOCAL_TMUX_SESSION_SEED)
+fn sanitize_tmux_session_suffix(raw: &str) -> String {
+    let mut out = String::new();
+    let mut previous_dash = false;
+    for ch in raw.trim().chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+            previous_dash = false;
+            continue;
+        }
+
+        if matches!(ch, '-' | '_') {
+            if !previous_dash && !out.is_empty() {
+                out.push(ch);
+                previous_dash = true;
+            }
+            continue;
+        }
+
+        if !previous_dash && !out.is_empty() {
+            out.push('-');
+            previous_dash = true;
+        }
+    }
+
+    let trimmed = out.trim_matches(['-', '_']).to_string();
+    let normalized = if trimmed.is_empty() {
+        "agent-mo".to_string()
+    } else {
+        trimmed
+    };
+
+    normalized.chars().take(48).collect()
 }
 
 async fn ensure_not_in_managed_local_tmux_pane() -> Result<(), ToolError> {
@@ -1062,14 +1144,15 @@ async fn ensure_not_in_managed_local_tmux_pane() -> Result<(), ToolError> {
     let output = ensure_success(output, "failed to inspect current tmux pane".into())?;
     if is_managed_tmux_window_name(output.stdout.trim()) {
         return Err(ToolError::ExecutionFailed(
-            "buddy should be run from a different terminal when --tmux is enabled (current pane is buddy-shared)".into(),
+            "buddy should be run from a different terminal when --tmux is enabled (current pane is shared)".into(),
         ));
     }
     Ok(())
 }
 
 fn is_managed_tmux_window_name(window_name: &str) -> bool {
-    window_name.trim() == TMUX_WINDOW_NAME
+    let normalized = window_name.trim();
+    normalized == TMUX_WINDOW_NAME || normalized == LEGACY_TMUX_WINDOW_NAME
 }
 
 fn local_tmux_pane_target() -> Option<String> {
@@ -2246,23 +2329,27 @@ mod tests {
     }
 
     #[test]
-    fn tmux_session_name_is_stable_for_target() {
-        let a = default_tmux_session_name("dev@host");
-        let b = default_tmux_session_name("dev@host");
-        assert_eq!(a, b);
-        assert_eq!(a.len(), "buddy-0000".len());
+    fn tmux_session_name_uses_agent_name() {
+        assert_eq!(
+            default_tmux_session_name_for_agent("agent-mo"),
+            "buddy-agent-mo"
+        );
+        assert_eq!(
+            default_tmux_session_name_for_agent("Ops Agent (Prod)"),
+            "buddy-ops-agent-prod"
+        );
     }
 
     #[test]
-    fn default_local_tmux_session_name_matches_hash_strategy() {
-        let name = default_local_tmux_session_name();
-        assert!(name.starts_with("buddy-"));
-        assert_eq!(name.len(), "buddy-0000".len());
-        assert_eq!(name, default_tmux_session_name(LOCAL_TMUX_SESSION_SEED));
+    fn tmux_session_name_falls_back_when_agent_name_is_empty() {
+        assert_eq!(default_tmux_session_name_for_agent(""), "buddy-agent-mo");
+        assert_eq!(default_tmux_session_name_for_agent("   "), "buddy-agent-mo");
     }
 
     #[test]
-    fn managed_tmux_window_name_detection_matches_buddy_shared() {
+    fn managed_tmux_window_name_detection_accepts_new_and_legacy_names() {
+        assert!(is_managed_tmux_window_name("shared"));
+        assert!(is_managed_tmux_window_name(" shared "));
         assert!(is_managed_tmux_window_name("buddy-shared"));
         assert!(is_managed_tmux_window_name(" buddy-shared "));
         assert!(!is_managed_tmux_window_name("dev-shell"));
@@ -2304,15 +2391,20 @@ mod tests {
             inner: Arc::new(LocalTmuxContext {
                 tmux_session: "buddy-dev".to_string(),
                 configured_tmux_pane: Mutex::new(None),
+                startup_existing_tmux_pane: Some("%7".to_string()),
             }),
         };
         assert_eq!(ctx.summary(), "local (tmux:buddy-dev)");
         assert!(ctx.capture_pane_available());
         assert_eq!(
+            ctx.inner.startup_existing_tmux_pane(),
+            Some("%7".to_string())
+        );
+        assert_eq!(
             ctx.tmux_attach_info(),
             Some(TmuxAttachInfo {
                 session: "buddy-dev".to_string(),
-                window: "buddy-shared",
+                window: "shared",
                 target: TmuxAttachTarget::Local,
             })
         );
@@ -2329,6 +2421,7 @@ mod tests {
                 container: "devbox".to_string(),
                 tmux_session: "buddy-dev".to_string(),
                 configured_tmux_pane: Mutex::new(None),
+                startup_existing_tmux_pane: None,
             }),
         };
         assert_eq!(
@@ -2340,7 +2433,7 @@ mod tests {
             ctx.tmux_attach_info(),
             Some(TmuxAttachInfo {
                 session: "buddy-dev".to_string(),
-                window: "buddy-shared",
+                window: "shared",
                 target: TmuxAttachTarget::Container {
                     engine: "docker".to_string(),
                     container: "devbox".to_string(),
@@ -2357,6 +2450,7 @@ mod tests {
                 control_path: PathBuf::from("/tmp/buddy-ssh.sock"),
                 tmux_session: Some("buddy-4a2f".to_string()),
                 configured_tmux_pane: Mutex::new(None),
+                startup_existing_tmux_pane: None,
             }),
         };
         assert_eq!(ctx.summary(), "ssh:dev@host (tmux:buddy-4a2f)");
@@ -2365,7 +2459,7 @@ mod tests {
             ctx.tmux_attach_info(),
             Some(TmuxAttachInfo {
                 session: "buddy-4a2f".to_string(),
-                window: "buddy-shared",
+                window: "shared",
                 target: TmuxAttachTarget::Ssh {
                     target: "dev@host".to_string(),
                 },
@@ -2612,6 +2706,7 @@ hi\n\
             control_path: control_path.clone(),
             tmux_session: None,
             configured_tmux_pane: Mutex::new(None),
+            startup_existing_tmux_pane: None,
         };
         drop(ctx);
         set_ssh_close_hook_for_tests(None);

@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use serde::Serialize;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use super::result_envelope::wrap_result;
 use super::{Tool, ToolContext};
 use crate::error::ToolError;
 use crate::types::{FunctionDefinition, ToolDefinition};
@@ -49,9 +50,7 @@ impl Tool for TimeTool {
             ToolError::ExecutionFailed(format!("failed to read harness clock: {e}"))
         })?;
         let snapshot = build_snapshot(now);
-        serde_json::to_string_pretty(&snapshot).map_err(|e| {
-            ToolError::ExecutionFailed(format!("failed to serialize time snapshot: {e}"))
-        })
+        wrap_result(snapshot)
     }
 }
 

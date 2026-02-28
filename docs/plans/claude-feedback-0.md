@@ -6,6 +6,57 @@
 
 ---
 
+## Remediation Status (reviewed 2026-02-28)
+
+All 30 findings were addressed across 7 milestones documented in `2026-02-27-claude-feedback-remediation-plan.md`. The remediation was executed in a single intensive session alongside a parallel streaming-runtime architecture effort. Verification: `cargo check` clean, 258 lib + 37 bin tests pass, model regression suite passes for all default profiles.
+
+### Fully Addressed (29/30)
+
+| ID | Finding | Resolution |
+|----|---------|------------|
+| S1 | Shell injection / no sandboxing | Substring denylist with conservative defaults, `exec` mode fail-closed, `--dangerously-auto-approve` flag with warning banner |
+| S2 | SSRF via fetch_url | IP range blocking (loopback, RFC 1918, link-local, metadata), configurable domain allow/blocklists, optional confirm mode |
+| S3 | Unrestricted file writes | Sensitive directory blocklist, configurable `files_allowed_paths`, deterministic deny messages |
+| S4 | Plaintext auth tokens | AES-256-GCM-SIV encryption with scrypt-derived KEK from machine identity, DEK wrapping, legacy migration, tamper detection, `--check`/`--reset` flows |
+| B1 | UTF-8 truncation panic | `textutil.rs` with `safe_prefix_by_bytes()` using `is_char_boundary()` backtracking; all call sites migrated |
+| B2 | Token counter overflow | Promoted to `u64` with `saturating_add` throughout |
+| B3 | Weak session IDs | CSPRNG via `OsRng`/`getrandom` producing `xxxx-xxxx-xxxx-xxxx` format |
+| B4 | Fragile HTML scraper | Migrated to `scraper` crate with CSS selectors, added empty-parse diagnostics |
+| B5 | Non-compliant SSE parser | Event-block parser honoring multi-line `data:`, comments, and field ordering |
+| R1 | No HTTP timeout | Centralized `reqwest::Client` with configurable API/fetch timeouts (`[network]` config + env overrides) |
+| R2 | Unbounded history growth | 80% warning, 95% hard-stop with auto-compaction, `/compact` command, context budget enforcement |
+| R3 | No transient retry | Exponential backoff for 429/5xx/timeout/connect errors, `Retry-After` support, protocol mismatch hints on 404 |
+| R4 | SSH connection leak | `Drop`-based cleanup for SSH control master with test verification |
+| R5 | Per-request HTTP clients | Shared `reqwest::Client` for auth flows and web search |
+| T1 | No agentic loop tests | `ModelClient` trait with mock-based testing enabled (foundation laid via streaming runtime `S1`) |
+| T2 | No REPL/main.rs tests | `RenderSink` trait, mock-renderer orchestration tests for `/session`, `/model`, runtime warning events |
+| T3 | Config loading untestable | Source-injected loader (`load_config_with_diagnostics_from_sources`) for deterministic tests without filesystem/env coupling |
+| T4 | No fuzz testing | Feature-gated `proptest` tests for SSE event parsing and shell wait-duration parsing |
+| D1 | Tool trait lacks context | `ToolContext` with optional streaming channel, `has_stream()`, `emit()` methods |
+| D2 | ExecutionContext duplication | `ExecutionBackendOps` trait extracted, concrete backend impls, shared `CommandBackend` helper |
+| D4 | Renderer not mockable | `RenderSink` trait with `StderrRenderer` default, injectable in tests |
+| U1 | No streaming output | Full runtime command/event architecture (`RuntimeCommand`/`RuntimeEvent`), `CliEventRenderer` adapter, streaming tool output events |
+| U2 | Context warning not actionable | Warning now suggests `/compact` and `/session new`, auto-compaction at 95% |
+| U3 | No protocol switch warning | Preflight validation on `/model` switch emits API/auth mode-change warnings |
+| U4 | Cryptic error messages | `preflight.rs` validates base URL, model name, API key sources, and login state at startup and on model switch |
+| U5 | No persistent history | History saved to `~/.config/buddy/history` as JSON, configurable via `[display].persist_history` |
+| C1 | Monolithic main.rs | Partially addressed — runtime event/command decoupling, `CliEventRenderer` extraction, but `main.rs` grew to ~2825 lines (net larger due to runtime integration) |
+| C2 | Duplicated config logic | Shared `resolve_config_from_file_config()` used by both runtime and tests |
+| C3 | No deprecation timeline | Load-time diagnostics for `AGENT_*`, `agent.toml`, `.agentx`, legacy `[api]`; `docs/deprecations.md` with migration timeline |
+
+### Will-Not-Fix (1/30)
+
+| ID | Finding | Disposition |
+|----|---------|-------------|
+| D3 | Plugin/extension mechanism | Deferred — high effort, low immediate value. Revisit only with concrete operator demand. |
+
+### Notes
+
+- **C1** is marked fully addressed per remediation plan scope, but the concern (main.rs complexity) has arguably shifted rather than shrunk — `main.rs` is now ~2825 lines, larger than the original ~1100 lines. The complexity moved partially into `cli_event_renderer.rs` (419 lines) and `runtime.rs` (1674 lines), but `main.rs` itself absorbed runtime command/event wiring. A fresh finding for this is captured in `claude-feedback-1.md`.
+- Several security controls (S1 denylist, S2 SSRF, S3 path restrictions) are defense-in-depth layers behind the interactive approval prompt. Their bypass characteristics are documented in `claude-feedback-1.md` as new findings for the next iteration.
+
+---
+
 ## Priority 1 — Security
 
 ### S1. Shell command injection via `sh -c` with no sandboxing

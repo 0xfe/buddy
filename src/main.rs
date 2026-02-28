@@ -1,8 +1,29 @@
 //! CLI entry point for buddy.
 
+mod app;
 mod cli;
 mod cli_event_renderer;
+mod repl_support;
 
+#[cfg(test)]
+use app::approval::format_approval_command_block;
+use app::approval::{
+    approval_prompt_actor, deny_pending_approval, render_shell_approval_request,
+    send_approval_decision,
+};
+use app::commands::model::{
+    configured_model_profile_names, handle_model_command, resolve_model_profile_selector,
+};
+use app::commands::session::{
+    handle_session_command, initialize_active_session, resume_request_from_command,
+};
+#[cfg(test)]
+use app::startup::{execution_tmux_attach_command, session_startup_message};
+use app::startup::{render_session_startup_line, render_startup_banner};
+use app::tasks::{
+    background_liveness_line, collect_runtime_events, drain_completed_tasks, enforce_task_timeouts,
+    kill_background_task, process_runtime_events, render_background_tasks,
+};
 use buddy::agent::Agent;
 use buddy::auth::{
     complete_openai_device_login, has_legacy_profile_token_records,
@@ -18,16 +39,20 @@ use buddy::config::{AuthMode, Config, GlobalConfigInitResult, ToolsConfig};
 use buddy::preflight::validate_active_profile_ready;
 use buddy::prompt::{render_system_prompt, ExecutionTarget, SystemPromptParams};
 use buddy::render::{set_progress_enabled, RenderSink, Renderer};
+#[cfg(test)]
+use buddy::runtime::BuddyRuntimeHandle;
 use buddy::runtime::{
-    spawn_runtime_with_agent, spawn_runtime_with_shared_agent,
-    ApprovalDecision as RuntimeApprovalDecision, BuddyRuntimeHandle, ModelEvent, PromptMetadata,
-    RuntimeApprovalPolicy, RuntimeCommand, RuntimeEvent, RuntimeEventEnvelope, TaskEvent,
+    spawn_runtime_with_agent, spawn_runtime_with_shared_agent, ModelEvent, PromptMetadata,
+    RuntimeCommand, RuntimeEvent, RuntimeEventEnvelope, TaskEvent,
 };
-use buddy::session::{default_uses_legacy_root, SessionStore, SessionSummary};
-use buddy::textutil::truncate_with_suffix_by_chars;
+use buddy::session::{default_uses_legacy_root, SessionStore};
 use buddy::tokens::TokenTracker;
 use buddy::tools::capture_pane::CapturePaneTool;
-use buddy::tools::execution::{ExecutionContext, TmuxAttachInfo, TmuxAttachTarget};
+use buddy::tools::execution::ExecutionContext;
+#[cfg(test)]
+use buddy::tools::execution::TmuxAttachInfo;
+#[cfg(test)]
+use buddy::tools::execution::TmuxAttachTarget;
 use buddy::tools::fetch::FetchTool;
 use buddy::tools::files::{ReadFileTool, WriteFileTool};
 use buddy::tools::search::WebSearchTool;
@@ -37,10 +62,28 @@ use buddy::tools::time::TimeTool;
 use buddy::tools::ToolRegistry;
 use buddy::tui as repl;
 use clap::Parser;
-use crossterm::style::{Color, Stylize};
-use serde_json::Value;
+#[cfg(test)]
+use repl_support::BackgroundTaskState;
+#[cfg(test)]
+use repl_support::SessionStartupState;
+use repl_support::{
+    active_approval_decision, apply_task_timeout_command, approval_policy_label,
+    has_elapsed_timeouts, mark_task_running, parse_approval_decision, task_is_waiting_for_approval,
+    to_runtime_approval_policy, update_approval_policy, ApprovalPolicy, BackgroundTask,
+    CompletedBackgroundTask, PendingApproval, RuntimeContextState,
+};
+#[cfg(test)]
+use repl_support::{
+    mark_task_waiting_for_approval, parse_duration_arg, parse_shell_tool_result,
+    tool_result_display_text, ApprovalDecision,
+};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
+#[cfg(test)]
+use std::time::Instant;
+#[cfg(test)]
+use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(test)]
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 
@@ -195,7 +238,13 @@ async fn main() {
     let execution = if !execution_tools_enabled {
         ExecutionContext::local()
     } else if let Some(container) = &args.container {
-        match ExecutionContext::container_tmux(container.clone(), requested_tmux_session).await {
+        match ExecutionContext::container_tmux(
+            container.clone(),
+            requested_tmux_session,
+            &config.agent.name,
+        )
+        .await
+        {
             Ok(ctx) => ctx,
             Err(e) => {
                 renderer.error(&format!("failed to initialize container execution: {e}"));
@@ -203,7 +252,9 @@ async fn main() {
             }
         }
     } else if let Some(target) = &args.ssh {
-        match ExecutionContext::ssh(target.clone(), requested_tmux_session).await {
+        match ExecutionContext::ssh(target.clone(), requested_tmux_session, &config.agent.name)
+            .await
+        {
             Ok(ctx) => ctx,
             Err(e) => {
                 renderer.error(&format!("failed to initialize ssh execution: {e}"));
@@ -211,7 +262,7 @@ async fn main() {
             }
         }
     } else {
-        match ExecutionContext::local_tmux(requested_tmux_session).await {
+        match ExecutionContext::local_tmux(requested_tmux_session, &config.agent.name).await {
             Ok(ctx) => ctx,
             Err(e) => {
                 renderer.error(&format!("failed to initialize local tmux execution: {e}"));
@@ -441,7 +492,20 @@ async fn main() {
                     args.container.as_deref(),
                     execution.tmux_attach_info().as_ref(),
                 );
-                render_shell_approval_request(&renderer, &approval_actor, &approval.command);
+                render_shell_approval_request(
+                    config.display.color,
+                    &renderer,
+                    &approval_actor,
+                    &approval.command,
+                    approval.risk.as_deref(),
+                    approval.why.as_deref(),
+                );
+                let approval_prompt = repl::ApprovalPrompt {
+                    actor: &approval_actor,
+                    command: &approval.command,
+                    privileged: approval.privesc.unwrap_or(false),
+                    mutation: approval.mutation.unwrap_or(false),
+                };
 
                 let approval_input = match repl::read_repl_line_with_interrupt(
                     config.display.color,
@@ -449,7 +513,7 @@ async fn main() {
                     args.ssh.as_deref(),
                     None,
                     repl::PromptMode::Approval,
-                    None,
+                    Some(&approval_prompt),
                     || repl::ReadPoll {
                         interrupt: has_elapsed_timeouts(&background_tasks),
                         status_line: None,
@@ -613,7 +677,7 @@ async fn main() {
                 last_prompt_context_used_percent = Some(latest);
             } else if runtime_context.context_limit > 0 {
                 last_prompt_context_used_percent =
-                    Some(runtime_context.used_percent.round() as u16);
+                    Some(display_context_percent(runtime_context.used_percent as f64));
             }
             let input = match repl::read_repl_line_with_interrupt(
                 config.display.color,
@@ -877,246 +941,6 @@ fn run_init_flow(renderer: &dyn RenderSink, force: bool) -> Result<(), String> {
     }
 }
 
-async fn handle_session_command(
-    renderer: &dyn RenderSink,
-    session_store: &SessionStore,
-    runtime: &BuddyRuntimeHandle,
-    active_session: &mut String,
-    verb: Option<&str>,
-    name: Option<&str>,
-) {
-    let action = verb.unwrap_or("list").trim().to_ascii_lowercase();
-    match action.as_str() {
-        "" | "list" => match session_store.list() {
-            Ok(sessions) => render_sessions(renderer, active_session, &sessions),
-            Err(e) => renderer.warn(&format!("failed to list sessions: {e}")),
-        },
-        "resume" => {
-            let Some(requested_id) = name.map(str::trim).filter(|s| !s.is_empty()) else {
-                renderer.warn("Usage: /session resume <session-id|last>");
-                return;
-            };
-
-            let target_id = if requested_id.eq_ignore_ascii_case("last") {
-                match session_store.resolve_last() {
-                    Ok(Some(last)) => last,
-                    Ok(None) => {
-                        renderer.warn("No saved sessions found.");
-                        return;
-                    }
-                    Err(e) => {
-                        renderer.warn(&format!("failed to resolve last session: {e}"));
-                        return;
-                    }
-                }
-            } else {
-                requested_id.to_string()
-            };
-
-            if target_id == *active_session {
-                renderer.section(&format!("session already active: {target_id}"));
-                eprintln!();
-                return;
-            }
-
-            if let Err(e) = runtime
-                .send(RuntimeCommand::SessionResume {
-                    session_id: target_id,
-                })
-                .await
-            {
-                renderer.warn(&format!("failed to submit session resume command: {e}"));
-            }
-        }
-        "new" | "create" => {
-            if name.is_some() {
-                renderer.warn("Usage: /session new");
-                return;
-            }
-
-            if let Err(e) = runtime.send(RuntimeCommand::SessionNew).await {
-                renderer.warn(&format!("failed to submit new session command: {e}"));
-            }
-        }
-        _ => {
-            renderer
-                .warn("Usage: /session [list] | /session resume <session-id|last> | /session new");
-        }
-    }
-}
-
-async fn handle_model_command(
-    renderer: &dyn RenderSink,
-    config: &mut Config,
-    runtime: &BuddyRuntimeHandle,
-    selector: Option<&str>,
-) {
-    if config.models.is_empty() {
-        renderer.warn("No configured model profiles. Add `[models.<name>]` entries to buddy.toml.");
-        return;
-    }
-
-    let names = configured_model_profile_names(config);
-    if names.len() == 1 {
-        renderer.warn("Only one model profile is configured.");
-        return;
-    }
-
-    let profile_name = if let Some(selector) = selector {
-        let selected_input = selector.trim();
-        if selected_input.is_empty() {
-            return;
-        }
-        match resolve_model_profile_selector(config, &names, selected_input) {
-            Ok(name) => name,
-            Err(msg) => {
-                renderer.warn(&msg);
-                return;
-            }
-        }
-    } else {
-        let options = model_picker_options(config, &names);
-        let initial = names
-            .iter()
-            .position(|name| name == &config.agent.model)
-            .unwrap_or(0);
-        match repl::pick_from_list(
-            config.display.color,
-            "model profiles",
-            "Use ↑/↓ to pick, Enter to confirm, Esc to cancel.",
-            &options,
-            initial,
-        ) {
-            Ok(Some(index)) => names[index].clone(),
-            Ok(None) => return,
-            Err(e) => {
-                renderer.warn(&format!("failed to read model selection: {e}"));
-                return;
-            }
-        }
-    };
-
-    if profile_name == config.agent.model {
-        renderer.section(&format!("model profile already active: {profile_name}"));
-        eprintln!();
-        return;
-    }
-
-    if let Err(e) = runtime
-        .send(RuntimeCommand::SwitchModel {
-            profile: profile_name.clone(),
-        })
-        .await
-    {
-        renderer.warn(&format!(
-            "failed to submit model switch command for `{profile_name}`: {e}"
-        ));
-        return;
-    }
-
-    if let Err(e) = select_model_profile(config, &profile_name) {
-        renderer.warn(&format!(
-            "runtime accepted model switch for `{profile_name}`, but local config sync failed: {e}"
-        ));
-    }
-}
-
-fn configured_model_profile_names(config: &Config) -> Vec<String> {
-    config.models.keys().cloned().collect()
-}
-
-fn model_picker_options(config: &Config, names: &[String]) -> Vec<String> {
-    let mut options = Vec::with_capacity(names.len());
-    for (idx, name) in names.iter().enumerate() {
-        let Some(profile) = config.models.get(name) else {
-            continue;
-        };
-        let marker = if name == &config.agent.model {
-            "*"
-        } else {
-            " "
-        };
-        let api_model = resolved_profile_api_model(profile, name);
-        let value = format!(
-            "{}.{} {} | {} | {:?} | {:?}",
-            idx + 1,
-            marker,
-            api_model,
-            profile.api_base_url.trim(),
-            profile.api,
-            profile.auth
-        );
-        options.push(value);
-    }
-    options
-}
-
-fn resolved_profile_api_model(profile: &buddy::config::ModelConfig, profile_name: &str) -> String {
-    profile
-        .model
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(profile_name)
-        .to_string()
-}
-
-fn resolve_model_profile_selector(
-    config: &Config,
-    names: &[String],
-    selector: &str,
-) -> Result<String, String> {
-    let trimmed = normalize_model_selector(selector);
-    if trimmed.is_empty() {
-        return Err("Usage: /model <name|index>".to_string());
-    }
-
-    if let Ok(index) = trimmed.parse::<usize>() {
-        if index == 0 || index > names.len() {
-            return Err(format!(
-                "Model index out of range: {index}. Choose 1-{}.",
-                names.len()
-            ));
-        }
-        return Ok(names[index - 1].clone());
-    }
-
-    if config.models.contains_key(trimmed) {
-        return Ok(trimmed.to_string());
-    }
-
-    let normalized = trimmed.to_ascii_lowercase();
-    let mut matches = config
-        .models
-        .keys()
-        .filter(|name| name.to_ascii_lowercase() == normalized)
-        .cloned()
-        .collect::<Vec<_>>();
-    if matches.len() == 1 {
-        return Ok(matches.remove(0));
-    }
-
-    Err(format!(
-        "Unknown model profile `{trimmed}`. Use /model to pick from configured profiles."
-    ))
-}
-
-fn normalize_model_selector(selector: &str) -> &str {
-    let trimmed = selector.trim();
-    if !trimmed.starts_with('/') {
-        return trimmed;
-    }
-
-    let mut parts = trimmed.split_whitespace();
-    let Some(command) = parts.next() else {
-        return trimmed;
-    };
-    if command.eq_ignore_ascii_case("/model") {
-        return parts.next().unwrap_or("");
-    }
-    trimmed
-}
-
 async fn run_login_flow(
     renderer: &dyn RenderSink,
     config: &Config,
@@ -1228,43 +1052,6 @@ async fn run_login_flow(
     eprintln!();
 
     Ok(())
-}
-
-fn render_sessions(renderer: &dyn RenderSink, active_session: &str, sessions: &[SessionSummary]) {
-    renderer.section("sessions");
-    renderer.field("current", active_session);
-    if sessions.is_empty() {
-        renderer.field("saved", "none");
-        eprintln!();
-        return;
-    }
-
-    for session in sessions {
-        let key = if session.id == active_session {
-            format!("* {}", session.id)
-        } else {
-            session.id.clone()
-        };
-        renderer.field(
-            &key,
-            &format!(
-                "last used {} ago",
-                format_elapsed_since_epoch_millis(session.updated_at_millis)
-            ),
-        );
-    }
-    eprintln!();
-}
-
-fn format_elapsed_since_epoch_millis(ts: u64) -> String {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
-    if ts >= now {
-        return "0.0s".to_string();
-    }
-    format_elapsed(Duration::from_millis(now - ts))
 }
 
 fn render_status(
@@ -1408,847 +1195,26 @@ fn enabled_tool_names(config: &Config, capture_pane_enabled: bool) -> Vec<&'stat
     tools
 }
 
-fn collect_runtime_events(
-    rx: &mut mpsc::UnboundedReceiver<RuntimeEventEnvelope>,
-    out: &mut Vec<RuntimeEventEnvelope>,
-) -> bool {
-    let start_len = out.len();
-    while let Ok(envelope) = rx.try_recv() {
-        out.push(envelope);
-    }
-    out.len() > start_len
-}
-
-fn process_runtime_events(
-    renderer: &dyn RenderSink,
-    events: &mut Vec<RuntimeEventEnvelope>,
-    background_tasks: &mut Vec<BackgroundTask>,
-    completed_tasks: &mut Vec<CompletedBackgroundTask>,
-    pending_approval: &mut Option<PendingApproval>,
-    config: &mut Config,
-    active_session: &mut String,
-    runtime_context: &mut RuntimeContextState,
-) {
-    let mut context = cli_event_renderer::RuntimeEventRenderContext {
-        renderer,
-        background_tasks,
-        completed_tasks,
-        pending_approval,
-        config,
-        active_session,
-        runtime_context,
-    };
-    cli_event_renderer::process_runtime_events(events, &mut context);
-}
-
-fn drain_completed_tasks(
-    renderer: &dyn RenderSink,
-    completed: &mut Vec<CompletedBackgroundTask>,
-) -> bool {
-    if completed.is_empty() {
-        return false;
-    }
-
-    for task in completed.drain(..) {
-        let elapsed = format_elapsed(task.started_at.elapsed());
-        match task.result {
-            Ok(response) => {
-                renderer.activity(&format!("prompt #{} processed in {elapsed}", task.id));
-                renderer.assistant_message(&response);
-            }
-            Err(message) => {
-                renderer.error(&format!(
-                    "Background task #{} ({}) failed after {elapsed}: {}",
-                    task.id, task.kind, message
-                ));
-            }
-        }
-    }
-    true
-}
-
-fn background_liveness_line(tasks: &[BackgroundTask]) -> Option<String> {
-    if tasks.is_empty() {
-        return None;
-    }
-
-    let spinner = background_liveness_spinner(tasks);
-
-    if tasks.len() == 1 {
-        let task = &tasks[0];
-        let timeout_suffix = timeout_suffix_for_task(task);
-        let body = match &task.state {
-            BackgroundTaskState::Running => format!(
-                "task #{} running {}{}",
-                task.id,
-                format_elapsed_coarse(task.started_at.elapsed()),
-                timeout_suffix
-            ),
-            BackgroundTaskState::WaitingApproval { since, .. } => format!(
-                "task #{} waiting approval {}{}",
-                task.id,
-                format_elapsed_coarse(since.elapsed()),
-                timeout_suffix
-            ),
-            BackgroundTaskState::Cancelling { since } => format!(
-                "task #{} cancelling {}{}",
-                task.id,
-                format_elapsed_coarse(since.elapsed()),
-                timeout_suffix
-            ),
-        };
-        return Some(format!("[{spinner}] {body}"));
-    }
-
-    let running = tasks
-        .iter()
-        .filter(|task| matches!(task.state, BackgroundTaskState::Running))
-        .count();
-    let waiting = tasks
-        .iter()
-        .filter(|task| matches!(task.state, BackgroundTaskState::WaitingApproval { .. }))
-        .count();
-    let cancelling = tasks
-        .iter()
-        .filter(|task| matches!(task.state, BackgroundTaskState::Cancelling { .. }))
-        .count();
-    let with_timeout = tasks
-        .iter()
-        .filter(|task| task.timeout_at.is_some())
-        .count();
-    let oldest = tasks
-        .iter()
-        .map(|task| task.started_at.elapsed())
-        .max()
-        .unwrap_or_default();
-    Some(format!(
-        "[{spinner}] {} tasks: {} running, {} waiting approval, {} cancelling, {} with timeout, oldest {}",
-        tasks.len(),
-        running,
-        waiting,
-        cancelling,
-        with_timeout,
-        format_elapsed_coarse(oldest)
-    ))
-}
-
-fn background_liveness_spinner(tasks: &[BackgroundTask]) -> char {
-    let elapsed = tasks
-        .iter()
-        .map(|task| match &task.state {
-            BackgroundTaskState::Running => task.started_at.elapsed(),
-            BackgroundTaskState::WaitingApproval { since, .. } => since.elapsed(),
-            BackgroundTaskState::Cancelling { since } => since.elapsed(),
-        })
-        .max()
-        .unwrap_or_default();
-    let idx = ((elapsed.as_millis() / 250) as usize) % repl::settings::PROGRESS_FRAMES.len();
-    repl::settings::PROGRESS_FRAMES[idx]
-}
-
-fn timeout_suffix_for_task(task: &BackgroundTask) -> String {
-    let Some(timeout_at) = task.timeout_at else {
-        return String::new();
-    };
-    let now = Instant::now();
-    if timeout_at <= now {
-        " (timeout now)".to_string()
-    } else {
-        format!(
-            " (timeout in {})",
-            format_elapsed_coarse(timeout_at.duration_since(now))
-        )
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ShellToolResult {
-    exit_code: i32,
-    stdout: String,
-    stderr: String,
-}
-
-fn parse_shell_tool_result(result: &str) -> Option<ShellToolResult> {
-    let (exit_line, remainder) = result.split_once("\nstdout:\n")?;
-    let exit_code = exit_line
-        .trim()
-        .strip_prefix("exit code: ")?
-        .trim()
-        .parse::<i32>()
-        .ok()?;
-    let (stdout, stderr) = remainder
-        .split_once("\nstderr:\n")
-        .unwrap_or((remainder, ""));
-    Some(ShellToolResult {
-        exit_code,
-        stdout: stdout.to_string(),
-        stderr: stderr.to_string(),
-    })
-}
-
-fn parse_tool_arg(args: &str, key: &str) -> Option<String> {
-    let value: Value = serde_json::from_str(args).ok()?;
-    value.get(key)?.as_str().map(str::to_string)
-}
-
-fn quote_preview(text: &str, max_len: usize) -> String {
-    truncate_preview(text, max_len).replace('"', "\\\"")
-}
-
-struct BackgroundTask {
-    id: u64,
-    kind: String,
-    details: String,
-    started_at: Instant,
-    state: BackgroundTaskState,
-    timeout_at: Option<Instant>,
-    final_response: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-struct CompletedBackgroundTask {
-    id: u64,
-    kind: String,
-    started_at: Instant,
-    result: Result<String, String>,
-}
-
-enum BackgroundTaskState {
-    Running,
-    WaitingApproval { command: String, since: Instant },
-    Cancelling { since: Instant },
-}
-
-#[derive(Debug, Clone, Copy)]
-enum ApprovalPolicy {
-    Ask,
-    All,
-    None,
-    Until(Instant),
-}
-
-struct PendingApproval {
-    task_id: u64,
-    approval_id: String,
-    command: String,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct RuntimeContextState {
-    estimated_tokens: u64,
-    context_limit: u64,
-    used_percent: f32,
-    last_prompt_tokens: u64,
-    last_completion_tokens: u64,
-    session_total_tokens: u64,
-}
-
-impl RuntimeContextState {
-    fn new(context_limit: Option<u64>) -> Self {
-        Self {
-            estimated_tokens: 0,
-            context_limit: context_limit.unwrap_or(0),
-            used_percent: 0.0,
-            last_prompt_tokens: 0,
-            last_completion_tokens: 0,
-            session_total_tokens: 0,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SessionStartupState {
-    ResumedExisting,
-    StartedNew,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ResumeRequest {
-    SessionId(String),
-    Last,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ApprovalDecision {
-    Approve,
-    Deny,
-}
-
-fn parse_approval_decision(input: &str) -> Option<ApprovalDecision> {
-    let normalized = input.trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "y" | "yes" => Some(ApprovalDecision::Approve),
-        "" | "n" | "no" => Some(ApprovalDecision::Deny),
-        _ => None,
-    }
-}
-
-fn approval_policy_label(policy: ApprovalPolicy) -> String {
-    match policy {
-        ApprovalPolicy::Ask => "ask".to_string(),
-        ApprovalPolicy::All => "all".to_string(),
-        ApprovalPolicy::None => "none".to_string(),
-        ApprovalPolicy::Until(until) => {
-            let now = Instant::now();
-            if until <= now {
-                "ask".to_string()
-            } else {
-                format!("auto ({})", format_elapsed(until.duration_since(now)))
-            }
-        }
-    }
-}
-
-fn active_approval_decision(policy: &mut ApprovalPolicy) -> Option<ApprovalDecision> {
-    match *policy {
-        ApprovalPolicy::Ask => None,
-        ApprovalPolicy::All => Some(ApprovalDecision::Approve),
-        ApprovalPolicy::None => Some(ApprovalDecision::Deny),
-        ApprovalPolicy::Until(until) => {
-            if until > Instant::now() {
-                Some(ApprovalDecision::Approve)
-            } else {
-                *policy = ApprovalPolicy::Ask;
-                None
-            }
-        }
-    }
-}
-
-fn update_approval_policy(input: &str, policy: &mut ApprovalPolicy) -> Result<String, String> {
-    let normalized = input.trim().to_ascii_lowercase();
-    if normalized.is_empty() {
-        return Err("Usage: /approve all|ask|none|<duration>".to_string());
-    }
-
-    match normalized.as_str() {
-        "ask" => {
-            *policy = ApprovalPolicy::Ask;
-            Ok("approval policy: ask".to_string())
-        }
-        "all" => {
-            *policy = ApprovalPolicy::All;
-            Ok("approval policy: all".to_string())
-        }
-        "none" => {
-            *policy = ApprovalPolicy::None;
-            Ok("approval policy: none".to_string())
-        }
-        _ => {
-            let duration = parse_duration_arg(&normalized)
-                .ok_or_else(|| "Invalid duration. Examples: 30s, 10m, 1h.".to_string())?;
-            *policy = ApprovalPolicy::Until(Instant::now() + duration);
-            Ok(format!(
-                "approval policy: auto-approve for {}",
-                format_elapsed(duration)
-            ))
-        }
-    }
-}
-
-fn to_runtime_approval_policy(policy: ApprovalPolicy) -> RuntimeApprovalPolicy {
-    match policy {
-        ApprovalPolicy::Ask => RuntimeApprovalPolicy::Ask,
-        ApprovalPolicy::All => RuntimeApprovalPolicy::All,
-        ApprovalPolicy::None => RuntimeApprovalPolicy::None,
-        ApprovalPolicy::Until(until) => {
-            let remaining = until.saturating_duration_since(Instant::now());
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64;
-            RuntimeApprovalPolicy::Until {
-                expires_at_unix_ms: now.saturating_add(remaining.as_millis() as u64),
-            }
-        }
-    }
-}
-
-fn parse_duration_arg(input: &str) -> Option<Duration> {
-    let s = input.trim().to_ascii_lowercase();
-    if s.is_empty() {
-        return None;
-    }
-    let (digits, unit) = if s.ends_with("ms") {
-        (&s[..s.len() - 2], "ms")
-    } else if let Some(last) = s.chars().last() {
-        if last.is_ascii_alphabetic() {
-            (&s[..s.len() - 1], &s[s.len() - 1..])
-        } else {
-            (s.as_str(), "s")
-        }
-    } else {
-        return None;
-    };
-    let value = digits.parse::<u64>().ok()?;
-    match unit {
-        "ms" => Some(Duration::from_millis(value)),
-        "s" => Some(Duration::from_secs(value)),
-        "m" => value.checked_mul(60).map(Duration::from_secs),
-        "h" => value
-            .checked_mul(60)
-            .and_then(|v| v.checked_mul(60))
-            .map(Duration::from_secs),
-        "d" => value
-            .checked_mul(24)
-            .and_then(|v| v.checked_mul(60))
-            .and_then(|v| v.checked_mul(60))
-            .map(Duration::from_secs),
-        _ => None,
-    }
-}
-
-fn apply_task_timeout_command(
-    tasks: &mut [BackgroundTask],
-    duration_arg: Option<&str>,
-    task_id_arg: Option<&str>,
-) -> Result<String, String> {
-    let Some(duration_arg) = duration_arg else {
-        return Err("Usage: /timeout <duration> [task-id]".to_string());
-    };
-    let duration = parse_duration_arg(duration_arg)
-        .ok_or_else(|| "Invalid duration. Examples: 30s, 10m, 1h.".to_string())?;
-
-    let task_id = if let Some(id_arg) = task_id_arg {
-        id_arg.parse::<u64>().map_err(|_| {
-            "Task id must be a number. Usage: /timeout <duration> [task-id]".to_string()
-        })?
-    } else if tasks.is_empty() {
-        return Err("No running background tasks.".to_string());
-    } else if tasks.len() == 1 {
-        tasks[0].id
-    } else {
-        return Err("Task id required when multiple background tasks are running.".to_string());
-    };
-
-    let Some(task) = tasks.iter_mut().find(|task| task.id == task_id) else {
-        return Err(format!("No running background task with id #{task_id}."));
-    };
-    task.timeout_at = Some(Instant::now() + duration);
-    Ok(format!(
-        "task #{task_id} timeout set to {}",
-        format_elapsed(duration)
-    ))
-}
-
-fn has_elapsed_timeouts(tasks: &[BackgroundTask]) -> bool {
-    let now = Instant::now();
-    tasks.iter().any(|task| {
-        task.timeout_at.is_some_and(|timeout_at| {
-            timeout_at <= now && !matches!(task.state, BackgroundTaskState::Cancelling { .. })
-        })
-    })
-}
-
-fn approval_prompt_actor(
-    ssh_target: Option<&str>,
-    container: Option<&str>,
-    tmux_info: Option<&TmuxAttachInfo>,
-) -> String {
-    let mut actor = if let Some(target) = ssh_target {
-        format!("ssh:{target}")
-    } else if let Some(container) = container {
-        format!("container:{container}")
-    } else {
-        "local".to_string()
-    };
-
-    if let Some(info) = tmux_info {
-        actor.push_str(&format!(" (tmux:{})", info.session));
-    }
-    actor
-}
-
-fn render_shell_approval_request(renderer: &dyn RenderSink, actor: &str, command: &str) {
-    renderer.activity(&format!("shell command on {actor}"));
-    renderer.approval_block(&format_approval_command_block(command));
-}
-
-fn format_approval_command_block(command: &str) -> String {
-    if command.trim().is_empty() {
-        return "$".to_string();
-    }
-
-    let mut out = String::new();
-    for (idx, line) in command.lines().enumerate() {
-        if idx > 0 {
-            out.push('\n');
-        }
-        if idx == 0 {
-            out.push_str("$ ");
-        } else {
-            out.push_str("  ");
-        }
-        out.push_str(line);
-    }
-    out
-}
-
-fn session_startup_message(
-    state: SessionStartupState,
-    session_id: &str,
-    context_used: u16,
-) -> String {
-    match state {
-        SessionStartupState::ResumedExisting => {
-            format!("using existing session \"{session_id}\" ({context_used}% context used)")
-        }
-        SessionStartupState::StartedNew => {
-            format!("using new session \"{session_id}\" ({context_used}% context used)")
-        }
-    }
-}
-
-fn execution_tmux_attach_command(info: &TmuxAttachInfo) -> String {
-    match &info.target {
-        TmuxAttachTarget::Local => format!("tmux attach -t {}", info.session),
-        TmuxAttachTarget::Ssh { target } => {
-            format!("ssh -t {target} tmux attach -t {}", info.session)
-        }
-        TmuxAttachTarget::Container { engine, container } => {
-            format!(
-                "{engine} exec -it {container} tmux attach -t {}",
-                info.session
-            )
-        }
-    }
-}
-
-fn execution_target_label(info: Option<&TmuxAttachInfo>) -> String {
-    match info {
-        Some(TmuxAttachInfo {
-            target: TmuxAttachTarget::Local,
-            ..
-        }) => "localhost".to_string(),
-        Some(TmuxAttachInfo {
-            target: TmuxAttachTarget::Ssh { target },
-            ..
-        }) => format!("ssh:{target}"),
-        Some(TmuxAttachInfo {
-            target: TmuxAttachTarget::Container { container, .. },
-            ..
-        }) => format!("container:{container}"),
-        None => "localhost".to_string(),
-    }
-}
-
-fn render_startup_banner(color: bool, model: &str, tmux_info: Option<&TmuxAttachInfo>) {
-    let target = execution_target_label(tmux_info);
-    if color {
-        eprintln!(
-            "{} {} running on {} with model {}",
-            "•".with(Color::DarkGrey),
-            "buddy".with(Color::Green).bold(),
-            target.as_str().with(Color::White).bold(),
-            model.with(Color::Yellow).bold(),
-        );
-    } else {
-        eprintln!("• buddy running on {target} with model {model}");
-    }
-
-    if let Some(info) = tmux_info {
-        let attach = execution_tmux_attach_command(info);
-        if color {
-            eprintln!(
-                "  attach with: {}",
-                attach.as_str().with(Color::White).bold()
-            );
-        } else {
-            eprintln!("  attach with: {attach}");
-        }
-    }
-    eprintln!();
-}
-
-fn render_session_startup_line(
-    color: bool,
-    state: SessionStartupState,
-    session_id: &str,
-    context_used: u16,
-) {
-    let message = session_startup_message(state, session_id, context_used);
-    if color {
-        eprintln!("{} {}", "•".with(Color::DarkGrey), message);
-    } else {
-        eprintln!("• {message}");
-    }
-    eprintln!();
-}
-
-fn resume_request_from_command(
-    command: Option<&cli::Command>,
-) -> Result<Option<ResumeRequest>, String> {
-    let Some(command) = command else {
-        return Ok(None);
-    };
-
-    match command {
-        cli::Command::Resume { session_id, last } => {
-            if *last {
-                if session_id.is_some() {
-                    return Err(
-                        "Use either `buddy resume <session-id>` or `buddy resume --last`."
-                            .to_string(),
-                    );
-                }
-                return Ok(Some(ResumeRequest::Last));
-            }
-            let Some(session_id) = session_id.as_deref().map(str::trim) else {
-                return Err("Usage: buddy resume <session-id> | buddy resume --last".to_string());
-            };
-            if session_id.is_empty() {
-                return Err("session id cannot be empty".to_string());
-            }
-            Ok(Some(ResumeRequest::SessionId(session_id.to_string())))
-        }
-        _ => Ok(None),
-    }
-}
-
-fn initialize_active_session(
-    renderer: &dyn RenderSink,
-    session_store: &SessionStore,
-    agent: &mut Agent,
-    resume_request: Option<ResumeRequest>,
-) -> Result<(SessionStartupState, String), String> {
-    match resume_request {
-        None => {
-            let snapshot = agent.snapshot_session();
-            let session_id = session_store
-                .create_new_session(&snapshot)
-                .map_err(|e| format!("failed to create new session: {e}"))?;
-            Ok((SessionStartupState::StartedNew, session_id))
-        }
-        Some(ResumeRequest::Last) => {
-            let Some(last_id) = session_store
-                .resolve_last()
-                .map_err(|e| format!("failed to resolve last session: {e}"))?
-            else {
-                return Err(
-                    "No saved sessions found in this directory. Start `buddy` to create one."
-                        .to_string(),
-                );
-            };
-            let snapshot = session_store
-                .load(&last_id)
-                .map_err(|e| format!("failed to load session {last_id}: {e}"))?;
-            agent.restore_session(snapshot.clone());
-            if let Err(e) = session_store.save(&last_id, &snapshot) {
-                renderer.warn(&format!("failed to refresh session {last_id}: {e}"));
-            }
-            Ok((SessionStartupState::ResumedExisting, last_id))
-        }
-        Some(ResumeRequest::SessionId(session_id)) => {
-            let snapshot = session_store
-                .load(&session_id)
-                .map_err(|e| format!("failed to load session {session_id}: {e}"))?;
-            agent.restore_session(snapshot.clone());
-            if let Err(e) = session_store.save(&session_id, &snapshot) {
-                renderer.warn(&format!("failed to refresh session {session_id}: {e}"));
-            }
-            Ok((SessionStartupState::ResumedExisting, session_id))
-        }
-    }
-}
-
 fn context_used_percent(agent: &Agent) -> Option<u16> {
     let tracker = agent.tracker();
     if tracker.context_limit == 0 {
         return None;
     }
     let estimated = TokenTracker::estimate_messages(agent.messages());
-    let percent = ((estimated as f64 / tracker.context_limit as f64) * 100.0).round();
-    Some(percent.clamp(0.0, 9_999.0) as u16)
+    let percent = (estimated as f64 / tracker.context_limit as f64) * 100.0;
+    Some(display_context_percent(percent))
 }
 
-fn mark_task_waiting_for_approval(
-    tasks: &mut [BackgroundTask],
-    task_id: u64,
-    command: &str,
-    _approval_id: &str,
-) -> bool {
-    let Some(task) = tasks.iter_mut().find(|task| task.id == task_id) else {
-        return false;
-    };
-    task.state = BackgroundTaskState::WaitingApproval {
-        command: truncate_preview(command, 96),
-        since: Instant::now(),
-    };
-    true
-}
-
-fn mark_task_running(tasks: &mut [BackgroundTask], task_id: u64) {
-    if let Some(task) = tasks.iter_mut().find(|task| task.id == task_id) {
-        task.state = BackgroundTaskState::Running;
+fn display_context_percent(percent: f64) -> u16 {
+    if percent.is_nan() || percent <= 0.0 {
+        return 0;
     }
-}
-
-fn task_is_waiting_for_approval(tasks: &[BackgroundTask], task_id: u64) -> bool {
-    tasks
-        .iter()
-        .find(|task| task.id == task_id)
-        .is_some_and(|task| matches!(task.state, BackgroundTaskState::WaitingApproval { .. }))
-}
-
-fn runtime_approval_decision(decision: ApprovalDecision) -> RuntimeApprovalDecision {
-    match decision {
-        ApprovalDecision::Approve => RuntimeApprovalDecision::Approve,
-        ApprovalDecision::Deny => RuntimeApprovalDecision::Deny,
-    }
-}
-
-async fn send_approval_decision(
-    runtime: &BuddyRuntimeHandle,
-    approval: &PendingApproval,
-    decision: ApprovalDecision,
-) -> Result<(), String> {
-    runtime
-        .send(RuntimeCommand::Approve {
-            approval_id: approval.approval_id.clone(),
-            decision: runtime_approval_decision(decision),
-        })
-        .await
-        .map_err(|e| format!("failed to send approval decision: {e}"))
-}
-
-async fn deny_pending_approval(
-    runtime: &BuddyRuntimeHandle,
-    tasks: &mut [BackgroundTask],
-    approval: PendingApproval,
-) {
-    mark_task_running(tasks, approval.task_id);
-    let _ = send_approval_decision(runtime, &approval, ApprovalDecision::Deny).await;
-}
-
-async fn request_task_cancellation(
-    runtime: &BuddyRuntimeHandle,
-    tasks: &mut [BackgroundTask],
-    pending_approval: &mut Option<PendingApproval>,
-    task_id: u64,
-) -> bool {
-    let Some(task) = tasks.iter_mut().find(|task| task.id == task_id) else {
-        return false;
-    };
-
-    if pending_approval
-        .as_ref()
-        .is_some_and(|approval| approval.task_id == task_id)
-    {
-        if let Some(approval) = pending_approval.take() {
-            let _ = send_approval_decision(runtime, &approval, ApprovalDecision::Deny).await;
-        }
-    }
-
-    if let Err(err) = runtime.send(RuntimeCommand::CancelTask { task_id }).await {
-        return {
-            let _ = err;
-            false
-        };
-    }
-    task.state = BackgroundTaskState::Cancelling {
-        since: Instant::now(),
-    };
-    true
-}
-
-async fn kill_background_task(
-    renderer: &dyn RenderSink,
-    runtime: &BuddyRuntimeHandle,
-    tasks: &mut [BackgroundTask],
-    pending_approval: &mut Option<PendingApproval>,
-    task_id: u64,
-) {
-    if request_task_cancellation(runtime, tasks, pending_approval, task_id).await {
-        renderer.warn(&format!("Cancelling task #{task_id}..."));
+    let rounded = percent.round().clamp(0.0, 9_999.0) as u16;
+    if rounded == 0 {
+        1
     } else {
-        renderer.warn(&format!("No running background task with id #{task_id}."));
+        rounded
     }
-}
-
-async fn enforce_task_timeouts(
-    renderer: &dyn RenderSink,
-    runtime: &BuddyRuntimeHandle,
-    tasks: &mut [BackgroundTask],
-    pending_approval: &mut Option<PendingApproval>,
-) {
-    let now = Instant::now();
-    let expired_ids = tasks
-        .iter()
-        .filter_map(|task| {
-            let timeout_at = task.timeout_at?;
-            if timeout_at <= now && !matches!(task.state, BackgroundTaskState::Cancelling { .. }) {
-                Some(task.id)
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<_>>();
-
-    for task_id in expired_ids {
-        if request_task_cancellation(runtime, tasks, pending_approval, task_id).await {
-            renderer.warn(&format!("Task #{task_id} hit timeout; cancelling."));
-        }
-    }
-}
-
-fn render_background_tasks(renderer: &dyn RenderSink, tasks: &[BackgroundTask]) {
-    renderer.section("background tasks");
-    if tasks.is_empty() {
-        renderer.field("running", "none");
-        eprintln!();
-        return;
-    }
-
-    for task in tasks {
-        let state = match &task.state {
-            BackgroundTaskState::Running => {
-                format!("running ({})", format_elapsed(task.started_at.elapsed()))
-            }
-            BackgroundTaskState::WaitingApproval { command, since } => {
-                format!(
-                    "waiting approval {} for: {}",
-                    format_elapsed(since.elapsed()),
-                    command
-                )
-            }
-            BackgroundTaskState::Cancelling { since } => {
-                format!("cancelling ({})", format_elapsed(since.elapsed()))
-            }
-        };
-        let timeout_note = timeout_suffix_for_task(task);
-        renderer.field(
-            &format!("#{}", task.id),
-            &format!(
-                "{} \"{}\" [{}{}]",
-                task.kind, task.details, state, timeout_note
-            ),
-        );
-    }
-    eprintln!();
-}
-
-fn format_elapsed(elapsed: Duration) -> String {
-    if elapsed.as_secs() >= 60 {
-        format!("{}m{}s", elapsed.as_secs() / 60, elapsed.as_secs() % 60)
-    } else {
-        format!("{:.1}s", elapsed.as_secs_f64())
-    }
-}
-
-fn format_elapsed_coarse(elapsed: Duration) -> String {
-    if elapsed.as_secs() >= 60 {
-        format!("{}m{}s", elapsed.as_secs() / 60, elapsed.as_secs() % 60)
-    } else {
-        format!("{}s", elapsed.as_secs())
-    }
-}
-
-fn truncate_preview(text: &str, max_len: usize) -> String {
-    let flat: String = text
-        .chars()
-        .map(|c| if c == '\n' { ' ' } else { c })
-        .collect();
-    truncate_with_suffix_by_chars(&flat, max_len, "...")
 }
 
 #[cfg(test)]
@@ -2419,7 +1385,7 @@ mod tests {
     fn approval_prompt_actor_includes_tmux_session_when_available() {
         let info = TmuxAttachInfo {
             session: "buddy-a1b2".to_string(),
-            window: "buddy-shared",
+            window: "shared",
             target: TmuxAttachTarget::Local,
         };
         assert_eq!(
@@ -2491,10 +1457,37 @@ mod tests {
     }
 
     #[test]
+    fn parse_shell_tool_result_extracts_from_enveloped_json() {
+        let result = serde_json::json!({
+            "harness_timestamp": { "source": "harness", "unix_millis": 123 },
+            "result": {
+                "exit_code": 9,
+                "stdout": "a",
+                "stderr": "b"
+            }
+        })
+        .to_string();
+        let parsed = parse_shell_tool_result(&result).expect("parse shell payload");
+        assert_eq!(parsed.exit_code, 9);
+        assert_eq!(parsed.stdout, "a");
+        assert_eq!(parsed.stderr, "b");
+    }
+
+    #[test]
+    fn tool_result_display_text_unwraps_envelope_strings() {
+        let result = serde_json::json!({
+            "harness_timestamp": { "source": "harness", "unix_millis": 123 },
+            "result": "hello"
+        })
+        .to_string();
+        assert_eq!(tool_result_display_text(&result), "hello");
+    }
+
+    #[test]
     fn execution_tmux_attach_command_formats_local_target() {
         let cmd = execution_tmux_attach_command(&TmuxAttachInfo {
             session: "buddy-ef1d".to_string(),
-            window: "buddy-shared",
+            window: "shared",
             target: TmuxAttachTarget::Local,
         });
         assert_eq!(cmd, "tmux attach -t buddy-ef1d");
@@ -2588,7 +1581,14 @@ mod tests {
             },
         ];
         assert!(mark_task_waiting_for_approval(
-            &mut tasks, 2, "ls", "appr-2"
+            &mut tasks,
+            2,
+            "ls",
+            Some("low".to_string()),
+            Some(false),
+            Some(false),
+            Some("inspect files".to_string()),
+            "appr-2"
         ));
         assert!(task_is_waiting_for_approval(&tasks, 2));
         assert!(!task_is_waiting_for_approval(&tasks, 1));

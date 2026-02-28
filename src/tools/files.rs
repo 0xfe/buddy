@@ -8,6 +8,7 @@ use serde::Deserialize;
 use std::path::{Component, Path, PathBuf};
 
 use super::execution::ExecutionContext;
+use super::result_envelope::wrap_result;
 use super::{Tool, ToolContext};
 use crate::error::ToolError;
 use crate::textutil::truncate_with_suffix_by_bytes;
@@ -64,13 +65,13 @@ impl Tool for ReadFileTool {
         let content = self.execution.read_file(&args.path).await?;
 
         if content.len() > MAX_READ_LEN {
-            Ok(truncate_with_suffix_by_bytes(
+            wrap_result(truncate_with_suffix_by_bytes(
                 &content,
                 MAX_READ_LEN,
                 "...[truncated]",
             ))
         } else {
-            Ok(content)
+            wrap_result(content)
         }
     }
 }
@@ -130,7 +131,7 @@ impl Tool for WriteFileTool {
 
         self.execution.write_file(&args.path, &args.content).await?;
 
-        Ok(format!(
+        wrap_result(format!(
             "Wrote {} bytes to {}",
             args.content.len(),
             args.path
@@ -229,6 +230,10 @@ mod tests {
     use super::*;
     use crate::testsupport::TestTempDir;
 
+    fn parse_envelope(result: &str) -> serde_json::Value {
+        serde_json::from_str(result).expect("tool result envelope")
+    }
+
     #[test]
     fn read_tool_name() {
         assert_eq!(
@@ -289,7 +294,7 @@ mod tests {
         .execute(&args, &ToolContext::empty())
         .await
         .unwrap();
-        assert_eq!(result, "file content");
+        assert_eq!(parse_envelope(&result)["result"], "file content");
     }
 
     #[tokio::test]
@@ -305,7 +310,9 @@ mod tests {
         .execute(&args, &ToolContext::empty())
         .await
         .unwrap();
-        assert!(result.ends_with("...[truncated]"), "got: {result}");
+        let envelope = parse_envelope(&result);
+        let payload = envelope["result"].as_str().expect("string payload");
+        assert!(payload.ends_with("...[truncated]"), "got: {payload}");
     }
 
     #[tokio::test]
@@ -321,7 +328,9 @@ mod tests {
         .execute(&args, &ToolContext::empty())
         .await
         .unwrap();
-        assert!(result.ends_with("...[truncated]"), "got: {result}");
+        let envelope = parse_envelope(&result);
+        let payload = envelope["result"].as_str().expect("string payload");
+        assert!(payload.ends_with("...[truncated]"), "got: {payload}");
     }
 
     #[tokio::test]
@@ -352,7 +361,12 @@ mod tests {
         .execute(&args, &ToolContext::empty())
         .await
         .unwrap();
-        assert!(result.contains(&content.len().to_string()), "got: {result}");
+        let envelope = parse_envelope(&result);
+        let payload = envelope["result"].as_str().expect("string payload");
+        assert!(
+            payload.contains(&content.len().to_string()),
+            "got: {payload}"
+        );
         let written = tokio::fs::read_to_string(&path).await.unwrap();
         assert_eq!(written, content);
     }

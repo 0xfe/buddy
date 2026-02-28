@@ -95,6 +95,10 @@ Run a shell command and capture its output.
 ```json
 {
   "command": "du -sh /var",
+  "risk": "low",
+  "mutation": false,
+  "privesc": false,
+  "why": "Inspect disk usage before cleanup",
   "wait": true
 }
 ```
@@ -102,6 +106,10 @@ Run a shell command and capture its output.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `command` | string | required | Shell command, executed via `sh -c` |
+| `risk` | string | required | Estimated command risk: `low`, `medium`, `high` |
+| `mutation` | bool | required | Whether command mutates system state |
+| `privesc` | bool | required | Whether command uses privilege escalation |
+| `why` | string | required | Short reason and risk justification |
 | `wait` | bool \| string \| int | `true` | Waiting behaviour (see below) |
 
 **Wait modes:**
@@ -115,15 +123,20 @@ Run a shell command and capture its output.
 
 **Output format:**
 
-```
-exit code: 0
-stdout:
-512M	/var
-stderr:
+All tools return a JSON envelope:
 
+```json
+{
+  "harness_timestamp": { "source": "harness", "unix_millis": 1772283708794 },
+  "result": {
+    "exit_code": 0,
+    "stdout": "512M\t/var",
+    "stderr": ""
+  }
+}
 ```
 
-Both stdout and stderr are truncated to 4000 characters each.
+`run_shell` truncates both stdout and stderr to 4000 characters.
 
 **Approval flow:**
 
@@ -131,7 +144,7 @@ When `[tools].shell_confirm = true` in config, the tool pauses before running
 and waits for user approval. In interactive mode this goes through the REPL's
 inline approval prompt; in one-shot mode it falls back to a simple stdin
 prompt (`Run: <cmd> [y/N]`). Denied commands return
-`"Command execution denied by user."`.
+`{"result":"Command execution denied by user.", ...}`.
 
 **Spinner:** `run_shell` manages its own spinner so that it can appear after
 the approval prompt, not before.
@@ -279,7 +292,11 @@ Inject keystrokes into a tmux pane. Only available with a tmux backend.
   "keys": ["C-c"],
   "literal_text": "yes\n",
   "enter": true,
-  "delay_ms": 500
+  "delay_ms": 500,
+  "risk": "low",
+  "mutation": false,
+  "privesc": false,
+  "why": "Send Ctrl-C to cancel a hung command"
 }
 ```
 
@@ -290,6 +307,10 @@ Inject keystrokes into a tmux pane. Only available with a tmux backend.
 | `literal_text` | Literal text to type (uses `tmux send-keys -l`) |
 | `enter` | Press Enter after other keys |
 | `delay` / `delay_ms` | Wait before sending |
+| `risk` | Required risk label: `low`, `medium`, `high` |
+| `mutation` | Required mutation flag |
+| `privesc` | Required privilege-escalation flag |
+| `why` | Required short justification |
 
 Keys are sent in order: `literal_text` first, then named `keys`, then `Enter`
 if requested.
@@ -311,23 +332,17 @@ if requested.
 
 ### 8. `time` — `src/tools/time.rs`
 
-Return the current wall-clock time in various formats.
+Return the current wall-clock time snapshot from the harness.
 
 **Arguments:**
 
 ```json
-{ "format": "iso" }
+{}
 ```
 
-| Format | Example output |
-|--------|---------------|
-| `epoch` (default) | `1708900000` |
-| `epoch_ms` | `1708900000123` |
-| `epoch_ns` | `1708900000123456789` |
-| `iso` | `2025-02-26T12:34:56.789Z` |
-| `rfc2822` | `Wed, 26 Feb 2025 12:34:56 +0000` |
-| `date` | `2025-02-26` |
-| `time` | `12:34:56` |
+`result` includes common UTC/epoch fields (for example `unix_millis`,
+`iso_8601_utc`, and `rfc_2822_utc`) wrapped in the standard envelope with
+`harness_timestamp`.
 
 This tool reports the harness wall-clock time, not the remote shell's time.
 It is useful when the model needs to timestamp actions or calculate durations

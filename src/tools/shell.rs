@@ -4,11 +4,12 @@
 //! Optionally prompts the user for confirmation before execution.
 
 use async_trait::async_trait;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 
 use super::execution::{ExecutionContext, ShellWait};
+use super::result_envelope::wrap_result;
 use super::{Tool, ToolContext, ToolStreamEvent};
 use crate::error::ToolError;
 use crate::render::Renderer;
@@ -36,6 +37,10 @@ pub struct ShellTool {
 struct Args {
     command: String,
     wait: Option<WaitArg>,
+    risk: RiskLevel,
+    mutation: bool,
+    privesc: bool,
+    why: String,
 }
 
 #[derive(Deserialize)]
@@ -46,16 +51,84 @@ enum WaitArg {
     Seconds(u64),
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RiskLevel {
+    Low,
+    Medium,
+    High,
+}
+
+impl RiskLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ShellApprovalMetadata {
+    risk: RiskLevel,
+    mutation: bool,
+    privesc: bool,
+    why: String,
+}
+
+impl ShellApprovalMetadata {
+    pub fn risk(&self) -> RiskLevel {
+        self.risk
+    }
+
+    pub fn mutation(&self) -> bool {
+        self.mutation
+    }
+
+    pub fn privesc(&self) -> bool {
+        self.privesc
+    }
+
+    pub fn why(&self) -> &str {
+        &self.why
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct ShellToolResultPayload {
+    exit_code: i32,
+    stdout: String,
+    stderr: String,
+}
+
 /// Foreground approval request emitted by `ShellTool` when confirmations are enabled.
 #[derive(Debug)]
 pub struct ShellApprovalRequest {
     command: String,
+    metadata: Option<ShellApprovalMetadata>,
     response: oneshot::Sender<bool>,
 }
 
 impl ShellApprovalRequest {
+    fn new(
+        command: String,
+        metadata: Option<ShellApprovalMetadata>,
+        response: oneshot::Sender<bool>,
+    ) -> Self {
+        Self {
+            command,
+            metadata,
+            response,
+        }
+    }
+
     pub fn command(&self) -> &str {
         &self.command
+    }
+
+    pub fn metadata(&self) -> Option<&ShellApprovalMetadata> {
+        self.metadata.as_ref()
     }
 
     pub fn approve(self) {
@@ -79,13 +152,14 @@ impl ShellApprovalBroker {
         (Self { tx }, rx)
     }
 
-    pub async fn request(&self, command: String) -> Result<bool, ToolError> {
+    pub async fn request(
+        &self,
+        command: String,
+        metadata: Option<ShellApprovalMetadata>,
+    ) -> Result<bool, ToolError> {
         let (response_tx, response_rx) = oneshot::channel();
         self.tx
-            .send(ShellApprovalRequest {
-                command,
-                response: response_tx,
-            })
+            .send(ShellApprovalRequest::new(command, metadata, response_tx))
             .map_err(|_| ToolError::ExecutionFailed("approval UI is unavailable".into()))?;
         response_rx.await.map_err(|_| {
             ToolError::ExecutionFailed("approval request was cancelled before resolution".into())
@@ -113,6 +187,23 @@ impl Tool for ShellTool {
                             "type": "string",
                             "description": "The shell command to execute"
                         },
+                        "risk": {
+                            "type": "string",
+                            "enum": ["low", "medium", "high"],
+                            "description": "Estimated risk level for this command."
+                        },
+                        "mutation": {
+                            "type": "boolean",
+                            "description": "True when the command mutates system state (writes files, changes configuration, etc). Writing only under /tmp can be treated as non-mutation."
+                        },
+                        "privesc": {
+                            "type": "boolean",
+                            "description": "True when command uses privilege escalation (for example sudo/su)."
+                        },
+                        "why": {
+                            "type": "string",
+                            "description": "Short reason for running the command, including risk justification and what is being mutated when mutation=true."
+                        },
                         "wait": {
                             "description": "Waiting mode: true (default) waits to completion; false dispatches and returns immediately (tmux targets only); or duration string like '30s', '10m', '1h' to wait with timeout.",
                             "oneOf": [
@@ -122,7 +213,7 @@ impl Tool for ShellTool {
                             ]
                         }
                     },
-                    "required": ["command"]
+                    "required": ["command", "risk", "mutation", "privesc", "why"]
                 }),
             },
         }
@@ -131,6 +222,11 @@ impl Tool for ShellTool {
     async fn execute(&self, arguments: &str, context: &ToolContext) -> Result<String, ToolError> {
         let args: Args = serde_json::from_str(arguments)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
+        if args.why.trim().is_empty() {
+            return Err(ToolError::InvalidArguments(
+                "run_shell.why must be a non-empty string".to_string(),
+            ));
+        }
         if let Some(pattern) = matched_denylist_pattern(&args.command, &self.denylist) {
             return Err(ToolError::ExecutionFailed(format!(
                 "command blocked by tools.shell_denylist pattern `{pattern}`"
@@ -143,8 +239,16 @@ impl Tool for ShellTool {
 
         // Prompt for confirmation if enabled.
         if self.confirm {
+            let metadata = ShellApprovalMetadata {
+                risk: args.risk,
+                mutation: args.mutation,
+                privesc: args.privesc,
+                why: args.why.clone(),
+            };
             let approved = if let Some(approval) = &self.approval {
-                approval.request(args.command.clone()).await?
+                approval
+                    .request(args.command.clone(), Some(metadata))
+                    .await?
             } else {
                 eprint!("  Run: {} [y/N] ", args.command);
                 let mut input = String::new();
@@ -157,7 +261,7 @@ impl Tool for ShellTool {
                 context.emit(ToolStreamEvent::Completed {
                     detail: "run_shell denied by user".to_string(),
                 });
-                return Ok("Command execution denied by user.".to_string());
+                return wrap_result("Command execution denied by user.");
             }
         }
 
@@ -181,7 +285,7 @@ impl Tool for ShellTool {
             context.emit(ToolStreamEvent::Completed {
                 detail: format!("run_shell completed with exit code {}", output.exit_code),
             });
-            return Ok(output.stdout);
+            return wrap_result(output.stdout);
         }
         let stdout_text = truncate_output(&output.stdout, MAX_OUTPUT_LEN);
         let stderr_text = truncate_output(&output.stderr, MAX_OUTPUT_LEN);
@@ -199,10 +303,11 @@ impl Tool for ShellTool {
             detail: format!("run_shell completed with exit code {}", output.exit_code),
         });
 
-        Ok(format!(
-            "exit code: {}\nstdout:\n{stdout_text}\nstderr:\n{stderr_text}",
-            output.exit_code
-        ))
+        wrap_result(ShellToolResultPayload {
+            exit_code: output.exit_code,
+            stdout: stdout_text,
+            stderr: stderr_text,
+        })
     }
 }
 
@@ -273,6 +378,34 @@ fn matched_denylist_pattern(command: &str, denylist: &[String]) -> Option<String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    fn shell_args(command: &str) -> String {
+        json!({
+            "command": command,
+            "risk": "low",
+            "mutation": false,
+            "privesc": false,
+            "why": "run a safe read-only command"
+        })
+        .to_string()
+    }
+
+    fn shell_args_with_wait(command: &str, wait: serde_json::Value) -> String {
+        json!({
+            "command": command,
+            "wait": wait,
+            "risk": "low",
+            "mutation": false,
+            "privesc": false,
+            "why": "run a safe read-only command"
+        })
+        .to_string()
+    }
+
+    fn parse_result_envelope(result: &str) -> serde_json::Value {
+        serde_json::from_str(result).expect("result envelope json")
+    }
 
     #[test]
     fn truncate_short_string_unchanged() {
@@ -351,6 +484,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn execute_missing_required_metadata_returns_error() {
+        let err = ShellTool {
+            confirm: false,
+            denylist: Vec::new(),
+            color: false,
+            execution: ExecutionContext::local(),
+            approval: None,
+        }
+        .execute(r#"{"command":"echo hi"}"#, &ToolContext::empty())
+        .await
+        .expect_err("missing metadata should fail");
+        assert!(err.to_string().contains("invalid arguments"));
+    }
+
+    #[tokio::test]
     async fn execute_echo_command() {
         let result = ShellTool {
             confirm: false,
@@ -359,11 +507,14 @@ mod tests {
             execution: ExecutionContext::local(),
             approval: None,
         }
-        .execute(r#"{"command": "echo hello"}"#, &ToolContext::empty())
+        .execute(&shell_args("echo hello"), &ToolContext::empty())
         .await
         .unwrap();
-        assert!(result.contains("exit code: 0"), "got: {result}");
-        assert!(result.contains("hello"), "got: {result}");
+        let value = parse_result_envelope(&result);
+        assert_eq!(value["result"]["exit_code"], 0);
+        assert!(value["result"]["stdout"]
+            .as_str()
+            .is_some_and(|text| text.contains("hello")));
     }
 
     #[tokio::test]
@@ -375,10 +526,11 @@ mod tests {
             execution: ExecutionContext::local(),
             approval: None,
         }
-        .execute(r#"{"command": "exit 42"}"#, &ToolContext::empty())
+        .execute(&shell_args("exit 42"), &ToolContext::empty())
         .await
         .unwrap();
-        assert!(result.contains("exit code: 42"), "got: {result}");
+        let value = parse_result_envelope(&result);
+        assert_eq!(value["result"]["exit_code"], 42);
     }
 
     #[tokio::test]
@@ -390,10 +542,13 @@ mod tests {
             execution: ExecutionContext::local(),
             approval: None,
         }
-        .execute(r#"{"command": "echo err >&2"}"#, &ToolContext::empty())
+        .execute(&shell_args("echo err >&2"), &ToolContext::empty())
         .await
         .unwrap();
-        assert!(result.contains("err"), "got: {result}");
+        let value = parse_result_envelope(&result);
+        assert!(value["result"]["stderr"]
+            .as_str()
+            .is_some_and(|text| text.contains("err")));
     }
 
     #[tokio::test]
@@ -410,7 +565,7 @@ mod tests {
             approval: None,
         }
         .execute(
-            r#"{"command":"echo hi","wait":false}"#,
+            &shell_args_with_wait("echo hi", json!(false)),
             &ToolContext::empty(),
         )
         .await;
@@ -421,7 +576,9 @@ mod tests {
         {
             let out = outcome.expect("wait=false should dispatch inside tmux");
             assert!(
-                out.contains("command dispatched"),
+                parse_result_envelope(&out)["result"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("command dispatched")),
                 "unexpected output: {out}"
             );
         } else {
@@ -440,7 +597,7 @@ mod tests {
             approval: None,
         }
         .execute(
-            r#"{"command":"sleep 1","wait":"1ms"}"#,
+            &shell_args_with_wait("sleep 1", json!("1ms")),
             &ToolContext::empty(),
         )
         .await
@@ -463,17 +620,24 @@ mod tests {
                 execution: ExecutionContext::local(),
                 approval: Some(broker),
             }
-            .execute(r#"{"command":"echo approved"}"#, &ToolContext::empty())
+            .execute(&shell_args("echo approved"), &ToolContext::empty())
             .await
         });
 
         let req = rx.recv().await.expect("approval request expected");
         assert_eq!(req.command(), "echo approved");
+        let metadata = req.metadata().expect("metadata expected");
+        assert_eq!(metadata.risk(), RiskLevel::Low);
+        assert!(!metadata.mutation());
+        assert!(!metadata.privesc());
         req.approve();
 
         let result = join.await.expect("join should succeed").unwrap();
-        assert!(result.contains("exit code: 0"), "got: {result}");
-        assert!(result.contains("approved"), "got: {result}");
+        let value = parse_result_envelope(&result);
+        assert_eq!(value["result"]["exit_code"], 0);
+        assert!(value["result"]["stdout"]
+            .as_str()
+            .is_some_and(|text| text.contains("approved")));
     }
 
     #[tokio::test]
@@ -488,7 +652,7 @@ mod tests {
                 execution: ExecutionContext::local(),
                 approval: Some(broker),
             }
-            .execute(r#"{"command":"echo denied"}"#, &ToolContext::empty())
+            .execute(&shell_args("echo denied"), &ToolContext::empty())
             .await
         });
 
@@ -497,7 +661,8 @@ mod tests {
         req.deny();
 
         let result = join.await.expect("join should succeed").unwrap();
-        assert_eq!(result, "Command execution denied by user.");
+        let value = parse_result_envelope(&result);
+        assert_eq!(value["result"], "Command execution denied by user.");
     }
 
     #[tokio::test]
@@ -509,7 +674,7 @@ mod tests {
             execution: ExecutionContext::local(),
             approval: None,
         }
-        .execute(r#"{"command":"rm -rf /tmp/test"}"#, &ToolContext::empty())
+        .execute(&shell_args("rm -rf /tmp/test"), &ToolContext::empty())
         .await
         .expect_err("denylist should block this command");
         assert!(
@@ -529,10 +694,11 @@ mod tests {
             execution: ExecutionContext::local(),
             approval: None,
         }
-        .execute(r#"{"command":"echo streamed"}"#, &context)
+        .execute(&shell_args("echo streamed"), &context)
         .await
         .expect("shell command should succeed");
-        assert!(result.contains("exit code: 0"), "got: {result}");
+        let value = parse_result_envelope(&result);
+        assert_eq!(value["result"]["exit_code"], 0);
 
         let mut saw_started = false;
         let mut saw_stdout = false;

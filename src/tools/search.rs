@@ -8,6 +8,7 @@ use scraper::{Html, Selector};
 use serde::Deserialize;
 use std::time::Duration;
 
+use super::result_envelope::wrap_result;
 use super::{Tool, ToolContext};
 use crate::error::ToolError;
 use crate::types::{FunctionDefinition, ToolDefinition};
@@ -90,7 +91,7 @@ impl Tool for WebSearchTool {
 
         let results = parse_ddg_results(&html);
         if results.is_empty() {
-            return Ok(empty_results_message(&args.query, &html));
+            return wrap_result(empty_results_message(&args.query, &html));
         }
 
         let mut output = String::new();
@@ -103,7 +104,7 @@ impl Tool for WebSearchTool {
                 r.snippet
             ));
         }
-        Ok(output)
+        wrap_result(output)
     }
 }
 

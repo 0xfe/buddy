@@ -8,6 +8,7 @@ use serde::Deserialize;
 use std::time::Duration;
 
 use super::execution::{CapturePaneOptions, ExecutionContext};
+use super::result_envelope::wrap_result;
 use super::{Tool, ToolContext};
 use crate::error::ToolError;
 use crate::textutil::safe_prefix_by_bytes;
@@ -131,7 +132,7 @@ impl Tool for CapturePaneTool {
         options.delay = delay;
 
         let output = self.execution.capture_pane(options).await?;
-        Ok(truncate_output_tail(&output, MAX_CAPTURE_LEN))
+        wrap_result(truncate_output_tail(&output, MAX_CAPTURE_LEN))
     }
 }
 

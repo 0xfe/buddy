@@ -8,6 +8,7 @@ pub mod capture_pane;
 pub mod execution;
 pub mod fetch;
 pub mod files;
+pub mod result_envelope;
 pub mod search;
 pub mod send_keys;
 pub mod shell;

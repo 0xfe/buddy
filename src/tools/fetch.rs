@@ -9,6 +9,7 @@ use std::net::IpAddr;
 use std::time::Duration;
 use tokio::net::lookup_host;
 
+use super::result_envelope::wrap_result;
 use super::shell::ShellApprovalBroker;
 use super::{Tool, ToolContext};
 use crate::error::ToolError;
@@ -103,7 +104,7 @@ impl Tool for FetchTool {
         if self.confirm {
             let approved = if let Some(approval) = &self.approval {
                 approval
-                    .request(format!("fetch {}", url.as_str()))
+                    .request(format!("fetch {}", url.as_str()), None)
                     .await
                     .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?
             } else {
@@ -121,7 +122,7 @@ impl Tool for FetchTool {
                 matches!(input.trim().to_ascii_lowercase().as_str(), "y" | "yes")
             };
             if !approved {
-                return Ok("Fetch request denied by user.".to_string());
+                return wrap_result("Fetch request denied by user.");
             }
         }
 
@@ -135,7 +136,7 @@ impl Tool for FetchTool {
             .await
             .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
 
-        Ok(truncate_body(&body))
+        wrap_result(truncate_body(&body))
     }
 }
 
@@ -254,6 +255,10 @@ async fn validate_url_policy(
 mod tests {
     use super::*;
     use tokio::net::TcpListener;
+
+    fn parse_envelope(result: &str) -> serde_json::Value {
+        serde_json::from_str(result).expect("tool result envelope")
+    }
 
     #[test]
     fn truncate_body_keeps_short_text() {
@@ -385,6 +390,9 @@ mod tests {
         req.deny();
 
         let result = join.await.expect("join should succeed").unwrap();
-        assert_eq!(result, "Fetch request denied by user.");
+        assert_eq!(
+            parse_envelope(&result)["result"],
+            "Fetch request denied by user."
+        );
     }
 }

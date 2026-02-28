@@ -8,6 +8,8 @@ use serde::Deserialize;
 use std::time::Duration;
 
 use super::execution::{ExecutionContext, SendKeysOptions};
+use super::result_envelope::wrap_result;
+use super::shell::RiskLevel;
 use super::{Tool, ToolContext};
 use crate::error::ToolError;
 use crate::types::{FunctionDefinition, ToolDefinition};
@@ -26,6 +28,10 @@ struct Args {
     enter: Option<bool>,
     delay: Option<String>,
     delay_ms: Option<u64>,
+    risk: RiskLevel,
+    mutation: bool,
+    privesc: bool,
+    why: String,
 }
 
 #[async_trait]
@@ -69,8 +75,26 @@ impl Tool for SendKeysTool {
                             "type": "integer",
                             "minimum": 0,
                             "description": "Optional delay before sending keys in milliseconds."
+                        },
+                        "risk": {
+                            "type": "string",
+                            "enum": ["low", "medium", "high"],
+                            "description": "Estimated risk level for this key injection."
+                        },
+                        "mutation": {
+                            "type": "boolean",
+                            "description": "True when this key injection mutates system state."
+                        },
+                        "privesc": {
+                            "type": "boolean",
+                            "description": "True when the action uses privilege escalation."
+                        },
+                        "why": {
+                            "type": "string",
+                            "description": "Short reason for sending these keys, including risk/privesc justification."
                         }
-                    }
+                    },
+                    "required": ["risk", "mutation", "privesc", "why"]
                 }),
             },
         }
@@ -79,6 +103,12 @@ impl Tool for SendKeysTool {
     async fn execute(&self, arguments: &str, _context: &ToolContext) -> Result<String, ToolError> {
         let args: Args = serde_json::from_str(arguments)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
+        if args.why.trim().is_empty() {
+            return Err(ToolError::InvalidArguments(
+                "send-keys.why must be a non-empty string".to_string(),
+            ));
+        }
+        let _ = (args.risk, args.mutation, args.privesc);
         let delay = resolve_delay(args.delay.as_deref(), args.delay_ms)?;
         let options = SendKeysOptions {
             target: args.target,
@@ -87,7 +117,7 @@ impl Tool for SendKeysTool {
             press_enter: args.enter.unwrap_or(false),
             delay,
         };
-        self.execution.send_keys(options).await
+        wrap_result(self.execution.send_keys(options).await?)
     }
 }
 
@@ -161,5 +191,16 @@ mod tests {
             parse_delay_duration("2m").expect("parse"),
             Duration::from_secs(120)
         );
+    }
+
+    #[tokio::test]
+    async fn execute_missing_required_metadata_returns_error() {
+        let err = SendKeysTool {
+            execution: ExecutionContext::local(),
+        }
+        .execute(r#"{"keys":["C-c"]}"#, &ToolContext::empty())
+        .await
+        .expect_err("missing metadata should fail");
+        assert!(err.to_string().contains("invalid arguments"));
     }
 }
