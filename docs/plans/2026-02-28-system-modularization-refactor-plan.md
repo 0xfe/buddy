@@ -38,6 +38,8 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 4. `src/runtime.rs` (1690 LOC): runtime schema + actor + approvals + session/model command handling.
 5. `src/config.rs` (1561 LOC) and `src/auth.rs` (1090 LOC): large multi-responsibility modules.
 6. `src/api/client.rs` + `src/api/responses.rs`: transport/auth/retry/protocol parsing mixed.
+7. UI rendering pipeline is split across `src/render.rs`, `src/tui/*`, `src/cli_event_renderer/*`, and `src/repl_support/*`, which leaks presentation/state concerns across too many modules.
+8. Tmux lifecycle logic is primarily in `src/tools/execution/tmux/*`, but higher-level runtime/startup and tool-facing call sites still reason about tmux concepts directly instead of using one shared tmux abstraction.
 
 ## Target Module Topology
 
@@ -57,6 +59,15 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 3. `src/repl_support/policy.rs`
 4. `src/cli_event_renderer/handlers/*.rs` with one public reducer entrypoint.
 
+### UI and REPL boundaries (new consolidation target)
+
+1. `src/ui/mod.rs` as the single presentation facade for terminal rendering.
+2. `src/ui/render_sink.rs` for `RenderSink`, progress handles, and shared rendering contracts.
+3. `src/ui/terminal/*` for low-level styling/markdown/spinner/input helpers (current `tui/*` internals).
+4. `src/ui/runtime/*` for runtime-event-to-render mapping (current `cli_event_renderer/*` handlers/reducer).
+5. `src/repl/mod.rs` for REPL state machine and command dispatch concerns currently spread across `repl_support` and `app/repl_loop`.
+6. Keep `src/render.rs` only as a temporary backward-compat shim during migration, then remove it once call sites are moved.
+
 ### Execution backend
 
 1. `src/tools/execution/mod.rs` (public facade)
@@ -65,6 +76,14 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 4. `src/tools/execution/process.rs`
 5. `src/tools/execution/backend/{local,container,ssh,file_io}.rs`
 6. `src/tools/execution/tmux/{pane,prompt,capture,send_keys,run}.rs`
+
+### Shared tmux infrastructure (new consolidation target)
+
+1. `src/tmux/mod.rs` as a neutral tmux domain API (session/pane discovery, ensure/create, capture, send-keys, prompt readiness).
+2. `src/tmux/types.rs` for tmux target/session/pane identifiers and errors.
+3. `src/tmux/driver.rs` for command transport adapters (local/container/ssh).
+4. `src/tmux/workflow.rs` for behavior-level flows (create-or-reuse `shared` pane, attach metadata, busy-pane checks, startup capture).
+5. `src/tools/execution/tmux/*` becomes a thin adapter layer (or is folded into `src/tmux/*`) so tmux behavior is defined once and reused by tools and startup/runtime flows.
 
 ### Config/auth
 
@@ -167,10 +186,24 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
   1. Docs match code structure.
   2. New contributors can navigate module boundaries without reverse-engineering.
 
+## M8: UI/REPL/Tmux Consolidation
+
+- [ ] M8.1 Introduce `src/ui` facade and migrate `RenderSink` + renderer contracts from `src/render.rs`; keep `render.rs` as compat shim during transition. — `<commit-id>`
+- [ ] M8.2 Move runtime-event rendering reducer/handlers (`cli_event_renderer`) under `src/ui/runtime/*` and isolate pure reducer tests from terminal styling tests. — `<commit-id>`
+- [ ] M8.3 Move REPL state/policy/task helpers (`repl_support`) into `src/repl/*` with explicit interfaces consumed by `app/repl_loop`. — `<commit-id>`
+- [ ] M8.4 Extract shared tmux domain module (`src/tmux/*`) and route startup/runtime/tool tmux operations through one API surface. — `<commit-id>`
+- [ ] M8.5 Remove migration shims (`src/render.rs` and legacy module aliases) once all internal call sites are on the new boundaries. — `<commit-id>`
+- Acceptance gate:
+  1. `main.rs` no longer imports mixed rendering/state helper modules directly (`render` + `tui` + `cli_event_renderer` + `repl_support`); it depends on `ui` and `repl` facades only.
+  2. Tmux behavior (session reuse/create, shared pane targeting, attach metadata, capture/send-keys semantics) is defined once and reused uniformly.
+  3. Existing rendering/approval/task UX behavior remains stable with regression coverage.
+  4. `cargo test` green.
+
 ## Feedback Alignment Notes
 
 1. No major disagreement with the remediation priorities; this plan intentionally keeps behavior-stability and test-first sequencing as top constraints.
 2. The only explicit policy choice is to preserve currently effective runtime precedence (`CLI > loaded config`) even if comments/docs in older locations implied otherwise.
+3. Additional architecture feedback accepted: renderer/TUI/REPL and tmux concerns will be consolidated under explicit facades (`ui`, `repl`, `tmux`) in `M8` after core decomposition milestones.
 
 ## Test Strategy
 
@@ -196,3 +229,4 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 - 2026-02-28: Completed `M3.3`: moved tmux logic into `tmux/{pane,prompt,capture,send_keys,run}.rs` and kept behavior stable across local/container/ssh flows. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `93fb3f2`.
 - 2026-02-28: Completed `M3.4`: moved backend implementations to `backend/{local,container,ssh}.rs`, including ssh lifecycle cleanup/test hooks and local tmux safety helpers. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `bfb153c`.
 - 2026-02-28: Completed `M3.5`: relocated execution regression tests into process/backend/tmux modules and added explicit no-wait constraint tests for non-tmux container/ssh backends. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `21a7a6a`.
+- 2026-02-28: Incorporated architecture feedback into this plan: documented UI/REPL boundary smell (`render`/`tui`/`cli_event_renderer`/`repl_support`) and cross-cutting tmux abstraction needs, then added `M8` with concrete extraction gates (`ui`, `repl`, `tmux`). Validation: doc-only planning update. Commit: `<commit-id>`.
