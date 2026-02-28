@@ -37,6 +37,7 @@ pub(crate) fn render_shell_approval_request(
     risk: Option<&str>,
     why: Option<&str>,
 ) {
+    // Render summary line first, then optional reason, then the command block itself.
     let (risk_label, risk_color) = approval_risk_style(risk);
     if color {
         eprintln!(
@@ -132,6 +133,7 @@ mod tests {
 
     #[test]
     fn approval_prompt_actor_prefers_ssh_then_container_then_local() {
+        // Priority order should prefer explicit remote/container context over local default.
         assert_eq!(
             approval_prompt_actor(Some("dev@host"), Some("box"), None),
             "ssh:dev@host"
@@ -145,6 +147,7 @@ mod tests {
 
     #[test]
     fn approval_prompt_actor_includes_tmux_session_when_available() {
+        // tmux context should be appended when approval is scoped to a shared pane.
         let info = TmuxAttachInfo {
             session: "buddy-a1b2".to_string(),
             window: "shared",
@@ -158,6 +161,7 @@ mod tests {
 
     #[test]
     fn approval_command_block_formats_multiline_commands() {
+        // Multiline commands should preserve subsequent lines with continuation indent.
         let block = format_approval_command_block("echo 1\necho 2");
         assert_eq!(block, "$ echo 1\n  echo 2");
     }

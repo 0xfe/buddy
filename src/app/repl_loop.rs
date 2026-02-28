@@ -40,11 +40,17 @@ pub(crate) enum SharedSlashDispatchOutcome {
 
 /// Mutable state used while dispatching shared slash commands.
 pub(crate) struct SharedSlashDispatchContext<'a> {
+    /// Runtime command sender.
     pub(crate) runtime: &'a BuddyRuntimeHandle,
+    /// Mutable background-task list.
     pub(crate) background_tasks: &'a mut [BackgroundTask],
+    /// Pending approval state slot.
     pub(crate) pending_approval: &'a mut Option<PendingApproval>,
+    /// Approval being answered in the current prompt, if any.
     pub(crate) active_approval: Option<&'a PendingApproval>,
+    /// Current approval policy used for `/approve` commands.
     pub(crate) approval_policy: &'a mut ApprovalPolicy,
+    /// Invocation mode (normal REPL vs approval prompt).
     pub(crate) mode: SharedSlashDispatchMode,
 }
 
@@ -54,6 +60,8 @@ pub(crate) async fn dispatch_shared_slash_action(
     action: &term_ui::SlashCommandAction,
     context: &mut SharedSlashDispatchContext<'_>,
 ) -> SharedSlashDispatchOutcome {
+    // Shared command handling intentionally returns explicit outcomes so caller
+    // can decide whether to re-show approval prompts or continue normal input.
     let mut resolved_approval = false;
     let handled = match action {
         term_ui::SlashCommandAction::Ps => {
@@ -146,11 +154,13 @@ pub(crate) async fn dispatch_shared_slash_action(
     outcome_for_mode(context.mode, true, context.background_tasks)
 }
 
+/// Resolve final dispatch outcome after command handling for the current mode.
 fn outcome_for_mode(
     mode: SharedSlashDispatchMode,
     handled: bool,
     background_tasks: &[BackgroundTask],
 ) -> SharedSlashDispatchOutcome {
+    // Approval mode needs a requeue hint only while the task is still waiting.
     if !handled {
         return SharedSlashDispatchOutcome::Unhandled;
     }

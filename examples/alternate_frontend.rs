@@ -10,6 +10,7 @@ use buddy::runtime::{
 };
 use buddy::tools::ToolRegistry;
 
+/// Demonstrate a minimal frontend that submits one prompt and prints runtime events.
 #[tokio::main]
 async fn main() -> Result<(), String> {
     let prompt = std::env::args().skip(1).collect::<Vec<_>>().join(" ");
@@ -32,6 +33,10 @@ async fn main() -> Result<(), String> {
         })
         .await?;
 
+    // Event loop walkthrough:
+    // 1) stream model/tool events to stdout for frontend visibility,
+    // 2) stop on task completion,
+    // 3) fail fast on runtime/task errors.
     while let Some(envelope) = events.recv().await {
         match envelope.event {
             RuntimeEvent::Model(model_event) => {

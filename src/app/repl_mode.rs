@@ -36,23 +36,38 @@ use buddy::ui::terminal as term_ui;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 
+/// Warning shown when commands requiring an idle loop are requested during background work.
 const BACKGROUND_TASK_WARNING: &str =
     "Background tasks are in progress. Allowed commands now: /ps, /kill <id>, /timeout <dur> [id], /approve <mode>, /status, /context.";
 
 /// Inputs required to start interactive REPL mode.
 pub(crate) struct ReplModeInputs<'a> {
+    /// Terminal renderer implementation for status/output.
     pub renderer: &'a Renderer,
+    /// Parsed CLI arguments used by prompt/execution targeting.
     pub cli_args: &'a crate::cli::Args,
+    /// Effective runtime configuration.
     pub config: Config,
+    /// Prepared execution context (local/ssh/container + optional tmux).
     pub execution: ExecutionContext,
+    /// Whether capture-pane/send-keys tools are available in this context.
     pub capture_pane_enabled: bool,
+    /// Bootstrapped agent instance.
     pub agent: Agent,
+    /// Optional startup resume request from CLI command.
     pub resume_request: Option<ResumeRequest>,
+    /// Shell approval request stream (present when tool confirmations are enabled).
     pub shell_approval_rx: Option<mpsc::UnboundedReceiver<ShellApprovalRequest>>,
 }
 
 /// Run the interactive REPL loop until EOF/cancel/quit.
 pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
+    // REPL-mode walkthrough:
+    // 1) initialize session/history/runtime wiring,
+    // 2) drain/render runtime events and completed tasks,
+    // 3) service approval prompts with command support,
+    // 4) service normal prompt input and slash commands,
+    // 5) persist history and shutdown runtime on exit.
     let ReplModeInputs {
         renderer,
         cli_args,
@@ -130,6 +145,7 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
     let mut last_prompt_context_used_percent: Option<u16> = None;
 
     loop {
+        // Keep runtime-derived state fresh before each prompt cycle.
         enforce_task_timeouts(
             renderer,
             &runtime,
@@ -154,6 +170,7 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
         }
 
         if let Some(approval) = pending_approval.take() {
+            // Approval input mode temporarily replaces normal prompt handling.
             let approval_actor = approval_prompt_actor(
                 cli_args.ssh.as_deref(),
                 cli_args.container.as_deref(),
@@ -209,6 +226,7 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
             let approval_input = approval_input.trim();
             eprintln!();
             if let Some(decision) = parse_approval_decision(approval_input) {
+                // Direct y/n responses resolve the pending runtime approval.
                 let task_id = approval.task_id;
                 if let Err(err) = send_approval_decision(&runtime, &approval, decision).await {
                     renderer.warn(&err);
@@ -219,6 +237,7 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
             }
 
             if let Some(action) = term_ui::parse_slash_command(approval_input) {
+                // Approval prompt supports a restricted slash-command subset.
                 match &action {
                     term_ui::SlashCommandAction::Status => {
                         let guard = agent.try_lock().ok();
@@ -341,6 +360,7 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
         let has_background_tasks = !background_tasks.is_empty();
 
         if let Some(action) = term_ui::parse_slash_command(input) {
+            // Normal prompt slash-command dispatch, with shared handlers first.
             match &action {
                 term_ui::SlashCommandAction::Status => {
                     let guard = agent.try_lock().ok();
@@ -463,6 +483,7 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
             continue;
         }
 
+        // Submit user prompt as a background runtime task.
         set_progress_enabled(false);
         if let Err(err) = runtime
             .send(RuntimeCommand::SubmitPrompt {
@@ -490,6 +511,7 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
     0
 }
 
+/// Render `/help` slash-command listing.
 fn render_help(renderer: &dyn RenderSink) {
     renderer.section("slash commands");
     for cmd in &term_ui::SLASH_COMMANDS {
@@ -498,6 +520,7 @@ fn render_help(renderer: &dyn RenderSink) {
     eprintln!();
 }
 
+/// Render `/status` output for config/runtime/task metadata.
 fn render_status(
     renderer: &dyn RenderSink,
     config: &Config,
@@ -542,6 +565,7 @@ fn render_status(
     eprintln!();
 }
 
+/// Render `/context` output from either live agent state or runtime snapshot.
 fn render_context(
     renderer: &dyn RenderSink,
     agent: Option<&Agent>,
@@ -607,6 +631,7 @@ fn render_context(
     eprintln!();
 }
 
+/// Return enabled tool names as a printable comma-separated string.
 fn enabled_tools(config: &Config, capture_pane_enabled: bool) -> String {
     let tools = enabled_tool_names(config, capture_pane_enabled);
     if tools.is_empty() {
@@ -616,6 +641,7 @@ fn enabled_tools(config: &Config, capture_pane_enabled: bool) -> String {
     }
 }
 
+/// Return enabled tool identifiers in deterministic display order.
 fn enabled_tool_names(config: &Config, capture_pane_enabled: bool) -> Vec<&'static str> {
     let mut tools = Vec::new();
     if config.tools.shell_enabled {
@@ -639,6 +665,7 @@ fn enabled_tool_names(config: &Config, capture_pane_enabled: bool) -> Vec<&'stat
     tools
 }
 
+/// Estimate current context-window usage percentage from live agent state.
 fn context_used_percent(agent: &Agent) -> Option<u16> {
     let tracker = agent.tracker();
     if tracker.context_limit == 0 {
@@ -649,6 +676,7 @@ fn context_used_percent(agent: &Agent) -> Option<u16> {
     Some(display_context_percent(percent))
 }
 
+/// Convert floating-point context usage into a clamped user-facing percentage.
 fn display_context_percent(percent: f64) -> u16 {
     if percent.is_nan() || percent <= 0.0 {
         return 0;
@@ -669,6 +697,7 @@ mod tests {
 
     #[test]
     fn context_used_percent_rounds_and_handles_zero_limit() {
+        // Percentage helper should produce non-zero usage and honor zero-limit sentinel.
         let mut cfg = Config::default();
         cfg.api.context_limit = Some(100);
         let mut agent = Agent::new(cfg, ToolRegistry::new());

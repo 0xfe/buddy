@@ -28,12 +28,19 @@ pub(crate) fn collect_runtime_events(
 
 /// Render runtime events into task/session/context state mutations.
 pub(crate) struct ProcessRuntimeEventsContext<'a> {
+    /// Render target for runtime-event side effects.
     pub(crate) renderer: &'a dyn RenderSink,
+    /// In-flight background tasks.
     pub(crate) background_tasks: &'a mut Vec<BackgroundTask>,
+    /// Completed background tasks pending display.
     pub(crate) completed_tasks: &'a mut Vec<CompletedBackgroundTask>,
+    /// Pending approval request, if one is active.
     pub(crate) pending_approval: &'a mut Option<PendingApproval>,
+    /// Mutable runtime config mirror.
     pub(crate) config: &'a mut Config,
+    /// Active session identifier.
     pub(crate) active_session: &'a mut String,
+    /// Runtime token/context usage state.
     pub(crate) runtime_context: &'a mut RuntimeContextState,
 }
 
@@ -90,6 +97,7 @@ pub(crate) fn background_liveness_line(tasks: &[BackgroundTask]) -> Option<Strin
     let spinner = background_liveness_spinner(tasks);
 
     if tasks.len() == 1 {
+        // Single-task mode uses richer state wording for readability.
         let task = &tasks[0];
         let timeout_suffix = timeout_suffix_for_task(task);
         let body = match &task.state {
@@ -169,6 +177,10 @@ pub(crate) async fn request_task_cancellation(
     pending_approval: &mut Option<PendingApproval>,
     task_id: u64,
 ) -> bool {
+    // Cancellation order:
+    // 1) resolve active approval (deny) if this task is awaiting approval,
+    // 2) send cancel command to runtime,
+    // 3) mark local task state as cancelling.
     let Some(task) = tasks.iter_mut().find(|task| task.id == task_id) else {
         return false;
     };

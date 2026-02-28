@@ -20,22 +20,40 @@
 //! # }
 //! ```
 
+/// Core agent loop and orchestration primitives.
 pub mod agent;
+/// OpenAI-compatible HTTP client wrappers.
 pub mod api;
+/// Authentication and login-token helpers.
 pub mod auth;
+/// Config loading, defaults, and profile selection.
 pub mod config;
+/// Error types used across crate modules.
 pub mod error;
+/// Startup validation checks.
 pub mod preflight;
+/// System prompt rendering utilities.
 pub mod prompt;
+/// REPL state and command helper logic.
 pub mod repl;
+/// Runtime actor/event protocol.
 pub mod runtime;
+/// Session persistence and loading.
 pub mod session;
 #[cfg(test)]
+/// Shared testing utilities compiled only for tests.
 pub mod testsupport;
+/// Shared text formatting helpers.
 pub mod textutil;
+/// tmux helper integration.
 pub mod tmux;
+/// Token estimation and tracking.
 pub mod tokens;
+/// Built-in tool implementations and registry.
 pub mod tools;
+/// Terminal UI primitives.
 pub mod tui;
+/// API model types for chat/completions payloads.
 pub mod types;
+/// UI facade traits and runtime render adapters.
 pub mod ui;

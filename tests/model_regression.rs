@@ -16,11 +16,13 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 
+/// Embedded default config template used as the regression test source-of-truth.
 const TEMPLATE_BUDDY_TOML: &str = include_str!("../src/templates/buddy.toml");
 
 #[tokio::test]
 #[ignore = "network regression suite; run explicitly"]
 async fn default_template_profiles_round_trip() {
+    // Validate template-derived profiles end-to-end against live providers.
     assert_no_global_runtime_overrides().expect("clean runtime env required");
 
     let path = write_temp_template_config().expect("temp config");
@@ -28,6 +30,7 @@ async fn default_template_profiles_round_trip() {
     let profile_names = configured_profile_names(&config);
 
     let mut failures = Vec::<String>::new();
+    // Probe each configured profile independently to surface profile-local regressions.
     for profile in &profile_names {
         eprintln!("[model-regression] profile={profile}");
         match run_profile_probe(&mut config, profile).await {
@@ -50,6 +53,7 @@ async fn default_template_profiles_round_trip() {
     }
 }
 
+/// Ensure global env overrides are not masking template-profile behavior.
 fn assert_no_global_runtime_overrides() -> Result<(), String> {
     let mut blocked = Vec::<String>::new();
     for key in [
@@ -78,6 +82,7 @@ fn assert_no_global_runtime_overrides() -> Result<(), String> {
     }
 }
 
+/// Run a minimal no-tools request against one selected profile.
 async fn run_profile_probe(config: &mut Config, profile_name: &str) -> Result<(), String> {
     select_model_profile(config, profile_name)
         .map_err(|err| format!("failed selecting profile: {err}"))?;
@@ -129,6 +134,7 @@ async fn run_profile_probe(config: &mut Config, profile_name: &str) -> Result<()
     Ok(())
 }
 
+/// Verify auth prerequisites for the selected profile before issuing network requests.
 fn profile_auth_preflight(config: &Config, profile_name: &str) -> Result<(), String> {
     let profile = config
         .models
@@ -172,10 +178,12 @@ fn profile_auth_preflight(config: &Config, profile_name: &str) -> Result<(), Str
     Ok(())
 }
 
+/// Return configured model profile names from loaded config.
 fn configured_profile_names(config: &Config) -> Vec<String> {
     config.models.keys().cloned().collect()
 }
 
+/// Materialize the template config into a unique temp file for this test run.
 fn write_temp_template_config() -> Result<PathBuf, String> {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)

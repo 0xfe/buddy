@@ -17,6 +17,7 @@ pub(crate) async fn handle_session_command(
     verb: Option<&str>,
     name: Option<&str>,
 ) {
+    // `/session` routes to list/resume/new and emits user-facing warnings for invalid forms.
     let action = verb.unwrap_or("list").trim().to_ascii_lowercase();
     match action.as_str() {
         "" | "list" => match session_store.list() {
@@ -158,6 +159,10 @@ pub(crate) fn initialize_active_session(
     agent: &mut Agent,
     resume_request: Option<ResumeRequest>,
 ) -> Result<(buddy::repl::SessionStartupState, String), String> {
+    // Startup behavior:
+    // - no resume request => create new session snapshot,
+    // - `--last` => resolve/store most recently used session,
+    // - explicit id => load/store requested session.
     match resume_request {
         None => {
             let snapshot = agent.snapshot_session();
@@ -207,6 +212,7 @@ mod tests {
 
     #[test]
     fn resume_request_validation_rejects_ambiguous_forms() {
+        // CLI parser should reject mutually-exclusive `session_id + --last` input.
         let err = resume_request_from_command(Some(&cli::Command::Resume {
             session_id: Some("abc".to_string()),
             last: true,

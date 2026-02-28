@@ -15,6 +15,10 @@ pub(crate) async fn handle_model_command(
     runtime: &BuddyRuntimeHandle,
     selector: Option<&str>,
 ) {
+    // `/model` flow:
+    // 1) choose target profile (selector or picker),
+    // 2) skip if already active,
+    // 3) submit runtime switch and sync local config.
     if config.models.is_empty() {
         renderer.warn("No configured model profiles. Add `[models.<name>]` entries to buddy.toml.");
         return;
@@ -192,6 +196,7 @@ mod tests {
 
     #[test]
     fn resolve_model_profile_selector_accepts_index_and_name() {
+        // Selector parser should accept both explicit names and 1-based indices.
         let mut cfg = Config::default();
         cfg.models.insert(
             "kimi".to_string(),
@@ -212,6 +217,7 @@ mod tests {
 
     #[test]
     fn resolve_model_profile_selector_accepts_slash_prefixed_input() {
+        // Parser should tolerate full `/model ...` forms from command history/paste.
         let mut cfg = Config::default();
         cfg.models.insert(
             "kimi".to_string(),
@@ -232,6 +238,7 @@ mod tests {
 
     #[test]
     fn resolve_model_profile_selector_rejects_unknown() {
+        // Unknown selectors should return a user-facing guidance message.
         let cfg = Config::default();
         let names = configured_model_profile_names(&cfg);
         let err = resolve_model_profile_selector(&cfg, &names, "missing").unwrap_err();

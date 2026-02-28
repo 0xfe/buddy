@@ -60,6 +60,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[cfg(test)]
 use tokio::sync::mpsc;
 
+/// Enforce non-interactive `exec` safety defaults for shell tool confirmations.
 fn enforce_exec_shell_guardrails(
     is_exec_command: bool,
     dangerously_auto_approve: bool,
@@ -81,7 +82,12 @@ fn enforce_exec_shell_guardrails(
     )
 }
 
+/// Top-level CLI entrypoint that dispatches init/login/exec/repl flows.
 pub(crate) async fn run(args: crate::cli::Args) -> i32 {
+    // Entrypoint walkthrough:
+    // 1) handle init/login early-return commands,
+    // 2) load + validate config/runtime setup,
+    // 3) dispatch into one-shot exec mode or interactive REPL mode.
     let bootstrap_renderer = Renderer::new(!args.no_color);
     if let Some(cli::Command::Init { force }) = args.command.as_ref() {
         if let Err(msg) = run_init_flow(&bootstrap_renderer, *force) {
@@ -149,28 +155,43 @@ pub(crate) async fn run(args: crate::cli::Args) -> i32 {
     .await
 }
 
+/// Loaded config plus derived warnings/startup resume request.
 struct LoadedConfigState {
+    /// Effective runtime configuration after CLI overrides.
     config: Config,
+    /// User-facing warnings collected during config/auth diagnostics.
     warnings: Vec<String>,
+    /// Optional session resume request parsed from CLI command.
     resume_request: Option<buddy::repl::ResumeRequest>,
 }
 
+/// Runtime-ready wiring produced before entering exec/repl flows.
 struct RuntimeSetup {
+    /// Effective runtime configuration.
     config: Config,
+    /// Execution backend context (local/ssh/container/tmux).
     execution: ExecutionContext,
+    /// Whether capture-pane/send-keys can be exposed.
     capture_pane_enabled: bool,
+    /// Agent instance bound to the configured tool registry.
     agent: Agent,
+    /// Optional startup session resume request.
     resume_request: Option<buddy::repl::ResumeRequest>,
+    /// Shell approval request stream when interactive confirmations are enabled.
     shell_approval_rx:
         Option<tokio::sync::mpsc::UnboundedReceiver<buddy::tools::shell::ShellApprovalRequest>>,
 }
 
+/// Tool registry plus optional shell-approval channel wiring.
 struct ToolSetup {
+    /// Registered tool implementations for the agent.
     tools: ToolRegistry,
+    /// Shell approval request receiver, if confirmations are enabled.
     shell_approval_rx:
         Option<tokio::sync::mpsc::UnboundedReceiver<buddy::tools::shell::ShellApprovalRequest>>,
 }
 
+/// Load config, apply CLI overrides, and collect startup diagnostics/warnings.
 fn load_config_state(args: &crate::cli::Args) -> Result<LoadedConfigState, String> {
     if let Err(err) = ensure_default_global_config() {
         eprintln!("warning: failed to initialize ~/.config/buddy/buddy.toml: {err}");
@@ -201,6 +222,7 @@ fn load_config_state(args: &crate::cli::Args) -> Result<LoadedConfigState, Strin
     })
 }
 
+/// Apply CLI runtime overrides that intentionally outrank config files.
 fn apply_cli_overrides(args: &crate::cli::Args, config: &mut Config) -> Result<(), String> {
     if let Some(model) = &args.model {
         if config.models.contains_key(model) {
@@ -221,11 +243,17 @@ fn apply_cli_overrides(args: &crate::cli::Args, config: &mut Config) -> Result<(
     Ok(())
 }
 
+/// Validate runtime prerequisites and build execution/tools/agent wiring.
 async fn prepare_runtime_setup(
     args: &crate::cli::Args,
     renderer: &dyn RenderSink,
     mut loaded: LoadedConfigState,
 ) -> Result<RuntimeSetup, String> {
+    // Setup sequence:
+    // 1) validate profile and execution flags,
+    // 2) initialize execution context,
+    // 3) render system prompt with tool target metadata,
+    // 4) build tool registry and agent.
     if loaded.config.api.base_url.is_empty() {
         return Err(
             "No API base URL configured. Set models.<name>.api_base_url in buddy.toml or BUDDY_BASE_URL env var."
@@ -267,6 +295,7 @@ async fn prepare_runtime_setup(
     })
 }
 
+/// Validate CLI execution-target flags against enabled tool capabilities.
 fn validate_execution_target_flags(args: &crate::cli::Args, config: &Config) -> Result<(), String> {
     if (args.container.is_some() || args.ssh.is_some() || args.tmux.is_some())
         && !config.tools.shell_enabled
@@ -280,6 +309,7 @@ fn validate_execution_target_flags(args: &crate::cli::Args, config: &Config) -> 
     Ok(())
 }
 
+/// Build execution context from CLI target flags and current config.
 async fn initialize_execution_context(
     args: &crate::cli::Args,
     config: &Config,
@@ -311,6 +341,7 @@ async fn initialize_execution_context(
         .map_err(|err| format!("failed to initialize local tmux execution: {err}"))
 }
 
+/// Render and install the final system prompt string for this invocation.
 fn configure_system_prompt(
     config: &mut Config,
     args: &crate::cli::Args,
@@ -331,6 +362,7 @@ fn configure_system_prompt(
     });
 }
 
+/// Register tools according to config flags and execution capabilities.
 fn build_tools(
     config: &Config,
     execution: &ExecutionContext,
@@ -396,6 +428,7 @@ fn build_tools(
     }
 }
 
+/// Handle `buddy init` flow and render user-facing status messages.
 fn run_init_flow(renderer: &dyn RenderSink, force: bool) -> Result<(), String> {
     match initialize_default_global_config(force)
         .map_err(|e| format!("failed to initialize ~/.config/buddy: {e}"))?
@@ -420,6 +453,7 @@ fn run_init_flow(renderer: &dyn RenderSink, force: bool) -> Result<(), String> {
     }
 }
 
+/// Handle `buddy login` health/reset/device-auth flow.
 pub(crate) async fn run_login_flow(
     renderer: &dyn RenderSink,
     config: &Config,
@@ -427,6 +461,10 @@ pub(crate) async fn run_login_flow(
     reset: bool,
     check: bool,
 ) -> Result<(), String> {
+    // Login flow:
+    // 1) select profile/provider and render saved-login health,
+    // 2) optionally reset existing credentials,
+    // 3) run OpenAI device flow and persist resulting tokens.
     if config.models.is_empty() {
         return Err(
             "No configured model profiles. Add `[models.<name>]` entries to buddy.toml."
@@ -533,6 +571,7 @@ pub(crate) async fn run_login_flow(
     Ok(())
 }
 
+/// Return enabled tool identifiers for prompt rendering.
 fn enabled_tool_names(config: &Config, capture_pane_enabled: bool) -> Vec<&'static str> {
     let mut tools = Vec::new();
     if config.tools.shell_enabled {
@@ -563,10 +602,12 @@ mod tests {
 
     #[derive(Clone, Default)]
     struct MockRenderer {
+        /// Captured `(kind, message)` render events for assertions.
         entries: Arc<StdMutex<Vec<(String, String)>>>,
     }
 
     impl MockRenderer {
+        /// Record one render event emitted through the `RenderSink` interface.
         fn record(&self, kind: &str, message: &str) {
             self.entries
                 .lock()
@@ -574,6 +615,7 @@ mod tests {
                 .push((kind.to_string(), message.to_string()));
         }
 
+        /// Return true when a recorded event of `kind` contains `needle`.
         fn saw(&self, kind: &str, needle: &str) -> bool {
             self.entries
                 .lock()
@@ -670,6 +712,7 @@ mod tests {
 
     #[test]
     fn exec_shell_guardrails_fail_closed_without_override() {
+        // Non-interactive exec must fail when shell confirmations are still required.
         let mut tools = ToolsConfig {
             shell_enabled: true,
             shell_confirm: true,
@@ -684,6 +727,7 @@ mod tests {
 
     #[test]
     fn exec_shell_guardrails_auto_approve_disables_shell_confirm() {
+        // Dangerous override should disable confirm and return an explicit warning.
         let mut tools = ToolsConfig {
             shell_enabled: true,
             shell_confirm: true,
@@ -698,6 +742,7 @@ mod tests {
 
     #[test]
     fn parse_approval_decision_supports_yes_no_and_default_deny() {
+        // Approval parser should accept y/yes/n/empty and reject unrelated input.
         assert_eq!(
             parse_approval_decision("y"),
             Some(ApprovalDecision::Approve)
@@ -713,6 +758,7 @@ mod tests {
 
     #[test]
     fn parse_shell_tool_result_extracts_code_stdout_and_stderr() {
+        // Legacy text shell payloads should parse into structured exit/stdout/stderr fields.
         let parsed = parse_shell_tool_result("exit code: 7\nstdout:\na\nb\nstderr:\nwarn")
             .expect("shell output should parse");
         assert_eq!(parsed.exit_code, 7);
@@ -722,11 +768,13 @@ mod tests {
 
     #[test]
     fn parse_shell_tool_result_rejects_unexpected_shape() {
+        // Non-shell payloads should not produce false-positive parses.
         assert!(parse_shell_tool_result("not shell output").is_none());
     }
 
     #[test]
     fn parse_shell_tool_result_extracts_from_enveloped_json() {
+        // JSON-enveloped shell payloads should unwrap and parse successfully.
         let result = serde_json::json!({
             "harness_timestamp": { "source": "harness", "unix_millis": 123 },
             "result": {
@@ -744,6 +792,7 @@ mod tests {
 
     #[test]
     fn tool_result_display_text_unwraps_envelope_strings() {
+        // Envelope helper should return plain string results without metadata wrapper.
         let result = serde_json::json!({
             "harness_timestamp": { "source": "harness", "unix_millis": 123 },
             "result": "hello"
@@ -754,6 +803,7 @@ mod tests {
 
     #[test]
     fn background_liveness_line_includes_running_task_state() {
+        // Liveness line should include task id and running-state wording.
         let task = BackgroundTask {
             id: 3,
             kind: "prompt".into(),
@@ -769,6 +819,7 @@ mod tests {
 
     #[test]
     fn mark_task_waiting_for_approval_marks_selected_task() {
+        // Waiting-approval transition should only apply to the targeted task id.
         let mut tasks = vec![
             BackgroundTask {
                 id: 1,
@@ -806,6 +857,7 @@ mod tests {
 
     #[test]
     fn parse_duration_arg_supports_common_units() {
+        // Duration parser should accept seconds/minutes/hours/millis shorthands.
         assert_eq!(parse_duration_arg("10m"), Some(Duration::from_secs(600)));
         assert_eq!(parse_duration_arg("30"), Some(Duration::from_secs(30)));
         assert_eq!(
@@ -818,6 +870,7 @@ mod tests {
 
     #[test]
     fn update_approval_policy_parses_modes_and_duration() {
+        // `/approve` parser should support named modes and duration-based policy.
         let mut policy = ApprovalPolicy::Ask;
         assert!(update_approval_policy("all", &mut policy).is_ok());
         assert!(matches!(policy, ApprovalPolicy::All));
@@ -831,6 +884,7 @@ mod tests {
 
     #[test]
     fn apply_task_timeout_requires_task_id_when_ambiguous() {
+        // Timeout command should require explicit id when multiple tasks are running.
         let mut tasks = vec![
             BackgroundTask {
                 id: 1,
@@ -858,6 +912,7 @@ mod tests {
 
     #[test]
     fn apply_task_timeout_sets_deadline_for_single_task_without_id() {
+        // Timeout command may target the only running task when id is omitted.
         let mut tasks = vec![BackgroundTask {
             id: 9,
             kind: "prompt".into(),
@@ -875,6 +930,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_session_command_new_submits_runtime_command() {
+        // `/session new` should enqueue a runtime `SessionNew` command.
         let temp = std::env::temp_dir().join(format!(
             "buddy-main-session-test-{}",
             SystemTime::now()
@@ -896,6 +952,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_session_command_resume_without_id_warns() {
+        // `/session resume` without an id should warn and avoid runtime submission.
         let temp = std::env::temp_dir().join(format!(
             "buddy-main-session-test-missing-id-{}",
             SystemTime::now()
@@ -928,6 +985,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_session_command_resume_last_without_sessions_warns() {
+        // `/session resume last` should warn when no saved sessions exist.
         let temp = std::env::temp_dir().join(format!(
             "buddy-main-session-test-last-empty-{}",
             SystemTime::now()
@@ -960,6 +1018,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_model_command_submits_switch_command() {
+        // `/model <selector>` should submit `SwitchModel` with resolved profile.
         let (tx, mut rx) = mpsc::channel(4);
         let runtime = BuddyRuntimeHandle { commands: tx };
         let renderer = Renderer::new(false);
@@ -984,6 +1043,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_model_command_warns_on_unknown_selector() {
+        // Unknown model selector should warn and avoid runtime command dispatch.
         let (tx, mut rx) = mpsc::channel(4);
         let runtime = BuddyRuntimeHandle { commands: tx };
         let renderer = MockRenderer::default();
@@ -1000,6 +1060,7 @@ mod tests {
 
     #[test]
     fn process_runtime_events_routes_warning_to_injected_renderer() {
+        // Runtime warning events should route through the injected render sink.
         let renderer = MockRenderer::default();
         let mut events = vec![RuntimeEventEnvelope {
             seq: 1,

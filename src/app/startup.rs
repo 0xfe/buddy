@@ -107,6 +107,7 @@ mod tests {
 
     #[test]
     fn session_startup_message_is_clear() {
+        // Startup line should clearly distinguish resumed vs new sessions.
         assert_eq!(
             session_startup_message(SessionStartupState::ResumedExisting, "abcd-1234", 4),
             "using existing session \"abcd-1234\" (4% context used)"
@@ -119,6 +120,7 @@ mod tests {
 
     #[test]
     fn execution_tmux_attach_command_formats_local_target() {
+        // Local tmux targets should produce a direct attach command.
         let cmd = execution_tmux_attach_command(&TmuxAttachInfo {
             session: "buddy-ef1d".to_string(),
             window: "shared",

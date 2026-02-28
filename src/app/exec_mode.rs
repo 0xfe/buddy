@@ -17,6 +17,10 @@ pub(crate) async fn run_exec_mode(
     config: Config,
     prompt: String,
 ) -> i32 {
+    // Exec-mode flow:
+    // 1) submit exactly one prompt,
+    // 2) observe runtime events until task completion/failure,
+    // 3) print final assistant message (or error) and return exit code.
     let (runtime, mut events) = spawn_runtime_with_agent(agent, config, None, None, None);
     if let Err(err) = runtime
         .send(RuntimeCommand::SubmitPrompt {
