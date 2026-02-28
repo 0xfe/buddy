@@ -6,7 +6,7 @@ Instructions for AI agents working on this codebase.
 
 This is a Rust AI agent that works with OpenAI-compatible APIs. It is both a library crate (`src/lib.rs`) and a CLI binary (`src/main.rs`). See `DESIGN.md` for full architectural details.
 
-Maintain an ai-state.md file with whatever you (or a helper AI agent) will need to quickly understand and get working on this codebase without having to dig through it too much. It's not meant for humans, so it can be dense and compact -- be helpful to other AIs :-)
+Maintain `ai-state.md` as a compact quick-onboarding handoff for AI agents. Keep it dense, current, and short enough to scan quickly.
 
 ## Documentation
 
@@ -18,7 +18,14 @@ Keep `DESIGN.md` up to date. It must include a `## Features` section that lists 
 
 Try to keep docs updated as the system evolves.
 
-If you're working with some complicated dependencies, like libraries, or infrastructure, or special tooling, create a dedicated "tips" document under docs/ (e.g., "rust-tips.md") so you can quickly build relevant context without having to figure things out again. This is especially helpful if you had to search the internet for stuff, or had to do a lot of digging to figure out. General context can remain in `ai-state.md`.
+If you're working with complicated tooling/infrastructure/workflows, add or update short practical notes under `docs/tips/` (for example tmux, shell, testing, docs hygiene). Keep tactical details in those tip files; keep `ai-state.md` high-signal and brief.
+
+## AI state workflow
+
+- Treat `ai-state.md` as a fast cache for the next AI: current architecture map, active defaults, and immediate gotchas.
+- Do not keep a long chronological changelog there. Replace stale sections instead of appending.
+- Move deep operational guidance to `docs/tips/*.md` and long-lived planning details to `docs/plans/`.
+- Aim for a quick-scan document (roughly <= 150 lines unless there is a strong reason to exceed it).
 
 ## Build and test
 
