@@ -114,3 +114,39 @@ pub(in crate::tools::execution) fn parse_ensured_tmux_pane(
         created,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ensure_tmux_pane_script_uses_explicit_session_window_target() {
+        let script = ensure_tmux_pane_script("buddy");
+        assert!(script.contains("CREATED=0"));
+        assert!(script.contains("CREATED=1"));
+        assert!(script.contains("tmux new-session -d -s \"$SESSION\" -n \"$WINDOW\""));
+        assert!(script.contains("tmux new-window -d -t \"$SESSION\" -n \"$WINDOW\""));
+        assert!(script.contains("tmux split-window -d -P -F '#{pane_id}' -t \"$SESSION:$WINDOW\""));
+        assert!(script.contains("tmux select-pane -t \"$PANE\" -T \"$PANE_TITLE\""));
+    }
+
+    #[test]
+    fn parse_ensured_tmux_pane_reads_pane_and_created_flag() {
+        assert_eq!(
+            parse_ensured_tmux_pane("%3\n1"),
+            Some(EnsuredTmuxPane {
+                pane_id: "%3".to_string(),
+                created: true,
+            })
+        );
+        assert_eq!(
+            parse_ensured_tmux_pane("%7\n0"),
+            Some(EnsuredTmuxPane {
+                pane_id: "%7".to_string(),
+                created: false,
+            })
+        );
+        assert!(parse_ensured_tmux_pane("").is_none());
+        assert!(parse_ensured_tmux_pane("%3\n2").is_none());
+    }
+}

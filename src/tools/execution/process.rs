@@ -239,3 +239,61 @@ pub(super) fn shell_quote(s: &str) -> String {
         format!("'{}'", s.replace('\'', "'\\''"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::time::sleep;
+
+    #[test]
+    fn quote_empty() {
+        assert_eq!(shell_quote(""), "''");
+    }
+
+    #[test]
+    fn quote_with_single_quote() {
+        assert_eq!(shell_quote("a'b"), "'a'\\''b'");
+    }
+
+    #[test]
+    fn detects_podman_from_docker_version_output() {
+        let kind = docker_frontend_kind("Emulate Docker CLI using podman");
+        assert_eq!(kind, ContainerEngineKind::Podman);
+    }
+
+    #[test]
+    fn defaults_to_docker_when_podman_not_mentioned() {
+        let kind = docker_frontend_kind("Docker version 26.1.0, build deadbeef");
+        assert_eq!(kind, ContainerEngineKind::Docker);
+    }
+
+    #[test]
+    fn format_duration_prefers_human_units() {
+        assert_eq!(format_duration(Duration::from_millis(250)), "250ms");
+        assert_eq!(format_duration(Duration::from_secs(7)), "7s");
+        assert_eq!(format_duration(Duration::from_secs(120)), "2m");
+        assert_eq!(format_duration(Duration::from_secs(7200)), "2h");
+        assert_eq!(format_duration(Duration::from_millis(1250)), "1.250s");
+    }
+
+    #[tokio::test]
+    async fn run_with_wait_times_out_when_limit_hit() {
+        let result = run_with_wait(
+            async {
+                sleep(Duration::from_millis(50)).await;
+                Ok(ExecOutput {
+                    exit_code: 0,
+                    stdout: "ok".to_string(),
+                    stderr: String::new(),
+                })
+            },
+            ShellWait::WaitWithTimeout(Duration::from_millis(1)),
+            "timed out",
+        )
+        .await;
+        match result {
+            Ok(_) => panic!("expected timeout error"),
+            Err(err) => assert!(err.to_string().contains("timed out"), "got: {err}"),
+        }
+    }
+}

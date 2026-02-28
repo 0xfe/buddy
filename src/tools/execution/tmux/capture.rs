@@ -236,3 +236,56 @@ pub(in crate::tools::execution) async fn wait_for_container_tmux_any_prompt(
         "timed out waiting for tmux prompt initialization".into(),
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_capture_pane_command_uses_defaults() {
+        let cmd = build_capture_pane_command("%1", &CapturePaneOptions::default());
+        assert_eq!(cmd, "tmux capture-pane -p -J -t '%1'");
+    }
+
+    #[test]
+    fn full_history_capture_options_sets_explicit_history_bounds() {
+        let opts = full_history_capture_options();
+        assert_eq!(opts.start.as_deref(), Some("-"));
+        assert_eq!(opts.end.as_deref(), Some("-"));
+    }
+
+    #[test]
+    fn build_capture_pane_command_honors_requested_flags() {
+        let cmd = build_capture_pane_command(
+            "%11",
+            &CapturePaneOptions {
+                target: None,
+                start: Some("-40".to_string()),
+                end: Some("20".to_string()),
+                join_wrapped_lines: false,
+                preserve_trailing_spaces: true,
+                include_escape_sequences: true,
+                escape_non_printable: true,
+                include_alternate_screen: true,
+                delay: Duration::from_millis(250),
+            },
+        );
+        assert_eq!(
+            cmd,
+            "tmux capture-pane -p -N -e -C -a -S '-40' -E '20' -t '%11'"
+        );
+    }
+
+    #[test]
+    fn fallback_from_alternate_screen_only_when_requested() {
+        let err = ToolError::ExecutionFailed(
+            "failed to capture tmux pane: no alternate screen".to_string(),
+        );
+        let mut with_alt = CapturePaneOptions::default();
+        with_alt.include_alternate_screen = true;
+        assert!(should_fallback_from_alternate_screen(&with_alt, &err));
+
+        let without_alt = CapturePaneOptions::default();
+        assert!(!should_fallback_from_alternate_screen(&without_alt, &err));
+    }
+}

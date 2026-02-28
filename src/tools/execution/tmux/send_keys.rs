@@ -189,3 +189,24 @@ pub(in crate::tools::execution) fn build_tmux_send_enter_command(target: &str) -
     let target_q = shell_quote(target);
     format!("tmux send-keys -t {target_q} Enter")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_tmux_send_key_commands_quote_targets_and_values() {
+        assert_eq!(
+            build_tmux_send_literal_command("%1", "abc"),
+            "tmux send-keys -l -t '%1' 'abc'"
+        );
+        assert_eq!(
+            build_tmux_send_keys_command("%1", &["C-c".to_string(), "Enter".to_string()]),
+            "tmux send-keys -t '%1' 'C-c' 'Enter'"
+        );
+        assert_eq!(
+            build_tmux_send_enter_command("%1"),
+            "tmux send-keys -t '%1' Enter"
+        );
+    }
+}

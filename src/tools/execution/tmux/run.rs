@@ -413,3 +413,129 @@ fn unique_token(target: &str, remote_command: &str) -> String {
         .hash(&mut hasher);
     format!("{:016x}", hasher.finish())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_prompt_marker_extracts_id_and_status() {
+        let line = "[buddy 42: 127] dev@host:~$ ";
+        let marker = parse_prompt_marker(line).expect("prompt marker");
+        assert_eq!(marker.command_id, 42);
+        assert_eq!(marker.exit_code, 127);
+        let legacy_line = "[agent 9: 0] dev@host:~$ ";
+        let legacy_marker = parse_prompt_marker(legacy_line).expect("legacy prompt marker");
+        assert_eq!(legacy_marker.command_id, 9);
+        assert_eq!(legacy_marker.exit_code, 0);
+        assert!(parse_prompt_marker("dev@host:~$").is_none());
+    }
+
+    #[test]
+    fn latest_prompt_marker_uses_most_recent_marker() {
+        let capture = "[buddy 8: 0] one\noutput\n[buddy 9: 1] two";
+        let marker = latest_prompt_marker(capture).expect("latest marker");
+        assert_eq!(marker.command_id, 9);
+        assert_eq!(marker.exit_code, 1);
+    }
+
+    #[test]
+    fn parse_tmux_output_between_prompt_markers() {
+        let capture = format!(
+            "if [ \"${{BUDDY_PROMPT_LAYOUT:-}}\" != \"v3\" ]; then ... fi\n\
+[buddy 1: 0] dev@host:~$ \n\
+dev@host:~$ ls -la\n\
+old-output\n\
+[buddy 2: 0] dev@host:~$ \n\
+dev@host:~$ pwd\n\
+/home/mo\n\
+[buddy 3: 0] dev@host:~$ \n\
+dev@host:~$ ls -l\n\
+total 8\n\
+file.txt\n\
+err.txt\n\
+[buddy 4: 0] dev@host:~$ "
+        );
+        let out = parse_tmux_capture_output(&capture, 3, "ls -l")
+            .expect("should parse prompts")
+            .expect("should parse output");
+        assert_eq!(out.exit_code, 0);
+        assert!(out.stdout.contains("total 8"));
+        assert!(out.stdout.contains("file.txt"));
+        assert!(out.stdout.contains("err.txt"));
+        assert!(!out.stdout.contains("BUDDY_PROMPT_LAYOUT"));
+        assert!(!out.stdout.contains("old-output"));
+        assert_eq!(out.stderr, "");
+    }
+
+    #[test]
+    fn parse_tmux_output_waits_for_completion_prompt() {
+        let capture = format!(
+            "[buddy 10: 0] dev@host:~$ \n\
+dev@host:~$ echo hi\n\
+hi\n"
+        );
+        assert!(parse_tmux_capture_output(&capture, 10, "echo hi").is_none());
+    }
+
+    #[test]
+    fn parse_tmux_output_reads_nonzero_exit_code_from_prompt() {
+        let capture = format!(
+            "[buddy 12: 0] dev@host:~$ \n\
+dev@host:~$ missing_command\n\
+zsh: command not found: missing_command\n\
+[buddy 13: 127] dev@host:~$ "
+        );
+        let out = parse_tmux_capture_output(&capture, 12, "missing_command")
+            .expect("should parse prompts")
+            .expect("should parse output");
+        assert_eq!(out.exit_code, 127);
+        assert!(out.stdout.contains("command not found"));
+    }
+
+    #[test]
+    fn parse_tmux_output_ignores_repeated_start_marker() {
+        let capture = format!(
+            "[buddy 30: 0] dev@host:~$ \n\
+old output\n\
+[buddy 30: 0] dev@host:~$ \n\
+dev@host:~$ ls\n\
+file.txt\n\
+[buddy 31: 0] dev@host:~$ "
+        );
+        let out = parse_tmux_capture_output(&capture, 30, "ls")
+            .expect("parse frame")
+            .expect("parse output");
+        assert_eq!(out.exit_code, 0);
+        assert!(out.stdout.contains("file.txt"));
+    }
+
+    #[test]
+    fn parse_tmux_output_rejects_unexpected_next_id() {
+        let capture = format!(
+            "[buddy 20: 0] dev@host:~$ \n\
+dev@host:~$ echo hi\n\
+hi\n\
+[buddy 22: 0] dev@host:~$ "
+        );
+        let result = parse_tmux_capture_output(&capture, 20, "echo hi").expect("parse frame");
+        match result {
+            Ok(_) => panic!("should reject skipped command id"),
+            Err(err) => assert!(err
+                .to_string()
+                .contains("unexpected tmux prompt command id")),
+        }
+    }
+
+    #[test]
+    fn parse_tmux_output_errors_if_start_marker_is_missing() {
+        let capture = "[buddy 41: 0] dev@host:~$ \noutput\n[buddy 42: 0] dev@host:~$";
+        let result = parse_tmux_capture_output(capture, 40, "ls").expect("parse frame");
+        match result {
+            Ok(_) => panic!("expected missing start marker error"),
+            Err(err) => assert!(err
+                .to_string()
+                .contains("is no longer visible in capture history")),
+        }
+    }
+}

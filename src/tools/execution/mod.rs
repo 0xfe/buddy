@@ -15,42 +15,20 @@ mod types;
 
 use crate::error::ToolError;
 use backend::local::ensure_not_in_managed_local_tmux_pane;
-#[cfg(test)]
-use backend::local::{is_managed_tmux_window_name, local_tmux_allowed, local_tmux_pane_target};
-#[cfg(test)]
-use backend::ssh::set_ssh_close_hook_for_tests;
 use backend::ssh::{
     build_ssh_control_path, close_ssh_control_connection, default_tmux_session_name_for_agent,
 };
 use contracts::ExecutionBackendOps;
-#[cfg(test)]
-use process::docker_frontend_kind;
-#[cfg(test)]
-use process::format_duration;
-#[cfg(test)]
-use process::run_with_wait;
 use process::{
     detect_container_engine, ensure_success, run_container_tmux_sh_process, run_process,
     run_sh_process, run_ssh_raw_process, shell_quote,
 };
 use std::sync::Arc;
 #[cfg(test)]
-use std::{path::PathBuf, sync::Mutex as StdMutex};
-#[cfg(test)]
-use tmux::capture::{
-    build_capture_pane_command, full_history_capture_options, should_fallback_from_alternate_screen,
-};
+use std::path::PathBuf;
 use tmux::pane::{ensure_container_tmux_pane, ensure_local_tmux_pane, ensure_tmux_pane};
-#[cfg(test)]
-use tmux::pane::{ensure_tmux_pane_script, parse_ensured_tmux_pane};
 use tmux::prompt::{
     ensure_container_tmux_prompt_setup, ensure_local_tmux_prompt_setup, ensure_tmux_prompt_setup,
-};
-#[cfg(test)]
-use tmux::run::{latest_prompt_marker, parse_prompt_marker, parse_tmux_capture_output};
-#[cfg(test)]
-use tmux::send_keys::{
-    build_tmux_send_enter_command, build_tmux_send_keys_command, build_tmux_send_literal_command,
 };
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
@@ -58,8 +36,6 @@ use tokio::time::{sleep, Duration};
 use types::ContainerEngine;
 #[cfg(test)]
 use types::ContainerEngineKind;
-#[cfg(test)]
-use types::EnsuredTmuxPane;
 use types::{
     ContainerContext, ContainerTmuxContext, ExecOutput, LocalBackend, LocalTmuxContext, SshContext,
     TMUX_WINDOW_NAME,
@@ -402,86 +378,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn quote_empty() {
-        assert_eq!(shell_quote(""), "''");
-    }
-
-    #[test]
-    fn quote_with_single_quote() {
-        assert_eq!(shell_quote("a'b"), "'a'\\''b'");
-    }
-
-    #[test]
-    fn detects_podman_from_docker_version_output() {
-        let kind = docker_frontend_kind("Emulate Docker CLI using podman");
-        assert_eq!(kind, ContainerEngineKind::Podman);
-    }
-
-    #[test]
-    fn defaults_to_docker_when_podman_not_mentioned() {
-        let kind = docker_frontend_kind("Docker version 26.1.0, build deadbeef");
-        assert_eq!(kind, ContainerEngineKind::Docker);
-    }
-
-    #[test]
-    fn tmux_session_name_uses_agent_name() {
-        assert_eq!(
-            default_tmux_session_name_for_agent("agent-mo"),
-            "buddy-agent-mo"
-        );
-        assert_eq!(
-            default_tmux_session_name_for_agent("Ops Agent (Prod)"),
-            "buddy-ops-agent-prod"
-        );
-    }
-
-    #[test]
-    fn tmux_session_name_falls_back_when_agent_name_is_empty() {
-        assert_eq!(default_tmux_session_name_for_agent(""), "buddy-agent-mo");
-        assert_eq!(default_tmux_session_name_for_agent("   "), "buddy-agent-mo");
-    }
-
-    #[test]
-    fn managed_tmux_window_name_detection_accepts_new_and_legacy_names() {
-        assert!(is_managed_tmux_window_name("shared"));
-        assert!(is_managed_tmux_window_name(" shared "));
-        assert!(is_managed_tmux_window_name("buddy-shared"));
-        assert!(is_managed_tmux_window_name(" buddy-shared "));
-        assert!(!is_managed_tmux_window_name("dev-shell"));
-    }
-
-    #[test]
-    fn ensure_tmux_pane_script_uses_explicit_session_window_target() {
-        let script = ensure_tmux_pane_script("buddy");
-        assert!(script.contains("CREATED=0"));
-        assert!(script.contains("CREATED=1"));
-        assert!(script.contains("tmux new-session -d -s \"$SESSION\" -n \"$WINDOW\""));
-        assert!(script.contains("tmux new-window -d -t \"$SESSION\" -n \"$WINDOW\""));
-        assert!(script.contains("tmux split-window -d -P -F '#{pane_id}' -t \"$SESSION:$WINDOW\""));
-        assert!(script.contains("tmux select-pane -t \"$PANE\" -T \"$PANE_TITLE\""));
-    }
-
-    #[test]
-    fn parse_ensured_tmux_pane_reads_pane_and_created_flag() {
-        assert_eq!(
-            parse_ensured_tmux_pane("%3\n1"),
-            Some(EnsuredTmuxPane {
-                pane_id: "%3".to_string(),
-                created: true,
-            })
-        );
-        assert_eq!(
-            parse_ensured_tmux_pane("%7\n0"),
-            Some(EnsuredTmuxPane {
-                pane_id: "%7".to_string(),
-                created: false,
-            })
-        );
-        assert!(parse_ensured_tmux_pane("").is_none());
-        assert!(parse_ensured_tmux_pane("%3\n2").is_none());
-    }
-
-    #[test]
     fn local_tmux_summary_and_capture_availability() {
         let ctx = ExecutionContext {
             inner: Arc::new(LocalTmuxContext {
@@ -561,258 +457,5 @@ mod tests {
                 },
             })
         );
-    }
-
-    #[test]
-    fn build_capture_pane_command_uses_defaults() {
-        let cmd = build_capture_pane_command("%1", &CapturePaneOptions::default());
-        assert_eq!(cmd, "tmux capture-pane -p -J -t '%1'");
-    }
-
-    #[test]
-    fn local_tmux_is_disabled_by_default_in_unit_tests() {
-        assert!(!local_tmux_allowed());
-        assert!(local_tmux_pane_target().is_none());
-    }
-
-    #[test]
-    fn full_history_capture_options_sets_explicit_history_bounds() {
-        let opts = full_history_capture_options();
-        assert_eq!(opts.start.as_deref(), Some("-"));
-        assert_eq!(opts.end.as_deref(), Some("-"));
-    }
-
-    #[test]
-    fn build_capture_pane_command_honors_requested_flags() {
-        let cmd = build_capture_pane_command(
-            "%11",
-            &CapturePaneOptions {
-                target: None,
-                start: Some("-40".to_string()),
-                end: Some("20".to_string()),
-                join_wrapped_lines: false,
-                preserve_trailing_spaces: true,
-                include_escape_sequences: true,
-                escape_non_printable: true,
-                include_alternate_screen: true,
-                delay: Duration::from_millis(250),
-            },
-        );
-        assert_eq!(
-            cmd,
-            "tmux capture-pane -p -N -e -C -a -S '-40' -E '20' -t '%11'"
-        );
-    }
-
-    #[test]
-    fn build_tmux_send_key_commands_quote_targets_and_values() {
-        assert_eq!(
-            build_tmux_send_literal_command("%1", "abc"),
-            "tmux send-keys -l -t '%1' 'abc'"
-        );
-        assert_eq!(
-            build_tmux_send_keys_command("%1", &["C-c".to_string(), "Enter".to_string()]),
-            "tmux send-keys -t '%1' 'C-c' 'Enter'"
-        );
-        assert_eq!(
-            build_tmux_send_enter_command("%1"),
-            "tmux send-keys -t '%1' Enter"
-        );
-    }
-
-    #[test]
-    fn fallback_from_alternate_screen_only_when_requested() {
-        let err = ToolError::ExecutionFailed(
-            "failed to capture tmux pane: no alternate screen".to_string(),
-        );
-        let mut with_alt = CapturePaneOptions::default();
-        with_alt.include_alternate_screen = true;
-        assert!(should_fallback_from_alternate_screen(&with_alt, &err));
-
-        let without_alt = CapturePaneOptions::default();
-        assert!(!should_fallback_from_alternate_screen(&without_alt, &err));
-    }
-
-    #[test]
-    fn format_duration_prefers_human_units() {
-        assert_eq!(format_duration(Duration::from_millis(250)), "250ms");
-        assert_eq!(format_duration(Duration::from_secs(7)), "7s");
-        assert_eq!(format_duration(Duration::from_secs(120)), "2m");
-        assert_eq!(format_duration(Duration::from_secs(7200)), "2h");
-        assert_eq!(format_duration(Duration::from_millis(1250)), "1.250s");
-    }
-
-    #[tokio::test]
-    async fn run_with_wait_times_out_when_limit_hit() {
-        let result = run_with_wait(
-            async {
-                sleep(Duration::from_millis(50)).await;
-                Ok(ExecOutput {
-                    exit_code: 0,
-                    stdout: "ok".to_string(),
-                    stderr: String::new(),
-                })
-            },
-            ShellWait::WaitWithTimeout(Duration::from_millis(1)),
-            "timed out",
-        )
-        .await;
-        match result {
-            Ok(_) => panic!("expected timeout error"),
-            Err(err) => assert!(err.to_string().contains("timed out"), "got: {err}"),
-        }
-    }
-
-    #[test]
-    fn parse_prompt_marker_extracts_id_and_status() {
-        let line = "[buddy 42: 127] dev@host:~$ ";
-        let marker = parse_prompt_marker(line).expect("prompt marker");
-        assert_eq!(marker.command_id, 42);
-        assert_eq!(marker.exit_code, 127);
-        let legacy_line = "[agent 9: 0] dev@host:~$ ";
-        let legacy_marker = parse_prompt_marker(legacy_line).expect("legacy prompt marker");
-        assert_eq!(legacy_marker.command_id, 9);
-        assert_eq!(legacy_marker.exit_code, 0);
-        assert!(parse_prompt_marker("dev@host:~$").is_none());
-    }
-
-    #[test]
-    fn latest_prompt_marker_uses_most_recent_marker() {
-        let capture = "[buddy 8: 0] one\noutput\n[buddy 9: 1] two";
-        let marker = latest_prompt_marker(capture).expect("latest marker");
-        assert_eq!(marker.command_id, 9);
-        assert_eq!(marker.exit_code, 1);
-    }
-
-    #[test]
-    fn parse_tmux_output_between_prompt_markers() {
-        let capture = format!(
-            "if [ \"${{BUDDY_PROMPT_LAYOUT:-}}\" != \"v3\" ]; then ... fi\n\
-[buddy 1: 0] dev@host:~$ \n\
-dev@host:~$ ls -la\n\
-old-output\n\
-[buddy 2: 0] dev@host:~$ \n\
-dev@host:~$ pwd\n\
-/home/mo\n\
-[buddy 3: 0] dev@host:~$ \n\
-dev@host:~$ ls -l\n\
-total 8\n\
-file.txt\n\
-err.txt\n\
-[buddy 4: 0] dev@host:~$ "
-        );
-        let out = parse_tmux_capture_output(&capture, 3, "ls -l")
-            .expect("should parse prompts")
-            .expect("should parse output");
-        assert_eq!(out.exit_code, 0);
-        assert!(out.stdout.contains("total 8"));
-        assert!(out.stdout.contains("file.txt"));
-        assert!(out.stdout.contains("err.txt"));
-        assert!(!out.stdout.contains("BUDDY_PROMPT_LAYOUT"));
-        assert!(!out.stdout.contains("old-output"));
-        assert_eq!(out.stderr, "");
-    }
-
-    #[test]
-    fn parse_tmux_output_waits_for_completion_prompt() {
-        let capture = format!(
-            "[buddy 10: 0] dev@host:~$ \n\
-dev@host:~$ echo hi\n\
-hi\n"
-        );
-        assert!(parse_tmux_capture_output(&capture, 10, "echo hi").is_none());
-    }
-
-    #[test]
-    fn parse_tmux_output_reads_nonzero_exit_code_from_prompt() {
-        let capture = format!(
-            "[buddy 12: 0] dev@host:~$ \n\
-dev@host:~$ missing_command\n\
-zsh: command not found: missing_command\n\
-[buddy 13: 127] dev@host:~$ "
-        );
-        let out = parse_tmux_capture_output(&capture, 12, "missing_command")
-            .expect("should parse prompts")
-            .expect("should parse output");
-        assert_eq!(out.exit_code, 127);
-        assert!(out.stdout.contains("command not found"));
-    }
-
-    #[test]
-    fn parse_tmux_output_ignores_repeated_start_marker() {
-        let capture = format!(
-            "[buddy 30: 0] dev@host:~$ \n\
-old output\n\
-[buddy 30: 0] dev@host:~$ \n\
-dev@host:~$ ls\n\
-file.txt\n\
-[buddy 31: 0] dev@host:~$ "
-        );
-        let out = parse_tmux_capture_output(&capture, 30, "ls")
-            .expect("parse frame")
-            .expect("parse output");
-        assert_eq!(out.exit_code, 0);
-        assert!(out.stdout.contains("file.txt"));
-    }
-
-    #[test]
-    fn parse_tmux_output_rejects_unexpected_next_id() {
-        let capture = format!(
-            "[buddy 20: 0] dev@host:~$ \n\
-dev@host:~$ echo hi\n\
-hi\n\
-[buddy 22: 0] dev@host:~$ "
-        );
-        let result = parse_tmux_capture_output(&capture, 20, "echo hi").expect("parse frame");
-        match result {
-            Ok(_) => panic!("should reject skipped command id"),
-            Err(err) => assert!(err
-                .to_string()
-                .contains("unexpected tmux prompt command id")),
-        }
-    }
-
-    #[test]
-    fn parse_tmux_output_errors_if_start_marker_is_missing() {
-        let capture = "[buddy 41: 0] dev@host:~$ \noutput\n[buddy 42: 0] dev@host:~$";
-        let result = parse_tmux_capture_output(capture, 40, "ls").expect("parse frame");
-        match result {
-            Ok(_) => panic!("expected missing start marker error"),
-            Err(err) => assert!(err
-                .to_string()
-                .contains("is no longer visible in capture history")),
-        }
-    }
-
-    #[test]
-    fn ssh_context_drop_triggers_control_cleanup() {
-        use std::path::PathBuf;
-        use std::sync::Arc;
-
-        let observed = Arc::new(StdMutex::new(None::<(String, PathBuf)>));
-        let observed_clone = Arc::clone(&observed);
-        set_ssh_close_hook_for_tests(Some(Box::new(move |target, path| {
-            *observed_clone.lock().expect("observed lock") =
-                Some((target.to_string(), path.to_path_buf()));
-        })));
-
-        let control_path = PathBuf::from("/tmp/buddy-test-drop.sock");
-        let ctx = SshContext {
-            target: "dev@example.com".to_string(),
-            control_path: control_path.clone(),
-            tmux_session: None,
-            configured_tmux_pane: Mutex::new(None),
-            startup_existing_tmux_pane: None,
-        };
-        drop(ctx);
-        set_ssh_close_hook_for_tests(None);
-
-        let captured = observed
-            .lock()
-            .expect("observed lock")
-            .clone()
-            .expect("drop should trigger cleanup");
-        assert_eq!(captured.0, "dev@example.com");
-        assert_eq!(captured.1, control_path);
     }
 }

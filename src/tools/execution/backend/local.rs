@@ -257,3 +257,23 @@ pub(in crate::tools::execution) fn local_tmux_allowed() -> bool {
         true
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn managed_tmux_window_name_detection_accepts_new_and_legacy_names() {
+        assert!(is_managed_tmux_window_name("shared"));
+        assert!(is_managed_tmux_window_name(" shared "));
+        assert!(is_managed_tmux_window_name("buddy-shared"));
+        assert!(is_managed_tmux_window_name(" buddy-shared "));
+        assert!(!is_managed_tmux_window_name("dev-shell"));
+    }
+
+    #[test]
+    fn local_tmux_is_disabled_by_default_in_unit_tests() {
+        assert!(!local_tmux_allowed());
+        assert!(local_tmux_pane_target().is_none());
+    }
+}

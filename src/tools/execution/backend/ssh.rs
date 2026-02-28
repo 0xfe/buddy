@@ -259,3 +259,75 @@ fn sanitize_tmux_session_suffix(raw: &str) -> String {
 
     normalized.chars().take(48).collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    #[test]
+    fn tmux_session_name_uses_agent_name() {
+        assert_eq!(
+            default_tmux_session_name_for_agent("agent-mo"),
+            "buddy-agent-mo"
+        );
+        assert_eq!(
+            default_tmux_session_name_for_agent("Ops Agent (Prod)"),
+            "buddy-ops-agent-prod"
+        );
+    }
+
+    #[test]
+    fn tmux_session_name_falls_back_when_agent_name_is_empty() {
+        assert_eq!(default_tmux_session_name_for_agent(""), "buddy-agent-mo");
+        assert_eq!(default_tmux_session_name_for_agent("   "), "buddy-agent-mo");
+    }
+
+    #[test]
+    fn ssh_context_drop_triggers_control_cleanup() {
+        let observed = Arc::new(std::sync::Mutex::new(None::<(String, PathBuf)>));
+        let observed_clone = Arc::clone(&observed);
+        set_ssh_close_hook_for_tests(Some(Box::new(move |target, path| {
+            *observed_clone.lock().expect("observed lock") =
+                Some((target.to_string(), path.to_path_buf()));
+        })));
+
+        let control_path = PathBuf::from("/tmp/buddy-test-drop.sock");
+        let ctx = SshContext {
+            target: "dev@example.com".to_string(),
+            control_path: control_path.clone(),
+            tmux_session: None,
+            configured_tmux_pane: Mutex::new(None),
+            startup_existing_tmux_pane: None,
+        };
+        drop(ctx);
+        set_ssh_close_hook_for_tests(None);
+
+        let captured = observed
+            .lock()
+            .expect("observed lock")
+            .clone()
+            .expect("drop should trigger cleanup");
+        assert_eq!(captured.0, "dev@example.com");
+        assert_eq!(captured.1, control_path);
+    }
+
+    #[tokio::test]
+    async fn ssh_backend_rejects_no_wait_without_tmux() {
+        let ctx = SshContext {
+            target: "dev@example.com".to_string(),
+            control_path: PathBuf::from("/tmp/buddy-test.sock"),
+            tmux_session: None,
+            configured_tmux_pane: Mutex::new(None),
+            startup_existing_tmux_pane: None,
+        };
+
+        match ctx.run_command("echo hi", None, ShellWait::NoWait).await {
+            Ok(_) => panic!("no-wait should be rejected"),
+            Err(err) => assert!(err
+                .to_string()
+                .contains("requires a tmux-backed execution target")),
+        }
+    }
+}

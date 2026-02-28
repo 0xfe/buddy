@@ -204,3 +204,26 @@ impl ExecutionBackendOps for ContainerTmuxContext {
         write_file_via_command_backend(self, path, content).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn container_backend_rejects_no_wait_without_tmux() {
+        let ctx = ContainerContext {
+            engine: crate::tools::execution::types::ContainerEngine {
+                command: "docker",
+                kind: ContainerEngineKind::Docker,
+            },
+            container: "demo".to_string(),
+        };
+
+        match ctx.run_command("echo hi", None, ShellWait::NoWait).await {
+            Ok(_) => panic!("no-wait should be rejected"),
+            Err(err) => assert!(err
+                .to_string()
+                .contains("requires a tmux-backed execution target")),
+        }
+    }
+}
