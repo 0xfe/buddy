@@ -10,333 +10,30 @@
 //! 5. Built-in defaults
 
 use crate::error::ConfigError;
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const DEFAULT_BUDDY_CONFIG_TEMPLATE: &str = include_str!("templates/buddy.toml");
-const DEFAULT_MODEL_PROFILE_NAME: &str = "gpt-codex";
-const DEFAULT_MODEL_ID: &str = "gpt-5.3-codex";
-const DEFAULT_API_BASE_URL: &str = "https://api.openai.com/v1";
-const DEFAULT_API_TIMEOUT_SECS: u64 = 120;
-const DEFAULT_FETCH_TIMEOUT_SECS: u64 = 20;
+mod defaults;
+mod types;
 
-/// Provider wire protocol for model requests.
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum ApiProtocol {
-    #[default]
-    Completions,
-    Responses,
-}
-
-/// Authentication mode for a model profile.
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-pub enum AuthMode {
-    #[default]
-    ApiKey,
-    Login,
-}
-
-// ---------------------------------------------------------------------------
-// Config structs
-// ---------------------------------------------------------------------------
-
-/// Top-level runtime configuration.
-#[derive(Debug, Clone)]
-pub struct Config {
-    /// Resolved active API settings from `agent.model` + `models.<name>`.
-    pub api: ApiConfig,
-    /// Configured model profiles keyed by profile name.
-    pub models: BTreeMap<String, ModelConfig>,
-    pub agent: AgentConfig,
-    pub tools: ToolsConfig,
-    pub network: NetworkConfig,
-    pub display: DisplayConfig,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        let models = default_models_map();
-        let mut agent = AgentConfig::default();
-        agent.model = DEFAULT_MODEL_PROFILE_NAME.into();
-        let api =
-            resolve_active_api_with(&models, &agent.model, None, |_| None, |_| Ok(String::new()))
-                .unwrap_or_default();
-        Self {
-            api,
-            models,
-            agent,
-            tools: ToolsConfig::default(),
-            network: NetworkConfig::default(),
-            display: DisplayConfig::default(),
-        }
-    }
-}
-
-/// Resolved API connection settings used by the runtime HTTP client.
-#[derive(Debug, Clone)]
-pub struct ApiConfig {
-    pub base_url: String,
-    pub api_key: String,
-    pub model: String,
-    pub protocol: ApiProtocol,
-    pub auth: AuthMode,
-    /// Selected profile key (for login-token lookup and UX messaging).
-    pub profile: String,
-    /// Override for context window size. Auto-detected from model name if omitted.
-    pub context_limit: Option<usize>,
-}
-
-impl Default for ApiConfig {
-    fn default() -> Self {
-        Self {
-            base_url: DEFAULT_API_BASE_URL.into(),
-            api_key: String::new(),
-            model: DEFAULT_MODEL_ID.into(),
-            protocol: ApiProtocol::Completions,
-            auth: AuthMode::ApiKey,
-            profile: DEFAULT_MODEL_PROFILE_NAME.to_string(),
-            context_limit: None,
-        }
-    }
-}
-
-impl ApiConfig {
-    /// True when the active profile requires stored login credentials.
-    pub fn uses_login(&self) -> bool {
-        self.auth == AuthMode::Login && self.api_key.trim().is_empty()
-    }
-}
-
-/// API model-profile settings stored under `[models.<name>]`.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct ModelConfig {
-    #[serde(alias = "base_url")]
-    pub api_base_url: String,
-    #[serde(default)]
-    pub api: ApiProtocol,
-    #[serde(default)]
-    pub auth: AuthMode,
-    pub api_key: String,
-    pub api_key_env: Option<String>,
-    pub api_key_file: Option<String>,
-    /// Optional concrete model id; defaults to the profile key when omitted.
-    pub model: Option<String>,
-    /// Optional override for context window size.
-    pub context_limit: Option<usize>,
-}
-
-impl ModelConfig {
-    fn resolved_model_name(&self, profile_name: &str) -> String {
-        normalized_option(&self.model).unwrap_or_else(|| profile_name.to_string())
-    }
-}
-
-impl Default for ModelConfig {
-    fn default() -> Self {
-        Self {
-            api_base_url: DEFAULT_API_BASE_URL.into(),
-            api: ApiProtocol::Completions,
-            auth: AuthMode::ApiKey,
-            api_key: String::new(),
-            api_key_env: None,
-            api_key_file: None,
-            model: None,
-            context_limit: None,
-        }
-    }
-}
-
-/// Agent behavior settings.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct AgentConfig {
-    /// Active model-profile key (must exist under `[models.<name>]`).
-    pub model: String,
-    pub system_prompt: String,
-    /// Safety cap on agentic loop iterations.
-    pub max_iterations: usize,
-    pub temperature: Option<f64>,
-    pub top_p: Option<f64>,
-}
-
-impl Default for AgentConfig {
-    fn default() -> Self {
-        Self {
-            model: String::new(),
-            // Empty means "no additional operator instructions"; the built-in
-            // system prompt template is rendered at runtime in `main.rs`.
-            system_prompt: String::new(),
-            max_iterations: 20,
-            temperature: None,
-            top_p: None,
-        }
-    }
-}
-
-/// Tool availability settings.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct ToolsConfig {
-    pub shell_enabled: bool,
-    pub fetch_enabled: bool,
-    /// Optional confirmation prompt for `fetch_url` tool executions.
-    pub fetch_confirm: bool,
-    /// Domain allowlist for `fetch_url`. When non-empty, only matching domains are allowed.
-    pub fetch_allowed_domains: Vec<String>,
-    /// Domain denylist for `fetch_url`. Matches exact domain and subdomains.
-    pub fetch_blocked_domains: Vec<String>,
-    pub files_enabled: bool,
-    /// Optional allowlist roots for `write_file`. When non-empty, writes are
-    /// only permitted under one of these paths.
-    pub files_allowed_paths: Vec<String>,
-    pub search_enabled: bool,
-    /// Whether to prompt the user before running shell commands.
-    pub shell_confirm: bool,
-    /// Command denylist patterns for `run_shell`.
-    pub shell_denylist: Vec<String>,
-}
-
-impl Default for ToolsConfig {
-    fn default() -> Self {
-        Self {
-            shell_enabled: true,
-            fetch_enabled: true,
-            fetch_confirm: false,
-            fetch_allowed_domains: Vec::new(),
-            fetch_blocked_domains: Vec::new(),
-            files_enabled: true,
-            files_allowed_paths: Vec::new(),
-            search_enabled: true,
-            shell_confirm: true,
-            shell_denylist: vec![
-                "rm -rf /".to_string(),
-                "mkfs".to_string(),
-                "shutdown".to_string(),
-                "reboot".to_string(),
-                "dd if=".to_string(),
-                ":(){ :|:& };:".to_string(),
-            ],
-        }
-    }
-}
-
-/// Display / rendering preferences.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct DisplayConfig {
-    pub color: bool,
-    pub show_tokens: bool,
-    pub show_tool_calls: bool,
-    /// Persist REPL input history under `~/.config/buddy/history`.
-    pub persist_history: bool,
-}
-
-impl Default for DisplayConfig {
-    fn default() -> Self {
-        Self {
-            color: true,
-            show_tokens: false,
-            show_tool_calls: true,
-            persist_history: true,
-        }
-    }
-}
-
-/// Network/HTTP timeout policy.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct NetworkConfig {
-    /// Default timeout for model API requests.
-    pub api_timeout_secs: u64,
-    /// Timeout for `fetch_url` tool requests.
-    pub fetch_timeout_secs: u64,
-}
-
-impl Default for NetworkConfig {
-    fn default() -> Self {
-        Self {
-            api_timeout_secs: DEFAULT_API_TIMEOUT_SECS,
-            fetch_timeout_secs: DEFAULT_FETCH_TIMEOUT_SECS,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
-struct FileConfig {
-    #[serde(alias = "model")]
-    models: BTreeMap<String, ModelConfig>,
-    /// Legacy compatibility for older configs that still use `[api]`.
-    api: Option<LegacyApiConfig>,
-    agent: AgentConfig,
-    tools: ToolsConfig,
-    network: NetworkConfig,
-    display: DisplayConfig,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-struct LegacyApiConfig {
-    base_url: String,
-    api_key: String,
-    api_key_env: Option<String>,
-    api_key_file: Option<String>,
-    model: String,
-    context_limit: Option<usize>,
-}
-
-impl Default for LegacyApiConfig {
-    fn default() -> Self {
-        Self {
-            base_url: DEFAULT_API_BASE_URL.into(),
-            api_key: String::new(),
-            api_key_env: None,
-            api_key_file: None,
-            model: DEFAULT_MODEL_ID.into(),
-            context_limit: None,
-        }
-    }
-}
-
-impl LegacyApiConfig {
-    fn into_model_config(self) -> ModelConfig {
-        ModelConfig {
-            api_base_url: self.base_url,
-            api: ApiProtocol::Completions,
-            auth: AuthMode::ApiKey,
-            api_key: self.api_key,
-            api_key_env: self.api_key_env,
-            api_key_file: self.api_key_file,
-            model: Some(self.model),
-            context_limit: self.context_limit,
-        }
-    }
-}
+use defaults::{
+    default_models_map, DEFAULT_AGENT_NAME, DEFAULT_API_BASE_URL, DEFAULT_BUDDY_CONFIG_TEMPLATE,
+    DEFAULT_MODEL_PROFILE_NAME,
+};
+#[cfg(test)]
+use defaults::{DEFAULT_API_TIMEOUT_SECS, DEFAULT_FETCH_TIMEOUT_SECS};
+pub use types::{
+    AgentConfig, ApiConfig, ApiProtocol, AuthMode, Config, ConfigDiagnostics, DisplayConfig,
+    GlobalConfigInitResult, LoadedConfig, ModelConfig, NetworkConfig, ToolsConfig,
+};
+use types::FileConfig;
 
 // ---------------------------------------------------------------------------
 // Loading
 // ---------------------------------------------------------------------------
-
-/// Diagnostics captured while resolving runtime configuration.
-#[derive(Debug, Clone, Default)]
-pub struct ConfigDiagnostics {
-    /// Legacy compatibility paths currently in use.
-    pub deprecations: Vec<String>,
-}
-
-/// Configuration payload plus load-time diagnostics.
-#[derive(Debug, Clone)]
-pub struct LoadedConfig {
-    pub config: Config,
-    pub diagnostics: ConfigDiagnostics,
-}
 
 #[derive(Debug, Clone)]
 enum ConfigSource {
@@ -356,7 +53,9 @@ pub fn load_config(path_override: Option<&str>) -> Result<Config, ConfigError> {
 }
 
 /// Load configuration and return compatibility diagnostics.
-pub fn load_config_with_diagnostics(path_override: Option<&str>) -> Result<LoadedConfig, ConfigError> {
+pub fn load_config_with_diagnostics(
+    path_override: Option<&str>,
+) -> Result<LoadedConfig, ConfigError> {
     load_config_with_diagnostics_from_sources(
         path_override,
         |path| std::fs::read_to_string(path),
@@ -376,7 +75,8 @@ where
     FEnv: Fn(&str) -> Option<String>,
     FRoot: Fn() -> Option<PathBuf>,
 {
-    let (config_text, source) = read_config_text_with_sources(path_override, &read_file, &config_root)?;
+    let (config_text, source) =
+        read_config_text_with_sources(path_override, &read_file, &config_root)?;
     let mut diagnostics = ConfigDiagnostics::default();
     collect_legacy_source_warnings(&source, &mut diagnostics);
     let parsed: FileConfig = toml::from_str(&config_text)?;
@@ -499,6 +199,11 @@ where
             .cloned()
             .unwrap_or_else(|| DEFAULT_MODEL_PROFILE_NAME.to_string());
     }
+    if normalized_string(&parsed.agent.name).is_none() {
+        parsed.agent.name = DEFAULT_AGENT_NAME.to_string();
+    } else if let Some(name) = normalized_string(&parsed.agent.name) {
+        parsed.agent.name = name;
+    }
 
     let mut config = Config {
         api: ApiConfig::default(),
@@ -533,9 +238,11 @@ where
     if let Some(model) = env_with_legacy(env_lookup, "BUDDY_MODEL", "AGENT_MODEL") {
         config.api.model = model;
     }
-    if let Some(timeout) =
-        env_with_legacy(env_lookup, "BUDDY_API_TIMEOUT_SECS", "AGENT_API_TIMEOUT_SECS")
-    {
+    if let Some(timeout) = env_with_legacy(
+        env_lookup,
+        "BUDDY_API_TIMEOUT_SECS",
+        "AGENT_API_TIMEOUT_SECS",
+    ) {
         let parsed = timeout.parse::<u64>().map_err(|_| {
             ConfigError::Invalid(format!(
                 "invalid BUDDY_API_TIMEOUT_SECS value `{timeout}`: expected positive integer seconds"
@@ -543,9 +250,11 @@ where
         })?;
         config.network.api_timeout_secs = parsed.max(1);
     }
-    if let Some(timeout) =
-        env_with_legacy(env_lookup, "BUDDY_FETCH_TIMEOUT_SECS", "AGENT_FETCH_TIMEOUT_SECS")
-    {
+    if let Some(timeout) = env_with_legacy(
+        env_lookup,
+        "BUDDY_FETCH_TIMEOUT_SECS",
+        "AGENT_FETCH_TIMEOUT_SECS",
+    ) {
         let parsed = timeout.parse::<u64>().map_err(|_| {
             ConfigError::Invalid(format!(
                 "invalid BUDDY_FETCH_TIMEOUT_SECS value `{timeout}`: expected positive integer seconds"
@@ -621,9 +330,9 @@ fn add_legacy_env_warning<FEnv>(
     FEnv: Fn(&str) -> Option<String>,
 {
     if env_lookup(canonical).is_none() && env_lookup(legacy).is_some() {
-        diagnostics
-            .deprecations
-            .push(format!("Detected deprecated env var `{legacy}`. {guidance}"));
+        diagnostics.deprecations.push(format!(
+            "Detected deprecated env var `{legacy}`. {guidance}"
+        ));
     }
 }
 
@@ -640,14 +349,6 @@ pub fn default_global_config_path() -> Option<PathBuf> {
 /// Return the default REPL history path (`~/.config/buddy/history`).
 pub fn default_history_path() -> Option<PathBuf> {
     config_root_dir().map(|dir| dir.join("buddy").join("history"))
-}
-
-/// Result of explicit global config initialization (`buddy init`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GlobalConfigInitResult {
-    Created { path: PathBuf },
-    AlreadyInitialized { path: PathBuf },
-    Overwritten { path: PathBuf, backup_path: PathBuf },
 }
 
 /// Initialize `~/.config/buddy/buddy.toml`.
@@ -796,76 +497,6 @@ fn api_key_override_env() -> Option<String> {
     api_key_override_with(&|name| std::env::var(name).ok())
 }
 
-fn default_models_map() -> BTreeMap<String, ModelConfig> {
-    let mut models = BTreeMap::new();
-    models.insert(
-        DEFAULT_MODEL_PROFILE_NAME.to_string(),
-        ModelConfig {
-            api_base_url: DEFAULT_API_BASE_URL.to_string(),
-            api: ApiProtocol::Responses,
-            auth: AuthMode::Login,
-            api_key: String::new(),
-            api_key_env: None,
-            api_key_file: None,
-            model: Some(DEFAULT_MODEL_ID.to_string()),
-            context_limit: None,
-        },
-    );
-    models.insert(
-        "gpt-spark".to_string(),
-        ModelConfig {
-            api_base_url: DEFAULT_API_BASE_URL.to_string(),
-            api: ApiProtocol::Responses,
-            auth: AuthMode::Login,
-            api_key: String::new(),
-            api_key_env: None,
-            api_key_file: None,
-            model: Some("gpt-5.3-codex-spark".to_string()),
-            context_limit: None,
-        },
-    );
-    models.insert(
-        "openrouter-deepseek".to_string(),
-        ModelConfig {
-            api_base_url: "https://openrouter.ai/api/v1".to_string(),
-            api: ApiProtocol::Completions,
-            auth: AuthMode::ApiKey,
-            api_key: String::new(),
-            api_key_env: Some("OPENROUTER_API_KEY".to_string()),
-            api_key_file: None,
-            model: Some("deepseek/deepseek-v3.2".to_string()),
-            context_limit: None,
-        },
-    );
-    models.insert(
-        "openrouter-glm".to_string(),
-        ModelConfig {
-            api_base_url: "https://openrouter.ai/api/v1".to_string(),
-            api: ApiProtocol::Completions,
-            auth: AuthMode::ApiKey,
-            api_key: String::new(),
-            api_key_env: Some("OPENROUTER_API_KEY".to_string()),
-            api_key_file: None,
-            model: Some("z-ai/glm-5".to_string()),
-            context_limit: None,
-        },
-    );
-    models.insert(
-        "kimi".to_string(),
-        ModelConfig {
-            api_base_url: "https://api.moonshot.ai/v1".to_string(),
-            api: ApiProtocol::Completions,
-            auth: AuthMode::ApiKey,
-            api_key: String::new(),
-            api_key_env: Some("MOONSHOT_API_KEY".to_string()),
-            api_key_file: None,
-            model: Some("kimi-k2.5".to_string()),
-            context_limit: None,
-        },
-    );
-    models
-}
-
 fn resolve_active_api_with<FEnv, FRead>(
     models: &BTreeMap<String, ModelConfig>,
     selected_profile: &str,
@@ -981,6 +612,7 @@ mod tests {
     #[test]
     fn defaults_are_sensible() {
         let c = Config::default();
+        assert_eq!(c.agent.name, "agent-mo");
         assert_eq!(c.agent.model, "gpt-codex");
         assert_eq!(c.api.base_url, "https://api.openai.com/v1");
         assert_eq!(c.api.model, "gpt-5.3-codex");
@@ -1014,6 +646,7 @@ mod tests {
             shell_confirm = false
         "#;
         let c = parse_file_config_for_test(toml).unwrap();
+        assert_eq!(c.agent.name, "agent-mo");
         assert_eq!(c.agent.model, "kimi");
         assert_eq!(c.api.model, "kimi");
         assert_eq!(c.api.base_url, "https://api.moonshot.ai/v1");
@@ -1047,6 +680,21 @@ mod tests {
             vec!["/workspace", "/tmp/project"]
         );
         assert_eq!(c.tools.shell_denylist, vec!["rm -rf /", "mkfs"]);
+    }
+
+    #[test]
+    fn blank_agent_name_falls_back_to_default() {
+        let toml = r#"
+            [models.local]
+            api_base_url = "https://api.example.com/v1"
+            api_key = "k"
+
+            [agent]
+            name = "   "
+            model = "local"
+        "#;
+        let c = parse_file_config_for_test(toml).unwrap();
+        assert_eq!(c.agent.name, "agent-mo");
     }
 
     #[test]
