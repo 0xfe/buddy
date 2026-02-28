@@ -6,7 +6,7 @@
 use buddy::config::{select_model_profile, Config, ModelConfig};
 use buddy::ui::render::RenderSink;
 use buddy::runtime::{BuddyRuntimeHandle, RuntimeCommand};
-use buddy::tui as repl;
+use buddy::ui::terminal as term_ui;
 
 /// Handle `/model` command behavior.
 pub(crate) async fn handle_model_command(
@@ -44,7 +44,7 @@ pub(crate) async fn handle_model_command(
             .iter()
             .position(|name| name == &config.agent.model)
             .unwrap_or(0);
-        match repl::pick_from_list(
+        match term_ui::pick_from_list(
             config.display.color,
             "model profiles",
             "Use ↑/↓ to pick, Enter to confirm, Esc to cancel.",

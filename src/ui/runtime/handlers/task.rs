@@ -1,15 +1,15 @@
 //! Task runtime event handlers.
 
-use buddy::ui::render::set_progress_enabled;
-use buddy::runtime::TaskEvent;
+use crate::ui::render::set_progress_enabled;
+use crate::runtime::TaskEvent;
 
-use crate::cli_event_renderer::RuntimeEventRenderContext;
-use buddy::repl::{
+use crate::ui::runtime::RuntimeEventRenderContext;
+use crate::repl::{
     mark_task_running, mark_task_waiting_for_approval, BackgroundTask, BackgroundTaskState,
     CompletedBackgroundTask, PendingApproval,
 };
 
-pub(in crate::cli_event_renderer) fn handle_task(
+pub(in crate::ui::runtime) fn handle_task(
     ctx: &mut RuntimeEventRenderContext<'_>,
     event: TaskEvent,
 ) {

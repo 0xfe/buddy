@@ -1,7 +1,7 @@
 //! Session command helpers for `/session` and CLI resume flows.
 
 use crate::cli;
-use crate::repl_support::{format_elapsed, ResumeRequest};
+use buddy::repl::{format_elapsed, ResumeRequest};
 use buddy::agent::Agent;
 use buddy::ui::render::RenderSink;
 use buddy::runtime::{BuddyRuntimeHandle, RuntimeCommand};
@@ -157,7 +157,7 @@ pub(crate) fn initialize_active_session(
     session_store: &SessionStore,
     agent: &mut Agent,
     resume_request: Option<ResumeRequest>,
-) -> Result<(crate::repl_support::SessionStartupState, String), String> {
+) -> Result<(buddy::repl::SessionStartupState, String), String> {
     match resume_request {
         None => {
             let snapshot = agent.snapshot_session();
@@ -165,7 +165,7 @@ pub(crate) fn initialize_active_session(
                 .create_new_session(&snapshot)
                 .map_err(|e| format!("failed to create new session: {e}"))?;
             Ok((
-                crate::repl_support::SessionStartupState::StartedNew,
+                buddy::repl::SessionStartupState::StartedNew,
                 session_id,
             ))
         }
@@ -187,7 +187,7 @@ pub(crate) fn initialize_active_session(
                 renderer.warn(&format!("failed to refresh session {last_id}: {e}"));
             }
             Ok((
-                crate::repl_support::SessionStartupState::ResumedExisting,
+                buddy::repl::SessionStartupState::ResumedExisting,
                 last_id,
             ))
         }
@@ -200,7 +200,7 @@ pub(crate) fn initialize_active_session(
                 renderer.warn(&format!("failed to refresh session {session_id}: {e}"));
             }
             Ok((
-                crate::repl_support::SessionStartupState::ResumedExisting,
+                buddy::repl::SessionStartupState::ResumedExisting,
                 session_id,
             ))
         }

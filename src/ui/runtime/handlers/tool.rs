@@ -1,15 +1,15 @@
 //! Tool runtime event handlers.
 
-use buddy::ui::render::RenderSink;
-use buddy::runtime::ToolEvent;
+use crate::ui::render::RenderSink;
+use crate::runtime::ToolEvent;
 
-use crate::cli_event_renderer::RuntimeEventRenderContext;
-use buddy::repl::{
+use crate::ui::runtime::RuntimeEventRenderContext;
+use crate::repl::{
     parse_shell_tool_result, parse_tool_arg, quote_preview, tool_result_display_text,
     truncate_preview,
 };
 
-pub(in crate::cli_event_renderer) fn handle_tool(
+pub(in crate::ui::runtime) fn handle_tool(
     ctx: &mut RuntimeEventRenderContext<'_>,
     event: ToolEvent,
 ) {

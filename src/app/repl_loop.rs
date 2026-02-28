@@ -6,7 +6,7 @@
 
 use crate::app::approval::send_approval_decision;
 use crate::app::tasks::{kill_background_task, render_background_tasks};
-use crate::repl_support::{
+use buddy::repl::{
     active_approval_decision, apply_task_timeout_command, mark_task_running,
     task_is_waiting_for_approval, to_runtime_approval_policy, update_approval_policy,
     ApprovalPolicy, BackgroundTask, PendingApproval,
@@ -14,7 +14,7 @@ use crate::repl_support::{
 use buddy::ui::render::RenderSink;
 use buddy::runtime::BuddyRuntimeHandle;
 use buddy::runtime::RuntimeCommand;
-use buddy::tui as repl;
+use buddy::ui::terminal as term_ui;
 
 /// Invocation mode for shared slash-command dispatch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,7 +41,7 @@ pub(crate) enum SharedSlashDispatchOutcome {
 /// Handle slash commands shared between normal REPL and approval REPL modes.
 pub(crate) async fn dispatch_shared_slash_action(
     renderer: &dyn RenderSink,
-    action: &repl::SlashCommandAction,
+    action: &term_ui::SlashCommandAction,
     runtime: &BuddyRuntimeHandle,
     background_tasks: &mut Vec<BackgroundTask>,
     pending_approval: &mut Option<PendingApproval>,
@@ -51,11 +51,11 @@ pub(crate) async fn dispatch_shared_slash_action(
 ) -> SharedSlashDispatchOutcome {
     let mut resolved_approval = false;
     let handled = match action {
-        repl::SlashCommandAction::Ps => {
+        term_ui::SlashCommandAction::Ps => {
             render_background_tasks(renderer, background_tasks);
             true
         }
-        repl::SlashCommandAction::Kill(id_arg) => {
+        term_ui::SlashCommandAction::Kill(id_arg) => {
             let Some(id_arg) = id_arg.as_deref() else {
                 renderer.warn("Usage: /kill <task-id>");
                 return outcome_for_mode(mode, false, background_tasks);
@@ -74,7 +74,7 @@ pub(crate) async fn dispatch_shared_slash_action(
             .await;
             true
         }
-        repl::SlashCommandAction::Timeout { duration, task_id } => {
+        term_ui::SlashCommandAction::Timeout { duration, task_id } => {
             match apply_task_timeout_command(
                 background_tasks,
                 duration.as_deref(),
@@ -88,7 +88,7 @@ pub(crate) async fn dispatch_shared_slash_action(
             }
             true
         }
-        repl::SlashCommandAction::Approve(mode_arg) => {
+        term_ui::SlashCommandAction::Approve(mode_arg) => {
             let mode_arg = mode_arg.as_deref().unwrap_or("");
             match update_approval_policy(mode_arg, approval_policy) {
                 Ok(msg) => {

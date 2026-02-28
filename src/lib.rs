@@ -27,6 +27,7 @@ pub mod config;
 pub mod error;
 pub mod preflight;
 pub mod prompt;
+pub mod repl;
 pub mod render;
 pub mod ui;
 pub mod runtime;

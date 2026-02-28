@@ -1,6 +1,6 @@
 //! Startup banner and execution-target formatting helpers.
 
-use crate::repl_support::SessionStartupState;
+use buddy::repl::SessionStartupState;
 use buddy::tools::execution::{TmuxAttachInfo, TmuxAttachTarget};
 use crossterm::style::{Color, Stylize};
 

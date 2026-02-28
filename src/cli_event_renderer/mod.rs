@@ -10,7 +10,7 @@ use buddy::config::Config;
 use buddy::ui::render::RenderSink;
 use buddy::runtime::{RuntimeEvent, RuntimeEventEnvelope};
 
-use crate::repl_support::{
+use buddy::repl::{
     BackgroundTask, CompletedBackgroundTask, PendingApproval, RuntimeContextState,
 };
 
@@ -201,7 +201,7 @@ mod tests {
         assert_eq!(ctx.background_tasks.len(), 1);
         assert!(matches!(
             ctx.background_tasks[0].state,
-            crate::repl_support::BackgroundTaskState::WaitingApproval { .. }
+            buddy::repl::BackgroundTaskState::WaitingApproval { .. }
         ));
         assert_eq!(
             ctx.pending_approval

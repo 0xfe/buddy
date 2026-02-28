@@ -1,16 +1,16 @@
 //! Background runtime task state helpers for the REPL loop.
 
 use crate::app::approval::send_approval_decision;
-use crate::cli_event_renderer;
-use crate::repl_support::{
+use buddy::repl::{
     format_elapsed, format_elapsed_coarse, timeout_suffix_for_task, ApprovalDecision,
     BackgroundTask, BackgroundTaskState, CompletedBackgroundTask, PendingApproval,
     RuntimeContextState,
 };
 use buddy::config::Config;
 use buddy::ui::render::RenderSink;
+use buddy::ui::runtime;
 use buddy::runtime::{BuddyRuntimeHandle, RuntimeCommand, RuntimeEventEnvelope};
-use buddy::tui;
+use buddy::ui::terminal::settings;
 use std::time::Instant;
 use tokio::sync::mpsc;
 
@@ -37,7 +37,7 @@ pub(crate) fn process_runtime_events(
     active_session: &mut String,
     runtime_context: &mut RuntimeContextState,
 ) {
-    let mut context = cli_event_renderer::RuntimeEventRenderContext {
+    let mut context = runtime::RuntimeEventRenderContext {
         renderer,
         background_tasks,
         completed_tasks,
@@ -46,7 +46,7 @@ pub(crate) fn process_runtime_events(
         active_session,
         runtime_context,
     };
-    cli_event_renderer::process_runtime_events(events, &mut context);
+    runtime::process_runtime_events(events, &mut context);
 }
 
 /// Emit completion/failure output for completed background tasks.
@@ -153,8 +153,8 @@ pub(crate) fn background_liveness_spinner(tasks: &[BackgroundTask]) -> char {
         })
         .max()
         .unwrap_or_default();
-    let idx = ((elapsed.as_millis() / 250) as usize) % tui::settings::PROGRESS_FRAMES.len();
-    tui::settings::PROGRESS_FRAMES[idx]
+    let idx = ((elapsed.as_millis() / 250) as usize) % settings::PROGRESS_FRAMES.len();
+    settings::PROGRESS_FRAMES[idx]
 }
 
 /// Request runtime cancellation for a running task.

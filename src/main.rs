@@ -2,8 +2,6 @@
 
 mod app;
 mod cli;
-mod cli_event_renderer;
-mod repl_support;
 
 use app::approval::{
     approval_prompt_actor, deny_pending_approval, render_shell_approval_request,
@@ -37,7 +35,20 @@ use buddy::config::select_model_profile;
 use buddy::config::{AuthMode, Config, GlobalConfigInitResult, ToolsConfig};
 use buddy::preflight::validate_active_profile_ready;
 use buddy::prompt::{render_system_prompt, ExecutionTarget, SystemPromptParams};
+use buddy::repl::{
+    approval_policy_label, has_elapsed_timeouts, mark_task_running, parse_approval_decision,
+    task_is_waiting_for_approval, ApprovalPolicy, BackgroundTask, CompletedBackgroundTask,
+    PendingApproval, RuntimeContextState,
+};
+#[cfg(test)]
+use buddy::repl::BackgroundTaskState;
+#[cfg(test)]
+use buddy::repl::{
+    apply_task_timeout_command, mark_task_waiting_for_approval, parse_duration_arg,
+    parse_shell_tool_result, tool_result_display_text, update_approval_policy, ApprovalDecision,
+};
 use buddy::ui::render::{set_progress_enabled, RenderSink, Renderer};
+use buddy::ui::terminal as term_ui;
 #[cfg(test)]
 use buddy::runtime::BuddyRuntimeHandle;
 use buddy::runtime::{
@@ -55,20 +66,7 @@ use buddy::tools::send_keys::SendKeysTool;
 use buddy::tools::shell::{ShellApprovalBroker, ShellTool};
 use buddy::tools::time::TimeTool;
 use buddy::tools::ToolRegistry;
-use buddy::tui as repl;
 use clap::Parser;
-#[cfg(test)]
-use repl_support::BackgroundTaskState;
-#[cfg(test)]
-use repl_support::{
-    apply_task_timeout_command, mark_task_waiting_for_approval, parse_duration_arg,
-    parse_shell_tool_result, tool_result_display_text, update_approval_policy, ApprovalDecision,
-};
-use repl_support::{
-    approval_policy_label, has_elapsed_timeouts, mark_task_running, parse_approval_decision,
-    task_is_waiting_for_approval, ApprovalPolicy, BackgroundTask, CompletedBackgroundTask,
-    PendingApproval, RuntimeContextState,
-};
 use std::sync::Arc;
 use std::time::Duration;
 #[cfg(test)]
@@ -423,7 +421,7 @@ async fn main() {
             context_used_percent(&agent).unwrap_or(0),
         );
 
-        let mut repl_state = repl::ReplState::default();
+        let mut repl_state = term_ui::ReplState::default();
         let history_path = if config.display.persist_history {
             default_history_path()
         } else {
@@ -492,35 +490,35 @@ async fn main() {
                     approval.risk.as_deref(),
                     approval.why.as_deref(),
                 );
-                let approval_prompt = repl::ApprovalPrompt {
+                let approval_prompt = term_ui::ApprovalPrompt {
                     actor: &approval_actor,
                     command: &approval.command,
                     privileged: approval.privesc.unwrap_or(false),
                     mutation: approval.mutation.unwrap_or(false),
                 };
 
-                let approval_input = match repl::read_repl_line_with_interrupt(
+                let approval_input = match term_ui::read_repl_line_with_interrupt(
                     config.display.color,
                     &mut repl_state,
                     args.ssh.as_deref(),
                     None,
-                    repl::PromptMode::Approval,
+                    term_ui::PromptMode::Approval,
                     Some(&approval_prompt),
-                    || repl::ReadPoll {
+                    || term_ui::ReadPoll {
                         interrupt: has_elapsed_timeouts(&background_tasks),
                         status_line: None,
                     },
                 ) {
-                    Ok(repl::ReadOutcome::Line(line)) => line,
-                    Ok(repl::ReadOutcome::Eof) => {
+                    Ok(term_ui::ReadOutcome::Line(line)) => line,
+                    Ok(term_ui::ReadOutcome::Eof) => {
                         deny_pending_approval(&runtime, &mut background_tasks, approval).await;
                         continue;
                     }
-                    Ok(repl::ReadOutcome::Cancelled) => {
+                    Ok(term_ui::ReadOutcome::Cancelled) => {
                         deny_pending_approval(&runtime, &mut background_tasks, approval).await;
                         break;
                     }
-                    Ok(repl::ReadOutcome::Interrupted) => {
+                    Ok(term_ui::ReadOutcome::Interrupted) => {
                         pending_approval = Some(approval);
                         continue;
                     }
@@ -543,9 +541,9 @@ async fn main() {
                     continue;
                 }
 
-                if let Some(action) = repl::parse_slash_command(approval_input) {
+                if let Some(action) = term_ui::parse_slash_command(approval_input) {
                     match &action {
-                        repl::SlashCommandAction::Status => {
+                        term_ui::SlashCommandAction::Status => {
                             let guard = agent.try_lock().ok();
                             render_status(
                                 &renderer,
@@ -559,7 +557,7 @@ async fn main() {
                             pending_approval = Some(approval);
                             continue;
                         }
-                        repl::SlashCommandAction::Context => {
+                        term_ui::SlashCommandAction::Context => {
                             let guard = agent.try_lock().ok();
                             render_context(
                                 &renderer,
@@ -618,12 +616,12 @@ async fn main() {
                 last_prompt_context_used_percent =
                     Some(display_context_percent(runtime_context.used_percent as f64));
             }
-            let input = match repl::read_repl_line_with_interrupt(
+            let input = match term_ui::read_repl_line_with_interrupt(
                 config.display.color,
                 &mut repl_state,
                 args.ssh.as_deref(),
                 last_prompt_context_used_percent,
-                repl::PromptMode::Normal,
+                term_ui::PromptMode::Normal,
                 None,
                 || {
                     // If runtime events arrive while the input editor is visible, interrupt the
@@ -631,17 +629,17 @@ async fn main() {
                     // causes overlapping lines and cursor drift.
                     let has_new_runtime_events =
                         collect_runtime_events(&mut runtime_events, &mut pending_runtime_events);
-                    repl::ReadPoll {
+                    term_ui::ReadPoll {
                         interrupt: has_new_runtime_events
                             || has_elapsed_timeouts(&background_tasks),
                         status_line: background_liveness_line(&background_tasks),
                     }
                 },
             ) {
-                Ok(repl::ReadOutcome::Line(line)) => line,
-                Ok(repl::ReadOutcome::Eof) => break,
-                Ok(repl::ReadOutcome::Cancelled) => break,
-                Ok(repl::ReadOutcome::Interrupted) => continue,
+                Ok(term_ui::ReadOutcome::Line(line)) => line,
+                Ok(term_ui::ReadOutcome::Eof) => break,
+                Ok(term_ui::ReadOutcome::Cancelled) => break,
+                Ok(term_ui::ReadOutcome::Interrupted) => continue,
                 Err(e) => {
                     renderer.error(&format!("failed to read input: {e}"));
                     break;
@@ -669,9 +667,9 @@ async fn main() {
             repl_state.push_history(input);
             let has_background_tasks = !background_tasks.is_empty();
 
-            if let Some(action) = repl::parse_slash_command(input) {
+            if let Some(action) = term_ui::parse_slash_command(input) {
                 match &action {
-                    repl::SlashCommandAction::Status => {
+                    term_ui::SlashCommandAction::Status => {
                         let guard = agent.try_lock().ok();
                         render_status(
                             &renderer,
@@ -684,7 +682,7 @@ async fn main() {
                         );
                         continue;
                     }
-                    repl::SlashCommandAction::Context => {
+                    term_ui::SlashCommandAction::Context => {
                         let guard = agent.try_lock().ok();
                         render_context(
                             &renderer,
@@ -713,14 +711,14 @@ async fn main() {
                 }
 
                 match action {
-                    repl::SlashCommandAction::Quit => {
+                    term_ui::SlashCommandAction::Quit => {
                         if has_background_tasks {
                             renderer.warn(BACKGROUND_TASK_WARNING);
                         } else {
                             break;
                         }
                     }
-                    repl::SlashCommandAction::Session { verb, name } => {
+                    term_ui::SlashCommandAction::Session { verb, name } => {
                         if has_background_tasks {
                             renderer.warn(BACKGROUND_TASK_WARNING);
                         } else {
@@ -735,7 +733,7 @@ async fn main() {
                             .await;
                         }
                     }
-                    repl::SlashCommandAction::Compact => {
+                    term_ui::SlashCommandAction::Compact => {
                         if has_background_tasks {
                             renderer.warn(BACKGROUND_TASK_WARNING);
                         } else if let Err(e) = runtime.send(RuntimeCommand::SessionCompact).await {
@@ -743,7 +741,7 @@ async fn main() {
                                 .warn(&format!("failed to submit session compact command: {e}"));
                         }
                     }
-                    repl::SlashCommandAction::Model(selector) => {
+                    term_ui::SlashCommandAction::Model(selector) => {
                         if has_background_tasks {
                             renderer.warn(BACKGROUND_TASK_WARNING);
                         } else {
@@ -756,7 +754,7 @@ async fn main() {
                             .await;
                         }
                     }
-                    repl::SlashCommandAction::Login(selector) => {
+                    term_ui::SlashCommandAction::Login(selector) => {
                         if has_background_tasks {
                             renderer.warn(BACKGROUND_TASK_WARNING);
                         } else if let Err(msg) =
@@ -766,25 +764,25 @@ async fn main() {
                             renderer.warn(&msg);
                         }
                     }
-                    repl::SlashCommandAction::Help => {
+                    term_ui::SlashCommandAction::Help => {
                         if has_background_tasks {
                             renderer.warn(BACKGROUND_TASK_WARNING);
                         } else {
                             render_help(&renderer);
                         }
                     }
-                    repl::SlashCommandAction::Unknown(cmd) => {
+                    term_ui::SlashCommandAction::Unknown(cmd) => {
                         if has_background_tasks {
                             renderer.warn(BACKGROUND_TASK_WARNING);
                         } else {
                             renderer.warn(&format!("Unknown slash command: {cmd}. Try /help."));
                         }
                     }
-                    repl::SlashCommandAction::Ps
-                    | repl::SlashCommandAction::Kill(_)
-                    | repl::SlashCommandAction::Timeout { .. }
-                    | repl::SlashCommandAction::Approve(_) => {}
-                    repl::SlashCommandAction::Status | repl::SlashCommandAction::Context => {}
+                    term_ui::SlashCommandAction::Ps
+                    | term_ui::SlashCommandAction::Kill(_)
+                    | term_ui::SlashCommandAction::Timeout { .. }
+                    | term_ui::SlashCommandAction::Approve(_) => {}
+                    term_ui::SlashCommandAction::Status | term_ui::SlashCommandAction::Context => {}
                 }
                 continue;
             }
@@ -822,7 +820,7 @@ async fn main() {
 
 fn render_help(renderer: &dyn RenderSink) {
     renderer.section("slash commands");
-    for cmd in &repl::SLASH_COMMANDS {
+    for cmd in &term_ui::SLASH_COMMANDS {
         renderer.field(cmd.name, cmd.description);
     }
     eprintln!();

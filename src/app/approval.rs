@@ -1,6 +1,6 @@
 //! Approval prompt rendering and decision helpers.
 
-use crate::repl_support::{mark_task_running, ApprovalDecision, BackgroundTask, PendingApproval};
+use buddy::repl::{mark_task_running, ApprovalDecision, BackgroundTask, PendingApproval};
 use buddy::ui::render::RenderSink;
 use buddy::runtime::{
     ApprovalDecision as RuntimeApprovalDecision, BuddyRuntimeHandle, RuntimeCommand,
