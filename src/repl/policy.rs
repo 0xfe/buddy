@@ -1,4 +1,8 @@
 //! Approval policy parsing and runtime conversion helpers.
+//!
+//! The REPL keeps a local policy representation (`ApprovalPolicy`) that is easy
+//! to manipulate from slash commands, then converts it into runtime wire-format
+//! values (`RuntimeApprovalPolicy`) before dispatching commands.
 
 use crate::repl::task_state::{format_elapsed, parse_duration_arg};
 use crate::runtime::RuntimeApprovalPolicy;
@@ -7,21 +11,29 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 /// Local REPL approval policy mode.
 #[derive(Debug, Clone, Copy)]
 pub enum ApprovalPolicy {
+    /// Ask the user for every approval request.
     Ask,
+    /// Auto-approve every request immediately.
     All,
+    /// Auto-deny every request immediately.
     None,
+    /// Auto-approve until the instant expires, then fall back to `Ask`.
     Until(Instant),
 }
 
 /// Concrete decision value sent to runtime approval responder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApprovalDecision {
+    /// Accept and unblock the pending action.
     Approve,
+    /// Reject and block the pending action.
     Deny,
 }
 
 /// Parse `y/n` approval input from the REPL.
 pub fn parse_approval_decision(input: &str) -> Option<ApprovalDecision> {
+    // Accept common yes/no forms; empty input defaults to "deny" so pressing
+    // enter in a prompt is conservative.
     let normalized = input.trim().to_ascii_lowercase();
     match normalized.as_str() {
         "y" | "yes" => Some(ApprovalDecision::Approve),
@@ -38,6 +50,8 @@ pub fn approval_policy_label(policy: ApprovalPolicy) -> String {
         ApprovalPolicy::None => "none".to_string(),
         ApprovalPolicy::Until(until) => {
             let now = Instant::now();
+            // Expired temporary policy behaves like "ask" from the UI's
+            // perspective even before the state is mutated by evaluation.
             if until <= now {
                 "ask".to_string()
             } else {
@@ -54,6 +68,8 @@ pub fn active_approval_decision(policy: &mut ApprovalPolicy) -> Option<ApprovalD
         ApprovalPolicy::All => Some(ApprovalDecision::Approve),
         ApprovalPolicy::None => Some(ApprovalDecision::Deny),
         ApprovalPolicy::Until(until) => {
+            // Temporary auto-approve self-resets once it expires so later checks
+            // do not keep carrying stale state.
             if until > Instant::now() {
                 Some(ApprovalDecision::Approve)
             } else {
@@ -85,6 +101,7 @@ pub fn update_approval_policy(input: &str, policy: &mut ApprovalPolicy) -> Resul
             Ok("approval policy: none".to_string())
         }
         _ => {
+            // Duration mode is interpreted as a temporary auto-approve window.
             let duration = parse_duration_arg(&normalized)
                 .ok_or_else(|| "Invalid duration. Examples: 30s, 10m, 1h.".to_string())?;
             *policy = ApprovalPolicy::Until(Instant::now() + duration);
@@ -103,6 +120,8 @@ pub fn to_runtime_approval_policy(policy: ApprovalPolicy) -> RuntimeApprovalPoli
         ApprovalPolicy::All => RuntimeApprovalPolicy::All,
         ApprovalPolicy::None => RuntimeApprovalPolicy::None,
         ApprovalPolicy::Until(until) => {
+            // Runtime policy carries an absolute expiration timestamp so actor
+            // and frontend can reason about expiry without sharing an `Instant`.
             let remaining = until.saturating_duration_since(Instant::now());
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)

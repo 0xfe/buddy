@@ -7,16 +7,23 @@ use super::Agent;
 use crate::tokens::TokenTracker;
 use crate::types::{Message, Role};
 
+/// Minimum number of most-recent turns preserved during compaction.
 const CONTEXT_COMPACT_KEEP_RECENT_TURNS: usize = 3;
+/// Max number of summary lines generated from removed messages.
 const MAX_COMPACT_SUMMARY_LINES: usize = 24;
+/// Prefix marker used to identify synthetic compaction summary messages.
 pub(super) const COMPACT_SUMMARY_PREFIX: &str = "[buddy compact summary]";
 
 /// Details about one history-compaction operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryCompactionReport {
+    /// Estimated token count before compaction.
     pub estimated_before: u64,
+    /// Estimated token count after compaction.
     pub estimated_after: u64,
+    /// Number of individual messages removed from history.
     pub removed_messages: usize,
+    /// Number of turn groups removed from history.
     pub removed_turns: usize,
 }
 
@@ -35,12 +42,17 @@ impl Agent {
     }
 }
 
+/// Compact message history to a target context fraction.
+///
+/// `force=true` removes old turns aggressively (used for manual compaction).
+/// `force=false` compacts only when current estimate exceeds `target_fraction`.
 pub(super) fn compact_history_with_budget(
     messages: &mut Vec<Message>,
     context_limit: usize,
     target_fraction: f64,
     force: bool,
 ) -> Option<HistoryCompactionReport> {
+    // Guard rails: if we cannot estimate a useful budget, skip compaction.
     if context_limit == 0 || messages.is_empty() {
         return None;
     }
@@ -51,6 +63,8 @@ pub(super) fn compact_history_with_budget(
         return None;
     }
 
+    // Reuse a previous compact summary if one is already present directly
+    // after leading system prompts. This prevents stacked summary messages.
     let mut insertion_index = leading_system_count(messages);
     let mut previous_summary = None;
     if insertion_index > 0
@@ -75,6 +89,8 @@ pub(super) fn compact_history_with_budget(
             break;
         }
 
+        // Forced mode always trims until only the recent window remains.
+        // Automatic mode trims only while usage exceeds budget.
         let should_remove = if force {
             estimated_now > target_tokens || turns.len() > CONTEXT_COMPACT_KEEP_RECENT_TURNS + 1
         } else {
@@ -97,6 +113,8 @@ pub(super) fn compact_history_with_budget(
     messages.insert(insertion_index, Message::system(summary));
 
     let mut estimated_after = TokenTracker::estimate_messages(messages);
+    // If the generated summary does not reduce estimated size, fall back to a
+    // minimal summary and then remove it entirely if still not helpful.
     if estimated_after >= estimated_before {
         messages[insertion_index] = Message::system(format!(
             "{COMPACT_SUMMARY_PREFIX}\nOlder turns were compacted."
@@ -116,12 +134,16 @@ pub(super) fn compact_history_with_budget(
     })
 }
 
+/// Half-open index range for one conversation turn in `messages`.
 #[derive(Clone, Copy)]
 struct TurnRange {
+    /// Inclusive start index of the turn.
     start: usize,
+    /// Exclusive end index of the turn.
     end: usize,
 }
 
+/// Count contiguous leading `system` messages.
 fn leading_system_count(messages: &[Message]) -> usize {
     messages
         .iter()
@@ -129,6 +151,7 @@ fn leading_system_count(messages: &[Message]) -> usize {
         .count()
 }
 
+/// Split message history into turn ranges starting from `start_index`.
 fn collect_turn_ranges(messages: &[Message], start_index: usize) -> Vec<TurnRange> {
     let mut turns = Vec::new();
     let mut current_start: Option<usize> = None;
@@ -154,6 +177,7 @@ fn collect_turn_ranges(messages: &[Message], start_index: usize) -> Vec<TurnRang
     turns
 }
 
+/// Return true if message is a synthetic compaction summary.
 fn is_compact_summary_message(message: &Message) -> bool {
     message.role == Role::System
         && message
@@ -162,6 +186,7 @@ fn is_compact_summary_message(message: &Message) -> bool {
             .is_some_and(|text| text.starts_with(COMPACT_SUMMARY_PREFIX))
 }
 
+/// Build a new summary text from the removed messages and prior summary body.
 fn build_compact_summary(previous_summary: Option<&str>, removed_messages: &[Message]) -> String {
     let mut lines = Vec::new();
     lines.push(COMPACT_SUMMARY_PREFIX.to_string());
@@ -194,6 +219,7 @@ fn build_compact_summary(previous_summary: Option<&str>, removed_messages: &[Mes
     lines.join("\n")
 }
 
+/// Extract and normalize the body section from a prior summary message.
 fn compact_summary_body(summary: &str) -> Option<String> {
     let mut lines = summary.lines();
     let first = lines.next()?.trim();
@@ -209,6 +235,7 @@ fn compact_summary_body(summary: &str) -> Option<String> {
     }
 }
 
+/// Render one removed message into a compact one-line summary entry.
 fn compact_message_line(message: &Message) -> Option<String> {
     match message.role {
         Role::System => None,
@@ -248,6 +275,7 @@ fn compact_message_line(message: &Message) -> Option<String> {
     }
 }
 
+/// Clip summary preview text so compaction output stays bounded.
 fn truncate_summary_preview(text: &str) -> String {
     const MAX_PREVIEW_CHARS: usize = 180;
     let trimmed = text.trim();

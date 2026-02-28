@@ -2,6 +2,8 @@
 //!
 //! Runtime command/event types live in `schema`, while this module hosts the
 //! actor orchestration and re-exports the public runtime API.
+//! The actor enforces single-task execution, approval mediation, and session
+//! persistence while streaming normalized events to any frontend.
 
 use crate::agent::Agent;
 use crate::config::{select_model_profile, ApiProtocol, AuthMode, Config};
@@ -32,6 +34,7 @@ use tasks::{spawn_prompt_task, ActiveTask, TaskDone};
 /// Handle for sending commands to a spawned runtime actor.
 #[derive(Clone)]
 pub struct BuddyRuntimeHandle {
+    /// Command channel connected to the runtime actor task.
     pub commands: mpsc::Sender<RuntimeCommand>,
 }
 
@@ -50,10 +53,15 @@ pub type RuntimeEventStream = mpsc::UnboundedReceiver<RuntimeEventEnvelope>;
 
 /// Bootstrap inputs for the runtime actor.
 pub struct RuntimeSpawnConfig {
+    /// Effective configuration used by runtime and agent.
     pub config: Config,
+    /// Tool registry injected into the owned agent.
     pub tools: crate::tools::ToolRegistry,
+    /// Optional persistent session store backend.
     pub session_store: Option<SessionStore>,
+    /// Optional active session id to attach at startup.
     pub active_session: Option<String>,
+    /// Optional approval request receiver from shell tool broker.
     pub approval_rx: Option<mpsc::UnboundedReceiver<ShellApprovalRequest>>,
 }
 
@@ -105,8 +113,12 @@ pub fn spawn_runtime_with_shared_agent(
     let (event_tx, event_rx) = mpsc::unbounded_channel::<RuntimeEventEnvelope>();
 
     tokio::spawn(async move {
+        // Agent-emitted events are funneled through a dedicated channel so the
+        // runtime can sequence and de-duplicate before forwarding.
         let (agent_event_tx, mut agent_event_rx) =
             mpsc::unbounded_channel::<RuntimeEventEnvelope>();
+        // Prompt task completion notifications let the actor clear active-task
+        // state and emit failure events when needed.
         let (task_done_tx, mut task_done_rx) = mpsc::unbounded_channel::<TaskDone>();
         let mut approval_rx = approval_rx;
 
@@ -134,6 +146,8 @@ pub fn spawn_runtime_with_shared_agent(
             RuntimeEvent::Lifecycle(LifecycleEvent::ConfigLoaded),
         );
 
+        // Central actor loop: commands, agent stream events, task completions,
+        // and approval requests are handled in a single serialized select.
         loop {
             tokio::select! {
                 Some(command) = command_rx.recv() => {
@@ -160,6 +174,8 @@ pub fn spawn_runtime_with_shared_agent(
                 }
                 Some(agent_envelope) = agent_event_rx.recv() => {
                     if let RuntimeEvent::Task(TaskEvent::Failed { task, .. }) = &agent_envelope.event {
+                        // The agent and task-done path can both surface failures;
+                        // track task ids to forward each failure once.
                         if !failed_tasks.insert(task.task_id) {
                             continue;
                         }
@@ -172,6 +188,8 @@ pub fn spawn_runtime_with_shared_agent(
                     }
                     deny_pending_approvals_for_task(done.task_id, &mut pending_approvals);
 
+                    // Save the active session snapshot after each task completion
+                    // so resume state reflects the latest conversation.
                     persist_active_session_snapshot(&agent, &state, &event_tx, &mut seq).await;
 
                     if let Err(err) = done.result {
@@ -194,6 +212,8 @@ pub fn spawn_runtime_with_shared_agent(
                         None => None,
                     }
                 } => {
+                    // Approval requests are associated with whichever task is
+                    // currently active at arrival time.
                     handle_approval_request(
                         request,
                         &mut state,
@@ -217,13 +237,19 @@ pub fn spawn_runtime_with_shared_agent(
     )
 }
 
+/// Mutable runtime actor state shared across command handlers.
 struct RuntimeActorState {
+    /// Effective runtime configuration (updated on model switch).
     config: Config,
+    /// Optional session persistence backend.
     session_store: Option<SessionStore>,
+    /// Currently active session id.
     active_session: Option<String>,
+    /// Current approval policy for incoming shell approvals.
     approval_policy: RuntimeApprovalPolicy,
 }
 
+/// Emit one runtime event with a monotonic sequence number.
 fn emit_event(
     tx: &mpsc::UnboundedSender<RuntimeEventEnvelope>,
     seq: &mut u64,
@@ -233,18 +259,29 @@ fn emit_event(
     *seq = seq.saturating_add(1);
 }
 
+/// Mutable context object passed to command handler branches.
 struct RuntimeCommandContext<'a> {
+    /// Shared agent instance owned by the runtime actor.
     agent: &'a Arc<Mutex<Agent>>,
+    /// Mutable runtime actor state.
     state: &'a mut RuntimeActorState,
+    /// Optional currently active prompt task.
     active_task: &'a mut Option<ActiveTask>,
+    /// Task id allocator.
     next_task_id: &'a mut u64,
+    /// Pending approval map keyed by runtime approval id.
     pending_approvals: &'a mut HashMap<String, PendingRuntimeApproval>,
+    /// Outbound runtime event stream.
     event_tx: &'a mpsc::UnboundedSender<RuntimeEventEnvelope>,
+    /// Mutable sequence counter for envelope generation.
     seq: &'a mut u64,
+    /// Channel used by prompt tasks to emit agent runtime events.
     agent_event_tx: &'a mpsc::UnboundedSender<RuntimeEventEnvelope>,
+    /// Channel used by prompt tasks to report completion.
     task_done_tx: &'a mpsc::UnboundedSender<TaskDone>,
 }
 
+/// Handle one runtime command. Returns `true` when actor should stop.
 async fn handle_runtime_command(
     command: RuntimeCommand,
     ctx: &mut RuntimeCommandContext<'_>,
@@ -261,6 +298,7 @@ async fn handle_runtime_command(
 
     match command {
         RuntimeCommand::SubmitPrompt { prompt, .. } => {
+            // Runtime currently enforces one active prompt task at a time.
             if active_task.is_some() {
                 emit_event(
                     event_tx,
@@ -285,6 +323,7 @@ async fn handle_runtime_command(
                 }),
             );
 
+            // Spawn the prompt task with a dedicated cancellation channel.
             let (cancel_tx, cancel_rx) = watch::channel(false);
             *active_task = Some(ActiveTask { task_id, cancel_tx });
             spawn_prompt_task(
@@ -297,6 +336,7 @@ async fn handle_runtime_command(
             );
         }
         RuntimeCommand::CancelTask { task_id } => {
+            // Validate the target task is the currently active one.
             let Some(active) = active_task.as_ref() else {
                 emit_event(
                     event_tx,
@@ -332,6 +372,7 @@ async fn handle_runtime_command(
         RuntimeCommand::SetApprovalPolicy { policy } => {
             state.approval_policy = policy;
             if let Some(decision) = active_approval_decision(&mut state.approval_policy) {
+                // If policy becomes auto-resolving, flush all pending approvals.
                 for pending in pending_approvals.drain().map(|(_, pending)| pending) {
                     resolve_pending_approval(pending, decision, event_tx, seq);
                 }
@@ -384,6 +425,7 @@ async fn handle_runtime_command(
                 return false;
             }
 
+            // Keep the runtime config in sync with the agent's active API config.
             state.config = next.clone();
             {
                 let mut guard = agent.lock().await;
@@ -454,6 +496,7 @@ async fn handle_runtime_command(
                 );
                 return false;
             };
+            // Defer to store-defined "last active" semantics.
             match store.resolve_last() {
                 Ok(Some(last)) => {
                     if let Err(err) =
@@ -517,6 +560,7 @@ async fn handle_runtime_command(
             resolve_pending_approval(pending, decision, event_tx, seq);
         }
         RuntimeCommand::Shutdown => {
+            // Deny any unresolved approval requests and cancel active task.
             for pending in pending_approvals.drain().map(|(_, pending)| pending) {
                 pending.request.deny();
             }
@@ -529,6 +573,7 @@ async fn handle_runtime_command(
     false
 }
 
+/// Clip multi-line text into a compact single-line preview.
 fn truncate_preview(text: &str, max_len: usize) -> String {
     let flat: String = text
         .chars()
@@ -537,6 +582,7 @@ fn truncate_preview(text: &str, max_len: usize) -> String {
     truncate_with_suffix_by_chars(&flat, max_len, "...")
 }
 
+/// Human-readable label for protocol/auth combinations in warnings.
 fn api_mode_label(protocol: ApiProtocol, auth: AuthMode) -> String {
     format!("{protocol:?}/{auth:?}").to_ascii_lowercase()
 }
@@ -557,6 +603,7 @@ mod tests {
     use std::time::Duration;
     use tokio::time::timeout;
 
+    // Verifies event envelopes serialize with required top-level fields.
     #[test]
     fn envelope_serializes_with_required_fields() {
         let envelope =
@@ -567,6 +614,7 @@ mod tests {
         assert_eq!(value["event"]["type"], json!("Lifecycle"));
     }
 
+    // Verifies runtime commands survive JSON round-trip serialization.
     #[test]
     fn runtime_command_round_trip_json() {
         let cmd = RuntimeCommand::SubmitPrompt {
@@ -582,6 +630,7 @@ mod tests {
         assert_eq!(parsed, cmd);
     }
 
+    // Verifies warning adapter preserves task id and message content.
     #[test]
     fn adapter_maps_warning_event() {
         let event = AgentUiEvent::Warning {
@@ -598,6 +647,7 @@ mod tests {
         );
     }
 
+    // Verifies token-usage adapter maps into metrics event fields.
     #[test]
     fn adapter_maps_token_usage_event() {
         let event = AgentUiEvent::TokenUsage {
@@ -618,6 +668,7 @@ mod tests {
         );
     }
 
+    // Verifies tool call/result adapters preserve names, args, and result payloads.
     #[test]
     fn adapter_maps_tool_events() {
         let call = AgentUiEvent::ToolCall {
@@ -653,6 +704,7 @@ mod tests {
         );
     }
 
+    // Verifies reasoning adapter maps trace data into model reasoning events.
     #[test]
     fn adapter_maps_reasoning_event() {
         let event = AgentUiEvent::ReasoningTrace {
@@ -671,6 +723,7 @@ mod tests {
         );
     }
 
+    // Verifies envelope helper wraps adapted events with caller-provided sequence.
     #[test]
     fn envelope_builder_preserves_sequence_and_wraps_event() {
         let envelope = runtime_envelope_from_agent_ui(
@@ -691,6 +744,7 @@ mod tests {
         );
     }
 
+    // Verifies optional warning task context is omitted from serialized payload.
     #[test]
     fn warning_event_omits_task_when_absent() {
         let event = RuntimeEvent::Warning(WarningEvent {
@@ -702,12 +756,16 @@ mod tests {
         assert!(payload.get("task").is_none());
     }
 
+    /// Deterministic mock model client used by runtime tests.
     struct MockClient {
+        /// Queued responses returned in FIFO order.
         responses: StdMutex<VecDeque<ChatResponse>>,
+        /// Optional delay to exercise cancellation/approval timing paths.
         delay: Option<Duration>,
     }
 
     impl MockClient {
+        /// Build a client with immediate response delivery.
         fn new(responses: Vec<ChatResponse>) -> Self {
             Self {
                 responses: StdMutex::new(responses.into()),
@@ -715,6 +773,7 @@ mod tests {
             }
         }
 
+        /// Build a client that sleeps before each response.
         fn with_delay(responses: Vec<ChatResponse>, delay: Duration) -> Self {
             Self {
                 responses: StdMutex::new(responses.into()),
@@ -737,6 +796,7 @@ mod tests {
         }
     }
 
+    /// Build a minimal assistant text response for task-flow tests.
     fn chat_response_text(id: &str, text: &str) -> ChatResponse {
         ChatResponse {
             id: id.to_string(),
@@ -760,6 +820,7 @@ mod tests {
         }
     }
 
+    /// Receive the next runtime event with a bounded timeout for stable tests.
     async fn recv_event(rx: &mut RuntimeEventStream) -> RuntimeEvent {
         timeout(Duration::from_secs(2), rx.recv())
             .await
@@ -768,6 +829,7 @@ mod tests {
             .event
     }
 
+    // Verifies submit flow emits expected ordered task/model/metrics events.
     #[tokio::test]
     async fn runtime_actor_submit_prompt_emits_expected_events() {
         let agent = Agent::with_client(
@@ -829,6 +891,7 @@ mod tests {
         );
     }
 
+    // Verifies cancelling an active task emits cancelling then completed events.
     #[tokio::test]
     async fn runtime_actor_cancel_task_emits_cancelling() {
         let agent = Agent::with_client(
@@ -877,6 +940,7 @@ mod tests {
         assert!(saw_completed);
     }
 
+    // Verifies pending approvals can be approved through RuntimeCommand::Approve.
     #[tokio::test]
     async fn runtime_actor_handles_approval_command_flow() {
         let agent = Agent::with_client(
@@ -936,6 +1000,7 @@ mod tests {
         assert!(approved);
     }
 
+    // Verifies approval wait/resume path emits exactly one started event.
     #[tokio::test]
     async fn runtime_actor_emits_single_started_event_when_approval_resolves() {
         let agent = Agent::with_client(
@@ -1012,6 +1077,7 @@ mod tests {
         assert_eq!(started_count, 1, "expected exactly one started event");
     }
 
+    // Verifies runtime de-duplicates failed events emitted by overlapping paths.
     #[tokio::test]
     async fn runtime_actor_deduplicates_failed_event_from_task_done_path() {
         // No queued response forces the mock client to return an API error, which
@@ -1050,6 +1116,7 @@ mod tests {
         assert_eq!(failed_count, 1, "expected exactly one failed event");
     }
 
+    // Verifies model switching emits profile details plus API-mode warning.
     #[tokio::test]
     async fn runtime_actor_switch_model_emits_profile_switched() {
         let mut cfg = Config::default();
@@ -1094,6 +1161,7 @@ mod tests {
         assert!(saw_mode_warning, "missing mode-switch warning");
     }
 
+    // Verifies session compact command emits compacted event and summary warning.
     #[tokio::test]
     async fn runtime_actor_session_compact_emits_compacted_event() {
         let mut cfg = Config::default();

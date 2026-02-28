@@ -1,4 +1,8 @@
 //! Runtime session management helpers.
+//!
+//! These helpers implement session lifecycle commands for the runtime actor:
+//! create new session, resume session, compact history, and persist snapshots
+//! after task completion.
 
 use super::{emit_event, RuntimeActorState};
 use crate::agent::Agent;
@@ -6,23 +10,27 @@ use crate::runtime::{RuntimeEvent, RuntimeEventEnvelope, SessionEvent, WarningEv
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 
+/// Create a new session, persisting the current active session first if needed.
 pub(super) async fn runtime_session_new(
     agent: &Arc<Mutex<Agent>>,
     state: &mut RuntimeActorState,
     event_tx: &mpsc::UnboundedSender<RuntimeEventEnvelope>,
     seq: &mut u64,
 ) -> Result<(), String> {
+    // Session commands are a no-op without persistence backing.
     let Some(store) = state.session_store.as_ref() else {
         return Err("session store is unavailable".to_string());
     };
 
     if let Some(active_id) = state.active_session.as_deref() {
+        // Persist the current active snapshot before starting a fresh session.
         let snapshot = agent.lock().await.snapshot_session();
         store
             .save(active_id, &snapshot)
             .map_err(|e| format!("failed to persist session {active_id}: {e}"))?;
     }
 
+    // Reset the in-memory agent and seed a brand new persisted session id.
     let snapshot = {
         let mut guard = agent.lock().await;
         guard.reset_session();
@@ -40,6 +48,7 @@ pub(super) async fn runtime_session_new(
     Ok(())
 }
 
+/// Resume a specific persisted session id and make it active.
 pub(super) async fn runtime_session_resume(
     agent: &Arc<Mutex<Agent>>,
     state: &mut RuntimeActorState,
@@ -47,17 +56,20 @@ pub(super) async fn runtime_session_resume(
     event_tx: &mpsc::UnboundedSender<RuntimeEventEnvelope>,
     seq: &mut u64,
 ) -> Result<(), String> {
+    // Session commands are a no-op without persistence backing.
     let Some(store) = state.session_store.as_ref() else {
         return Err("session store is unavailable".to_string());
     };
 
     if let Some(active_id) = state.active_session.as_deref() {
+        // Persist current active state before swapping to a different session.
         let snapshot = agent.lock().await.snapshot_session();
         store
             .save(active_id, &snapshot)
             .map_err(|e| format!("failed to persist session {active_id}: {e}"))?;
     }
 
+    // Load and restore the requested snapshot into the in-memory agent.
     let snapshot = store
         .load(session_id)
         .map_err(|e| format!("failed to load session {session_id}: {e}"))?;
@@ -65,6 +77,7 @@ pub(super) async fn runtime_session_resume(
         let mut guard = agent.lock().await;
         guard.restore_session(snapshot.clone());
     }
+    // Save immediately so it becomes "last active" and has a refreshed mtime.
     store
         .save(session_id, &snapshot)
         .map_err(|e| format!("failed to refresh session {session_id}: {e}"))?;
@@ -79,12 +92,14 @@ pub(super) async fn runtime_session_resume(
     Ok(())
 }
 
+/// Compact the active session history and emit summary events.
 pub(super) async fn runtime_session_compact(
     agent: &Arc<Mutex<Agent>>,
     state: &mut RuntimeActorState,
     event_tx: &mpsc::UnboundedSender<RuntimeEventEnvelope>,
     seq: &mut u64,
 ) -> Result<(), String> {
+    // Compaction is performed by the agent so token accounting stays centralized.
     let report = {
         let mut guard = agent.lock().await;
         guard.compact_history()
@@ -103,6 +118,7 @@ pub(super) async fn runtime_session_compact(
         return Ok(());
     };
 
+    // Persist compacted history when session persistence is available.
     if let (Some(store), Some(active_id)) = (
         state.session_store.as_ref(),
         state.active_session.as_deref(),
@@ -142,12 +158,14 @@ pub(super) async fn runtime_session_compact(
     Ok(())
 }
 
+/// Persist the latest in-memory snapshot for the active session (if any).
 pub(super) async fn persist_active_session_snapshot(
     agent: &Arc<Mutex<Agent>>,
     state: &RuntimeActorState,
     event_tx: &mpsc::UnboundedSender<RuntimeEventEnvelope>,
     seq: &mut u64,
 ) {
+    // Persistence is best-effort; missing session/store simply means nothing to save.
     let Some(store) = state.session_store.as_ref() else {
         return;
     };
@@ -157,6 +175,7 @@ pub(super) async fn persist_active_session_snapshot(
 
     let snapshot = agent.lock().await.snapshot_session();
     if store.save(active_session, &snapshot).is_ok() {
+        // Emit "saved" only on success to avoid noisy transient errors in UX.
         emit_event(
             event_tx,
             seq,

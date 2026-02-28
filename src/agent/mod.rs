@@ -36,31 +36,45 @@ use normalization::{
     reasoning_traces, sanitize_conversation_history, sanitize_message, should_keep_message,
 };
 
+/// Tool-result placeholder inserted when cancellation interrupts tool execution.
 const CANCELLED_BY_USER_TOOL_RESULT: &str = "operation cancelled by user";
+/// Final response text returned when user cancellation wins the race.
 const CANCELLED_BY_USER_PROMPT_RESPONSE: &str = "operation cancelled by user";
+/// Soft threshold for emitting context-usage warnings.
 const CONTEXT_WARNING_FRACTION: f64 = 0.80;
+/// Hard threshold where compaction/error enforcement kicks in.
 const CONTEXT_HARD_LIMIT_FRACTION: f64 = 0.95;
+/// Target fraction after automatic (non-forced) compaction.
 const CONTEXT_AUTO_COMPACT_TARGET_FRACTION: f64 = 0.82;
+/// Target fraction for explicit/manual compaction.
 const CONTEXT_MANUAL_COMPACT_TARGET_FRACTION: f64 = 0.60;
 
 /// Persistable conversation + token state for session save/resume.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentSessionSnapshot {
+    /// Conversation history at snapshot time.
     pub messages: Vec<Message>,
+    /// Token accounting snapshot at snapshot time.
     pub tracker: TokenTrackerSnapshot,
 }
 
 /// Persistable mirror of [`TokenTracker`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenTrackerSnapshot {
+    /// Active context limit used for budgeting.
     pub context_limit: usize,
+    /// Cumulative prompt tokens across the session.
     pub total_prompt_tokens: u64,
+    /// Cumulative completion tokens across the session.
     pub total_completion_tokens: u64,
+    /// Prompt tokens for the most recent request.
     pub last_prompt_tokens: u64,
+    /// Completion tokens for the most recent request.
     pub last_completion_tokens: u64,
 }
 
 impl TokenTrackerSnapshot {
+    /// Capture a serializable snapshot from the live token tracker.
     fn from_tracker(tracker: &TokenTracker) -> Self {
         Self {
             context_limit: tracker.context_limit,
@@ -71,6 +85,7 @@ impl TokenTrackerSnapshot {
         }
     }
 
+    /// Rebuild a live token tracker from serialized snapshot values.
     fn into_tracker(self) -> TokenTracker {
         TokenTracker {
             context_limit: self.context_limit,
@@ -87,6 +102,7 @@ impl TokenTrackerSnapshot {
 /// This is a migration-friendly entry point for callers that want an explicit
 /// "runner" object while the legacy `Agent::send` API remains available.
 pub struct AgentRunner<'a> {
+    /// Mutable reference to the underlying agent instance.
     agent: &'a mut Agent,
 }
 
@@ -99,16 +115,27 @@ impl<'a> AgentRunner<'a> {
 
 /// The core agent that orchestrates the conversation and tool-use loop.
 pub struct Agent {
+    /// Model client implementation (HTTP client in prod, mocks in tests).
     client: Box<dyn ModelClient>,
+    /// Effective runtime/config settings.
     config: Config,
+    /// Registered tool implementations available to the model.
     tools: ToolRegistry,
+    /// Full conversation history sent on each request.
     messages: Vec<Message>,
+    /// Token usage tracker and context budget state.
     tracker: TokenTracker,
+    /// Terminal renderer used for live foreground UI.
     renderer: Renderer,
+    /// If true, suppress direct renderer output and prefer sinks.
     suppress_live_output: bool,
+    /// Optional legacy UI sink `(task_id, sender)` for background mode.
     live_output_sink: Option<(u64, mpsc::UnboundedSender<AgentUiEvent>)>,
+    /// Optional runtime event sink `(task_id, sender)` for normalized events.
     runtime_event_sink: Option<(u64, mpsc::UnboundedSender<RuntimeEventEnvelope>)>,
+    /// Monotonic sequence assigned to emitted runtime envelopes.
     runtime_event_seq: u64,
+    /// Optional cancellation signal receiver for the in-flight request.
     cancellation_rx: Option<watch::Receiver<bool>>,
 }
 
@@ -194,6 +221,7 @@ impl Agent {
         self.tracker = TokenTracker::new(context_limit);
     }
 
+    /// Warn/compact/error when history nears or exceeds context limits.
     fn enforce_context_budget(&mut self) -> Result<(), AgentError> {
         let context_limit = self.tracker.context_limit;
         if context_limit == 0 {
@@ -216,6 +244,8 @@ impl Agent {
         }
 
         if estimated_tokens >= hard_limit_tokens {
+            // Try automatic compaction before failing hard so long sessions can
+            // continue without manual intervention.
             if let Some(report) = compact_history_with_budget(
                 &mut self.messages,
                 context_limit,
@@ -245,6 +275,7 @@ impl Agent {
         self.cancellation_rx = rx;
     }
 
+    /// Return true when current request has been cancelled by caller.
     fn cancellation_requested(&self) -> bool {
         self.cancellation_rx.as_ref().is_some_and(|rx| *rx.borrow())
     }
@@ -254,6 +285,8 @@ impl Agent {
     /// they are executed and results are re-submitted automatically until
     /// either a text response is produced or `max_iterations` is reached.
     pub async fn send(&mut self, user_input: &str) -> Result<String, AgentError> {
+        // Normalize history before appending a new turn so malformed provider
+        // responses do not accumulate across requests.
         sanitize_conversation_history(&mut self.messages);
         self.messages.push(Message::user(user_input));
         if let Some(task) = self.current_task_ref() {
@@ -269,6 +302,8 @@ impl Agent {
 
         let mut iterations = 0;
 
+        // Iterative loop allows tool round-trips: assistant tool call -> tool
+        // execution -> follow-up model request with tool results.
         loop {
             iterations += 1;
             if iterations > self.config.agent.max_iterations {
@@ -341,6 +376,7 @@ impl Agent {
                 if let Some(cancel_rx) = &self.cancellation_rx {
                     let mut cancel_rx = cancel_rx.clone();
                     tokio::select! {
+                        // Cancellation wins immediately and exits the entire request.
                         _ = wait_for_cancellation(&mut cancel_rx) => {
                             if let Some(task) = self.current_task_ref() {
                                 let _ = self.emit_runtime_event(RuntimeEvent::Task(TaskEvent::Completed { task }));
@@ -443,6 +479,8 @@ impl Agent {
                     } else if let Some(cancel_rx) = &self.cancellation_rx {
                         let mut cancel_rx = cancel_rx.clone();
                         tokio::select! {
+                            // If cancellation arrives while a tool is running,
+                            // inject synthetic cancelled results for remaining calls.
                             _ = wait_for_cancellation(&mut cancel_rx) => {
                                 cancelled = true;
                                 CANCELLED_BY_USER_TOOL_RESULT.to_string()
@@ -487,6 +525,8 @@ impl Agent {
                     self.messages.push(Message::tool_result(&tc.id, &result));
 
                     if cancelled {
+                        // Ensure every declared tool call receives a result
+                        // message so provider-side tool-call bookkeeping stays valid.
                         for remaining_tc in tool_calls.iter().skip(idx + 1) {
                             self.messages.push(Message::tool_result(
                                 &remaining_tc.id,
@@ -531,6 +571,7 @@ impl Agent {
     }
 }
 
+/// Wait for cancellation signal state change (or return immediately if set).
 async fn wait_for_cancellation(cancel_rx: &mut watch::Receiver<bool>) {
     if *cancel_rx.borrow() {
         return;
@@ -538,6 +579,7 @@ async fn wait_for_cancellation(cancel_rx: &mut watch::Receiver<bool>) {
     let _ = cancel_rx.changed().await;
 }
 
+/// Build initial conversation message list from configured system prompt.
 fn initial_messages(config: &Config) -> Vec<Message> {
     if config.agent.system_prompt.trim().is_empty() {
         Vec::new()
@@ -566,6 +608,7 @@ mod tests {
     use std::collections::VecDeque;
     use std::sync::Mutex as StdMutex;
 
+    // Verifies reasoning key detector accepts known aliases and rejects non-reasoning keys.
     #[test]
     fn reasoning_key_detection() {
         assert!(is_reasoning_key("reasoning_content"));
@@ -574,6 +617,7 @@ mod tests {
         assert!(!is_reasoning_key("metadata"));
     }
 
+    // Verifies reasoning trace extraction reads multiple reasoning-like fields.
     #[test]
     fn extracts_reasoning_traces_from_message_extra() {
         let mut msg = Message::user("hello");
@@ -591,6 +635,7 @@ mod tests {
         assert!(traces[1].1.contains("done"));
     }
 
+    // Verifies reasoning extraction ignores null/metadata-only payloads.
     #[test]
     fn reasoning_value_to_text_ignores_null_and_metadata_ids() {
         let value = json!([
@@ -603,6 +648,7 @@ mod tests {
         assert!(reasoning_value_to_text(&value).is_none());
     }
 
+    // Verifies nested summary/text structures are flattened into reasoning text.
     #[test]
     fn reasoning_value_to_text_extracts_nested_text_fields() {
         let value = json!({
@@ -618,6 +664,7 @@ mod tests {
         assert!(!text.contains("ignore-me"));
     }
 
+    // Verifies sanitization drops assistant messages that have no content/tool calls.
     #[test]
     fn sanitize_history_drops_empty_assistant_messages() {
         let mut messages = vec![
@@ -637,6 +684,7 @@ mod tests {
         assert!(messages.iter().all(|m| m.role != Role::Assistant));
     }
 
+    // Verifies suppressed warnings are forwarded to legacy UI event sink.
     #[test]
     fn suppressed_warning_is_forwarded_to_ui_sink() {
         let mut agent = Agent::new(Config::default(), ToolRegistry::new());
@@ -655,6 +703,7 @@ mod tests {
         }
     }
 
+    // Verifies suppressed warnings are emitted on runtime event sink with task ref.
     #[test]
     fn suppressed_warning_is_forwarded_to_runtime_sink() {
         let mut agent = Agent::new(Config::default(), ToolRegistry::new());
@@ -674,6 +723,7 @@ mod tests {
         );
     }
 
+    // Verifies reasoning traces are forwarded to legacy UI sink when suppressed.
     #[test]
     fn suppressed_reasoning_is_forwarded_to_ui_sink() {
         let mut agent = Agent::new(Config::default(), ToolRegistry::new());
@@ -697,6 +747,7 @@ mod tests {
         }
     }
 
+    // Verifies session snapshot/restore round-trips messages and token counters.
     #[test]
     fn snapshot_and_restore_round_trip() {
         let mut agent = Agent::new(Config::default(), ToolRegistry::new());
@@ -721,6 +772,7 @@ mod tests {
         assert_eq!(agent.tracker.last_completion_tokens, 7);
     }
 
+    // Verifies model switch updates both API config and context limit tracker.
     #[test]
     fn switch_api_config_updates_model_and_context_limit() {
         let mut agent = Agent::new(Config::default(), ToolRegistry::new());
@@ -741,6 +793,7 @@ mod tests {
         assert_eq!(agent.tracker.context_limit, 42_000);
     }
 
+    // Verifies history compaction keeps system prefix and recent turns while shrinking history.
     #[test]
     fn compact_history_replaces_old_turns_with_summary() {
         let mut agent = Agent::new(Config::default(), ToolRegistry::new());
@@ -778,6 +831,7 @@ mod tests {
         }));
     }
 
+    // Verifies oversized single-turn prompts trigger explicit context-limit errors.
     #[tokio::test]
     async fn send_returns_context_limit_error_when_single_turn_is_too_large() {
         let mock = Box::new(MockClient::new(Vec::new()));
@@ -797,6 +851,7 @@ mod tests {
         ));
     }
 
+    /// Build an assistant message fixture with plain text content.
     fn assistant_message(content: &str) -> Message {
         Message {
             role: Role::Assistant,
@@ -808,11 +863,14 @@ mod tests {
         }
     }
 
+    /// FIFO mock model client for deterministic agent tests.
     struct MockClient {
+        /// Queued responses returned in order.
         responses: StdMutex<VecDeque<ChatResponse>>,
     }
 
     impl MockClient {
+        /// Create a mock client from a vector of canned responses.
         fn new(responses: Vec<ChatResponse>) -> Self {
             Self {
                 responses: StdMutex::new(responses.into()),
@@ -831,12 +889,16 @@ mod tests {
         }
     }
 
+    /// Model client that records incoming requests for later assertions.
     struct RecordingClient {
+        /// Queued responses returned in order.
         responses: StdMutex<VecDeque<ChatResponse>>,
+        /// Captured requests observed by `chat`.
         requests: StdMutex<Vec<ChatRequest>>,
     }
 
     impl RecordingClient {
+        /// Create a recording client with canned responses.
         fn new(responses: Vec<ChatResponse>) -> Self {
             Self {
                 responses: StdMutex::new(responses.into()),
@@ -844,6 +906,7 @@ mod tests {
             }
         }
 
+        /// Return a cloned snapshot of all captured requests.
         fn requests(&self) -> Vec<ChatRequest> {
             self.requests.lock().expect("requests lock").clone()
         }
@@ -871,6 +934,7 @@ mod tests {
         }
     }
 
+    /// Simple tool fixture that always returns a fixed success payload.
     struct EchoTool;
 
     #[async_trait]
@@ -904,7 +968,9 @@ mod tests {
         }
     }
 
+    /// Tool fixture that returns queued tmux snapshot strings.
     struct SnapshotCaptureTool {
+        /// Queue of snapshot strings returned in order.
         snapshots: StdMutex<VecDeque<String>>,
     }
 
@@ -950,6 +1016,7 @@ mod tests {
         }
     }
 
+    // Verifies runtime event stream ordering across a tool call round-trip.
     #[tokio::test]
     async fn runtime_stream_emits_ordered_events_for_tool_round_trip() {
         let first = ChatResponse {
@@ -1047,6 +1114,7 @@ mod tests {
         assert_eq!(labels, expected);
     }
 
+    // Verifies dynamic tmux snapshot prompt is replaced each request, not appended.
     #[tokio::test]
     async fn tmux_snapshot_prompt_is_replaced_each_request() {
         let first = ChatResponse {

@@ -7,6 +7,7 @@
 use crate::types::{Message, Role};
 use serde_json::Value;
 
+/// Extract normalized `(field, trace)` reasoning tuples from a message payload.
 pub(super) fn reasoning_traces(message: &Message) -> Vec<(String, String)> {
     message
         .extra
@@ -20,11 +21,13 @@ pub(super) fn reasoning_traces(message: &Message) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Return true when a key likely contains provider reasoning/thinking content.
 pub(super) fn is_reasoning_key(key: &str) -> bool {
     let k = key.to_lowercase();
     k.contains("reasoning") || k.contains("thinking") || k.contains("thought")
 }
 
+/// Sanitize all messages in-place and drop entries that carry no useful signal.
 pub(super) fn sanitize_conversation_history(messages: &mut Vec<Message>) {
     for message in messages.iter_mut() {
         sanitize_message(message);
@@ -32,6 +35,7 @@ pub(super) fn sanitize_conversation_history(messages: &mut Vec<Message>) {
     messages.retain(should_keep_message);
 }
 
+/// Normalize one message by trimming content and pruning empty metadata fields.
 pub(super) fn sanitize_message(message: &mut Message) {
     if let Some(content) = message.content.as_mut() {
         let trimmed = content.trim();
@@ -67,6 +71,7 @@ pub(super) fn sanitize_message(message: &mut Message) {
         .retain(|_, value| !value.is_null() && !is_empty_json_string(value));
 }
 
+/// Decide whether a sanitized message should stay in history.
 pub(super) fn should_keep_message(message: &Message) -> bool {
     match message.role {
         Role::System | Role::User => message.content.is_some(),
@@ -81,6 +86,7 @@ pub(super) fn should_keep_message(message: &Message) -> bool {
     }
 }
 
+/// Render an arbitrary reasoning JSON payload into a compact text block.
 pub(super) fn reasoning_value_to_text(value: &Value) -> Option<String> {
     let mut lines = Vec::<String>::new();
     collect_reasoning_strings(value, None, &mut lines);
@@ -102,6 +108,7 @@ pub(super) fn reasoning_value_to_text(value: &Value) -> Option<String> {
     }
 }
 
+/// Recursively collect reasoning-like text snippets from nested JSON values.
 fn collect_reasoning_strings(value: &Value, key: Option<&str>, out: &mut Vec<String>) {
     match value {
         Value::Null => {}
@@ -124,6 +131,7 @@ fn collect_reasoning_strings(value: &Value, key: Option<&str>, out: &mut Vec<Str
     }
 }
 
+/// Allowlist of common reasoning text keys seen across providers.
 fn is_reasoning_text_key(key: &str) -> bool {
     matches!(
         key.to_ascii_lowercase().as_str(),
@@ -146,6 +154,7 @@ fn is_reasoning_text_key(key: &str) -> bool {
     )
 }
 
+/// Return true for JSON strings that are present but effectively empty.
 fn is_empty_json_string(value: &Value) -> bool {
     value
         .as_str()

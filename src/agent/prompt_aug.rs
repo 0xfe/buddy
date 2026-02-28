@@ -7,6 +7,7 @@ use super::Agent;
 use crate::types::{Message, Role};
 use serde_json::Value;
 
+/// Maximum number of characters copied from a captured tmux pane snapshot.
 const MAX_TMUX_SCREENSHOT_CHARS: usize = 2_500;
 
 impl Agent {
@@ -28,6 +29,7 @@ impl Agent {
         set_primary_system_message(&mut self.messages, format!("{base}\n\n{snapshot_block}"));
     }
 
+    /// Capture a tmux snapshot and render it into a system-prompt section.
     async fn capture_tmux_snapshot_prompt_block(&self) -> Option<String> {
         if !self.tools.has_tool("capture-pane") {
             return None;
@@ -42,6 +44,7 @@ impl Agent {
     }
 }
 
+/// Replace the first system message (or insert one) with updated content.
 fn set_primary_system_message(messages: &mut Vec<Message>, content: String) {
     if let Some(first) = messages.first_mut() {
         if first.role == Role::System {
@@ -52,6 +55,7 @@ fn set_primary_system_message(messages: &mut Vec<Message>, content: String) {
     messages.insert(0, Message::system(content));
 }
 
+/// Extract human-usable tool text from either JSON envelope or raw output.
 fn tool_result_text(raw: &str) -> String {
     let Ok(value) = serde_json::from_str::<Value>(raw) else {
         return raw.to_string();
@@ -66,6 +70,7 @@ fn tool_result_text(raw: &str) -> String {
     }
 }
 
+/// Render a stable system-prompt block from the current tmux pane snapshot.
 fn render_tmux_snapshot_block(snapshot: &str) -> String {
     let mut clipped: String = snapshot.chars().take(MAX_TMUX_SCREENSHOT_CHARS).collect();
     if snapshot.chars().count() > MAX_TMUX_SCREENSHOT_CHARS {
@@ -83,18 +88,21 @@ do not run commands yet. Tell the user what is blocking the pane and offer to re
 mod tests {
     use super::{render_tmux_snapshot_block, tool_result_text};
 
+    /// Verifies JSON tool envelopes prefer the `result` field text.
     #[test]
     fn tool_result_text_prefers_result_field() {
         let raw = r#"{"result":"hello"}"#;
         assert_eq!(tool_result_text(raw), "hello");
     }
 
+    /// Verifies invalid JSON returns the original raw payload unchanged.
     #[test]
     fn tool_result_text_falls_back_to_raw_payload() {
         let raw = "not json";
         assert_eq!(tool_result_text(raw), "not json");
     }
 
+    /// Verifies oversized snapshots are clipped and marked as truncated.
     #[test]
     fn tmux_snapshot_block_truncates_large_snapshots() {
         let text = "x".repeat(3_000);

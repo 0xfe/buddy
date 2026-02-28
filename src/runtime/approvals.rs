@@ -1,4 +1,8 @@
 //! Approval policy and pending-approval resolution helpers.
+//!
+//! The runtime actor keeps pending shell approvals in-memory and resolves them
+//! either immediately (based on policy) or later when a frontend sends an
+//! explicit `RuntimeCommand::Approve`.
 
 use super::tasks::ActiveTask;
 use super::{emit_event, truncate_preview, RuntimeActorState};
@@ -11,11 +15,15 @@ use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 
+/// Pending approval entry tracked by runtime until resolved.
 pub(super) struct PendingRuntimeApproval {
+    /// Task that produced this approval request.
     pub(super) task_id: u64,
+    /// Broker request handle used to approve/deny the underlying command.
     pub(super) request: ShellApprovalRequest,
 }
 
+/// Handle an incoming shell approval request from the tool broker.
 pub(super) fn handle_approval_request(
     request: ShellApprovalRequest,
     state: &mut RuntimeActorState,
@@ -26,6 +34,8 @@ pub(super) fn handle_approval_request(
     seq: &mut u64,
 ) {
     let Some(active_task) = active_task else {
+        // Defensive fallback: if runtime lost task context, deny instead of
+        // allowing potentially unsafe execution.
         request.deny();
         emit_event(
             event_tx,
@@ -39,6 +49,7 @@ pub(super) fn handle_approval_request(
     };
 
     if let Some(decision) = active_approval_decision(&mut state.approval_policy) {
+        // Policy resolved immediately (all/none/until-active), no pending entry.
         resolve_pending_approval(
             PendingRuntimeApproval {
                 task_id: active_task.task_id,
@@ -51,6 +62,7 @@ pub(super) fn handle_approval_request(
         return;
     }
 
+    // Ask-mode path: emit waiting event and store request for later resolution.
     let approval_id = format!("appr-{}-{:04x}", active_task.task_id, *next_approval_nonce);
     *next_approval_nonce = next_approval_nonce.saturating_add(1);
     emit_event(
@@ -79,6 +91,7 @@ pub(super) fn handle_approval_request(
     );
 }
 
+/// Compute an immediate approval decision from the active runtime policy.
 pub(super) fn active_approval_decision(
     policy: &mut RuntimeApprovalPolicy,
 ) -> Option<ApprovalDecision> {
@@ -87,9 +100,11 @@ pub(super) fn active_approval_decision(
         RuntimeApprovalPolicy::All => Some(ApprovalDecision::Approve),
         RuntimeApprovalPolicy::None => Some(ApprovalDecision::Deny),
         RuntimeApprovalPolicy::Until { expires_at_unix_ms } => {
+            // `Until` auto-approves only while the expiration remains in the future.
             if now_unix_millis() < *expires_at_unix_ms {
                 Some(ApprovalDecision::Approve)
             } else {
+                // Expired windows self-reset to `Ask` so future checks behave predictably.
                 *policy = RuntimeApprovalPolicy::Ask;
                 None
             }
@@ -97,6 +112,7 @@ pub(super) fn active_approval_decision(
     }
 }
 
+/// Resolve one pending approval and emit a user-visible warning event.
 pub(super) fn resolve_pending_approval(
     pending: PendingRuntimeApproval,
     decision: ApprovalDecision,
@@ -130,10 +146,12 @@ pub(super) fn resolve_pending_approval(
     }
 }
 
+/// Deny and remove all pending approvals tied to a task.
 pub(super) fn deny_pending_approvals_for_task(
     task_id: u64,
     pending_approvals: &mut HashMap<String, PendingRuntimeApproval>,
 ) {
+    // Collect ids first to avoid mutable iteration + remove conflicts.
     let approval_ids = pending_approvals
         .iter()
         .filter_map(|(id, pending)| (pending.task_id == task_id).then_some(id.clone()))
@@ -145,6 +163,7 @@ pub(super) fn deny_pending_approvals_for_task(
     }
 }
 
+/// Return the current wall-clock unix time in milliseconds.
 fn now_unix_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
