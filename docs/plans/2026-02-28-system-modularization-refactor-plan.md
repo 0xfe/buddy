@@ -3,12 +3,12 @@
 ## Status
 
 - Program status: Active
-- Current milestone: `M3` (split `tools/execution.rs` into backend/process/tmux modules)
-- Current task: `M3.1` (convert `src/tools/execution.rs` into facade + shared contracts/types)
+- Current milestone: `M4` (split `config.rs` and `auth.rs`)
+- Current task: `M4.1` (move config types/defaults into `config/{types,defaults}.rs`)
 - Next steps:
-  1. Land `M3.1` with a behavior-preserving facade extraction.
-  2. Land `M3.2` and `M3.3` to separate process/file I/O and tmux concerns.
-  3. Keep milestone-level regression checks green after each extraction slice.
+  1. Land `M4.1` with behavior-preserving config type/default extraction.
+  2. Continue `M4.2` + `M4.3` with clear module boundaries and stable re-exports.
+  3. Keep `cargo test` green after each M4 task slice.
 
 ## Maintainer Instructions
 
@@ -116,11 +116,11 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 
 ## M3: Split `tools/execution.rs` into backend/process/tmux modules
 
-- [ ] M3.1 Convert `src/tools/execution.rs` into `src/tools/execution/mod.rs` facade and extract shared types/contracts. — `<commit-id>`
-- [ ] M3.2 Extract process and file I/O helper layers. — `<commit-id>`
-- [ ] M3.3 Extract tmux modules (`pane`, `prompt`, `capture`, `send_keys`, `run`) with existing behavior preserved. — `<commit-id>`
-- [ ] M3.4 Extract backend modules (`local`, `container`, `ssh`) including lifecycle cleanup logic and test hooks. — `<commit-id>`
-- [ ] M3.5 Relocate/augment execution regression tests (tmux creation/reuse, no-wait constraints, ssh cleanup, podman/docker differences). — `<commit-id>`
+- [x] M3.1 Convert `src/tools/execution.rs` into `src/tools/execution/mod.rs` facade and extract shared types/contracts. — `b923755`
+- [x] M3.2 Extract process and file I/O helper layers. — `2a46328`
+- [x] M3.3 Extract tmux modules (`pane`, `prompt`, `capture`, `send_keys`, `run`) with existing behavior preserved. — `93fb3f2`
+- [x] M3.4 Extract backend modules (`local`, `container`, `ssh`) including lifecycle cleanup logic and test hooks. — `bfb153c`
+- [x] M3.5 Relocate/augment execution regression tests (tmux creation/reuse, no-wait constraints, ssh cleanup, podman/docker differences). — `21a7a6a`
 - Acceptance gate:
   1. Public `ExecutionContext` API unchanged.
   2. Tmux/session/pane behaviors unchanged across local/container/ssh.
@@ -191,3 +191,8 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 - 2026-02-28: Completed `M2.1`: split `repl_support` into `policy`, `task_state`, and `tool_payload` modules with a re-exporting facade to preserve call sites. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `d3be74e`.
 - 2026-02-28: Completed `M2.2`: converted `cli_event_renderer` into a reducer + per-event handlers (`warning`, `session`, `task`, `model`, `tool`, `metrics`) with unchanged runtime event semantics. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `794741f`.
 - 2026-02-28: Completed `M2.3`: added reducer-focused tests for approval state transitions, transient warning suppression, and tool-result branch rendering (including run_shell suppression behavior). Validation: `cargo fmt`, `cargo test -q` (green). Commit: `abcf21c`.
+- 2026-02-28: Completed `M3.1`: converted execution into `src/tools/execution/mod.rs` with extracted `types.rs` and `contracts.rs` facade boundaries. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `b923755`.
+- 2026-02-28: Completed `M3.2`: extracted `process.rs` and `file_io.rs` for command execution/wait behavior and command-backed file operations. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `2a46328`.
+- 2026-02-28: Completed `M3.3`: moved tmux logic into `tmux/{pane,prompt,capture,send_keys,run}.rs` and kept behavior stable across local/container/ssh flows. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `93fb3f2`.
+- 2026-02-28: Completed `M3.4`: moved backend implementations to `backend/{local,container,ssh}.rs`, including ssh lifecycle cleanup/test hooks and local tmux safety helpers. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `bfb153c`.
+- 2026-02-28: Completed `M3.5`: relocated execution regression tests into process/backend/tmux modules and added explicit no-wait constraint tests for non-tmux container/ssh backends. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `21a7a6a`.
