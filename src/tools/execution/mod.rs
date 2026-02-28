@@ -6,8 +6,12 @@
 //! - a running container (`docker exec` / `podman exec`)
 //! - a remote host over SSH with a persistent master connection
 
+mod contracts;
+mod types;
+
 use crate::error::ToolError;
 use async_trait::async_trait;
+use contracts::{CommandBackend, ExecutionBackendOps};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -20,179 +24,18 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, timeout, Duration, Instant};
+use types::{
+    ContainerContext, ContainerEngine, ContainerEngineKind, ContainerTmuxContext, EnsuredTmuxPane,
+    ExecOutput, LocalBackend, LocalTmuxContext, SshContext, LEGACY_TMUX_WINDOW_NAME,
+    TMUX_PANE_TITLE, TMUX_WINDOW_NAME,
+};
+
+pub use types::{CapturePaneOptions, SendKeysOptions, ShellWait, TmuxAttachInfo, TmuxAttachTarget};
 
 /// Runtime-execution backend shared across tool instances.
 #[derive(Clone)]
 pub struct ExecutionContext {
     inner: Arc<dyn ExecutionBackendOps>,
-}
-
-/// Internal backend trait used to decouple `ExecutionContext` from concrete
-/// local/container/ssh implementations.
-#[async_trait]
-trait ExecutionBackendOps: Send + Sync {
-    fn summary(&self) -> String;
-    fn tmux_attach_info(&self) -> Option<TmuxAttachInfo>;
-    fn startup_existing_tmux_pane(&self) -> Option<String>;
-    fn capture_pane_available(&self) -> bool;
-    async fn capture_pane(&self, options: CapturePaneOptions) -> Result<String, ToolError>;
-    async fn send_keys(&self, options: SendKeysOptions) -> Result<String, ToolError>;
-    async fn run_shell_command(
-        &self,
-        command: &str,
-        wait: ShellWait,
-    ) -> Result<ExecOutput, ToolError>;
-    async fn read_file(&self, path: &str) -> Result<String, ToolError>;
-    async fn write_file(&self, path: &str, content: &str) -> Result<(), ToolError>;
-}
-
-/// Shared contract for backends that can execute shell snippets.
-#[async_trait]
-trait CommandBackend: Send + Sync {
-    async fn run_command(
-        &self,
-        command: &str,
-        stdin: Option<&[u8]>,
-        wait: ShellWait,
-    ) -> Result<ExecOutput, ToolError>;
-}
-
-/// Structured process output for shell-style commands.
-pub struct ExecOutput {
-    pub exit_code: i32,
-    pub stdout: String,
-    pub stderr: String,
-}
-
-/// Waiting behavior for `run_shell` execution.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ShellWait {
-    /// Wait for command completion with no explicit timeout.
-    Wait,
-    /// Wait for command completion, but fail if it exceeds this timeout.
-    WaitWithTimeout(Duration),
-    /// Do not wait for completion; fire command and return immediately.
-    NoWait,
-}
-
-/// Options for tmux `capture-pane` operations.
-///
-/// These options are intentionally close to tmux's native flags so tool-level
-/// callers can expose common capture behaviors without coupling to shell text.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CapturePaneOptions {
-    pub target: Option<String>,
-    pub start: Option<String>,
-    pub end: Option<String>,
-    pub join_wrapped_lines: bool,
-    pub preserve_trailing_spaces: bool,
-    pub include_escape_sequences: bool,
-    pub escape_non_printable: bool,
-    pub include_alternate_screen: bool,
-    pub delay: Duration,
-}
-
-impl Default for CapturePaneOptions {
-    fn default() -> Self {
-        Self {
-            target: None,
-            start: None,
-            end: None,
-            join_wrapped_lines: true,
-            preserve_trailing_spaces: false,
-            include_escape_sequences: false,
-            escape_non_printable: false,
-            include_alternate_screen: false,
-            delay: Duration::ZERO,
-        }
-    }
-}
-
-/// Options for tmux key injection against a pane.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SendKeysOptions {
-    pub target: Option<String>,
-    pub keys: Vec<String>,
-    pub literal_text: Option<String>,
-    pub press_enter: bool,
-    pub delay: Duration,
-}
-
-impl Default for SendKeysOptions {
-    fn default() -> Self {
-        Self {
-            target: None,
-            keys: Vec::new(),
-            literal_text: None,
-            press_enter: false,
-            delay: Duration::ZERO,
-        }
-    }
-}
-
-/// Attach metadata for tmux-backed execution targets.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TmuxAttachInfo {
-    pub session: String,
-    pub window: &'static str,
-    pub target: TmuxAttachTarget,
-}
-
-/// Concrete execution target for tmux attach instructions.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum TmuxAttachTarget {
-    Local,
-    Ssh { target: String },
-    Container { engine: String, container: String },
-}
-
-struct ContainerContext {
-    engine: ContainerEngine,
-    container: String,
-}
-
-struct LocalBackend;
-
-struct ContainerTmuxContext {
-    engine: ContainerEngine,
-    container: String,
-    tmux_session: String,
-    configured_tmux_pane: Mutex<Option<String>>,
-    startup_existing_tmux_pane: Option<String>,
-}
-
-struct ContainerEngine {
-    command: &'static str,
-    kind: ContainerEngineKind,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ContainerEngineKind {
-    Docker,
-    Podman,
-}
-
-const TMUX_WINDOW_NAME: &str = "shared";
-const LEGACY_TMUX_WINDOW_NAME: &str = "buddy-shared";
-
-struct LocalTmuxContext {
-    tmux_session: String,
-    configured_tmux_pane: Mutex<Option<String>>,
-    startup_existing_tmux_pane: Option<String>,
-}
-
-struct SshContext {
-    target: String,
-    control_path: PathBuf,
-    tmux_session: Option<String>,
-    configured_tmux_pane: Mutex<Option<String>>,
-    startup_existing_tmux_pane: Option<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct EnsuredTmuxPane {
-    pane_id: String,
-    created: bool,
 }
 
 impl SshContext {
@@ -528,8 +371,9 @@ impl ExecutionContext {
                 let session_name = requested_tmux_session
                     .unwrap_or_else(|| default_tmux_session_name_for_agent(agent_name));
                 let session_q = shell_quote(&session_name);
+                let window_q = shell_quote(TMUX_WINDOW_NAME);
                 let script = format!(
-                    "tmux has-session -t {session_q} 2>/dev/null || tmux new-session -d -s {session_q}"
+                    "tmux has-session -t {session_q} 2>/dev/null || tmux new-session -d -s {session_q} -n {window_q}"
                 );
                 let tmux_result =
                     run_ssh_raw_process(&target, &control_path, &script, None).await?;
@@ -1139,10 +983,16 @@ async fn ensure_not_in_managed_local_tmux_pane() -> Result<(), ToolError> {
         return Ok(());
     };
     let pane_q = shell_quote(&current_pane);
-    let inspect = format!("tmux display-message -p -t {pane_q} '#{{window_name}}'");
+    let inspect =
+        format!("tmux display-message -p -t {pane_q} '#{{pane_title}}\n#{{window_name}}'");
     let output = run_sh_process("sh", &inspect, None).await?;
     let output = ensure_success(output, "failed to inspect current tmux pane".into())?;
-    if is_managed_tmux_window_name(output.stdout.trim()) {
+    let mut lines = output.stdout.lines();
+    let pane_title = lines.next().unwrap_or_default().trim();
+    let window_name = lines.next().unwrap_or_default().trim();
+    if pane_title == TMUX_PANE_TITLE
+        || (pane_title.is_empty() && window_name == LEGACY_TMUX_WINDOW_NAME)
+    {
         return Err(ToolError::ExecutionFailed(
             "buddy should be run from a different terminal when --tmux is enabled (current pane is shared)".into(),
         ));
@@ -1150,6 +1000,7 @@ async fn ensure_not_in_managed_local_tmux_pane() -> Result<(), ToolError> {
     Ok(())
 }
 
+#[cfg(test)]
 fn is_managed_tmux_window_name(window_name: &str) -> bool {
     let normalized = window_name.trim();
     normalized == TMUX_WINDOW_NAME || normalized == LEGACY_TMUX_WINDOW_NAME
@@ -1587,10 +1438,12 @@ async fn run_container_tmux_process(
 fn ensure_tmux_pane_script(tmux_session: &str) -> String {
     let session_q = shell_quote(tmux_session);
     let window_q = shell_quote(TMUX_WINDOW_NAME);
+    let pane_title_q = shell_quote(TMUX_PANE_TITLE);
     format!(
         "set -e\n\
 SESSION={session_q}\n\
 WINDOW={window_q}\n\
+PANE_TITLE={pane_title_q}\n\
 CREATED=0\n\
 if tmux has-session -t \"$SESSION\" 2>/dev/null; then\n\
   :\n\
@@ -1602,7 +1455,23 @@ if ! tmux list-windows -t \"$SESSION\" -F '#{{window_name}}' | grep -Fx -- \"$WI
   tmux new-window -d -t \"$SESSION\" -n \"$WINDOW\"\n\
   CREATED=1\n\
 fi\n\
-PANE=\"$(tmux list-panes -t \"$SESSION:$WINDOW\" -F '#{{pane_id}}' | head -n1)\"\n\
+PANE=\"$(tmux list-panes -t \"$SESSION:$WINDOW\" -F '#{{pane_id}}\\t#{{pane_title}}' | awk -F '\\t' '$2==\"'\"$PANE_TITLE\"'\" {{print $1; exit}}')\"\n\
+if [ -z \"$PANE\" ]; then\n\
+  if [ \"$CREATED\" = \"1\" ]; then\n\
+    PANE=\"$(tmux list-panes -t \"$SESSION:$WINDOW\" -F '#{{pane_id}}' | head -n1)\"\n\
+  else\n\
+    PANE_COUNT=\"$(tmux list-panes -t \"$SESSION:$WINDOW\" -F '#{{pane_id}}' | wc -l | tr -d '[:space:]')\"\n\
+    if [ \"$PANE_COUNT\" = \"1\" ]; then\n\
+      PANE=\"$(tmux list-panes -t \"$SESSION:$WINDOW\" -F '#{{pane_id}}' | head -n1)\"\n\
+    else\n\
+      PANE=\"$(tmux split-window -d -P -F '#{{pane_id}}' -t \"$SESSION:$WINDOW\")\"\n\
+    fi\n\
+    CREATED=1\n\
+  fi\n\
+  if [ -n \"$PANE\" ]; then\n\
+    tmux select-pane -t \"$PANE\" -T \"$PANE_TITLE\" >/dev/null 2>&1 || true\n\
+  fi\n\
+fi\n\
 if [ -z \"$PANE\" ]; then\n\
   echo \"failed to resolve tmux pane target for $SESSION:$WINDOW\" >&2\n\
   exit 1\n\
@@ -2362,7 +2231,8 @@ mod tests {
         assert!(script.contains("CREATED=1"));
         assert!(script.contains("tmux new-session -d -s \"$SESSION\" -n \"$WINDOW\""));
         assert!(script.contains("tmux new-window -d -t \"$SESSION\" -n \"$WINDOW\""));
-        assert!(!script.contains("tmux split-window -d -t \"$SESSION:$WINDOW\""));
+        assert!(script.contains("tmux split-window -d -P -F '#{pane_id}' -t \"$SESSION:$WINDOW\""));
+        assert!(script.contains("tmux select-pane -t \"$PANE\" -T \"$PANE_TITLE\""));
     }
 
     #[test]
