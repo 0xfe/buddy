@@ -101,6 +101,7 @@ REPL input history is persisted to `~/.config/buddy/history` (disable with `disp
 
 - [`DESIGN.md`](DESIGN.md): full feature inventory and detailed behavior notes.
 - [`docs/architecture.md`](docs/architecture.md): module boundaries and extension points.
+- [`docs/refactor-playbook.md`](docs/refactor-playbook.md): boundary rules and behavior-preserving refactor workflow.
 - [`docs/tools.md`](docs/tools.md): built-in tool schemas, guardrails, and behavior.
 - [`docs/remote-execution.md`](docs/remote-execution.md): local/container/ssh/tmux execution model.
 - [`docs/terminal-repl.md`](docs/terminal-repl.md): REPL input, rendering, and runtime event UX.
