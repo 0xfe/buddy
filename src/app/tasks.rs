@@ -1,15 +1,15 @@
 //! Background runtime task state helpers for the REPL loop.
 
 use crate::app::approval::send_approval_decision;
+use buddy::config::Config;
 use buddy::repl::{
     format_elapsed, format_elapsed_coarse, timeout_suffix_for_task, ApprovalDecision,
     BackgroundTask, BackgroundTaskState, CompletedBackgroundTask, PendingApproval,
     RuntimeContextState,
 };
-use buddy::config::Config;
+use buddy::runtime::{BuddyRuntimeHandle, RuntimeCommand, RuntimeEventEnvelope};
 use buddy::ui::render::RenderSink;
 use buddy::ui::runtime;
-use buddy::runtime::{BuddyRuntimeHandle, RuntimeCommand, RuntimeEventEnvelope};
 use buddy::ui::terminal::settings;
 use std::time::Instant;
 use tokio::sync::mpsc;
@@ -27,24 +27,29 @@ pub(crate) fn collect_runtime_events(
 }
 
 /// Render runtime events into task/session/context state mutations.
+pub(crate) struct ProcessRuntimeEventsContext<'a> {
+    pub(crate) renderer: &'a dyn RenderSink,
+    pub(crate) background_tasks: &'a mut Vec<BackgroundTask>,
+    pub(crate) completed_tasks: &'a mut Vec<CompletedBackgroundTask>,
+    pub(crate) pending_approval: &'a mut Option<PendingApproval>,
+    pub(crate) config: &'a mut Config,
+    pub(crate) active_session: &'a mut String,
+    pub(crate) runtime_context: &'a mut RuntimeContextState,
+}
+
+/// Render runtime events into task/session/context state mutations.
 pub(crate) fn process_runtime_events(
-    renderer: &dyn RenderSink,
     events: &mut Vec<RuntimeEventEnvelope>,
-    background_tasks: &mut Vec<BackgroundTask>,
-    completed_tasks: &mut Vec<CompletedBackgroundTask>,
-    pending_approval: &mut Option<PendingApproval>,
-    config: &mut Config,
-    active_session: &mut String,
-    runtime_context: &mut RuntimeContextState,
+    context: &mut ProcessRuntimeEventsContext<'_>,
 ) {
     let mut context = runtime::RuntimeEventRenderContext {
-        renderer,
-        background_tasks,
-        completed_tasks,
-        pending_approval,
-        config,
-        active_session,
-        runtime_context,
+        renderer: context.renderer,
+        background_tasks: context.background_tasks,
+        completed_tasks: context.completed_tasks,
+        pending_approval: context.pending_approval,
+        config: context.config,
+        active_session: context.active_session,
+        runtime_context: context.runtime_context,
     };
     runtime::process_runtime_events(events, &mut context);
 }

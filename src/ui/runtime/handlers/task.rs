@@ -1,13 +1,13 @@
 //! Task runtime event handlers.
 
-use crate::ui::render::set_progress_enabled;
 use crate::runtime::TaskEvent;
+use crate::ui::render::set_progress_enabled;
 
-use crate::ui::runtime::RuntimeEventRenderContext;
 use crate::repl::{
     mark_task_running, mark_task_waiting_for_approval, BackgroundTask, BackgroundTaskState,
     CompletedBackgroundTask, PendingApproval,
 };
+use crate::ui::runtime::RuntimeEventRenderContext;
 
 pub(in crate::ui::runtime) fn handle_task(
     ctx: &mut RuntimeEventRenderContext<'_>,
@@ -50,7 +50,6 @@ pub(in crate::ui::runtime) fn handle_task(
                 mutation,
                 privesc,
                 why.clone(),
-                &approval_id,
             ) && ctx.pending_approval.is_none()
             {
                 *ctx.pending_approval = Some(PendingApproval {

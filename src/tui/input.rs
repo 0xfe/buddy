@@ -247,9 +247,11 @@ fn read_line_interactive(
                 state.clear_draft(prompt_mode);
                 finalize_editor(
                     &mut stderr,
-                    color,
-                    ssh_target,
-                    context_used_percent,
+                    PromptChrome {
+                        color,
+                        ssh_target,
+                        context_used_percent,
+                    },
                     prompt_mode,
                     approval_prompt,
                     &buffer,
@@ -262,9 +264,11 @@ fn read_line_interactive(
                     state.clear_draft(prompt_mode);
                     finalize_editor(
                         &mut stderr,
-                        color,
-                        ssh_target,
-                        context_used_percent,
+                        PromptChrome {
+                            color,
+                            ssh_target,
+                            context_used_percent,
+                        },
                         prompt_mode,
                         approval_prompt,
                         "",
@@ -277,9 +281,11 @@ fn read_line_interactive(
                 state.clear_draft(prompt_mode);
                 finalize_editor(
                     &mut stderr,
-                    color,
-                    ssh_target,
-                    context_used_percent,
+                    PromptChrome {
+                        color,
+                        ssh_target,
+                        context_used_percent,
+                    },
                     prompt_mode,
                     approval_prompt,
                     "",
@@ -648,9 +654,11 @@ fn render_editor(
 
     render_buffer(
         stderr,
-        color,
-        ssh_target,
-        context_used_percent,
+        PromptChrome {
+            color,
+            ssh_target,
+            context_used_percent,
+        },
         prompt_mode,
         approval_prompt,
         buffer,
@@ -708,9 +716,7 @@ fn render_editor(
 
 fn finalize_editor(
     stderr: &mut io::Stderr,
-    color: bool,
-    ssh_target: Option<&str>,
-    context_used_percent: Option<u16>,
+    chrome: PromptChrome<'_>,
     prompt_mode: PromptMode,
     approval_prompt: Option<&ApprovalPrompt<'_>>,
     buffer: &str,
@@ -721,25 +727,22 @@ fn finalize_editor(
     }
     stderr.queue(MoveToColumn(0))?;
     stderr.queue(Clear(ClearType::FromCursorDown))?;
-    render_buffer(
-        stderr,
-        color,
-        ssh_target,
-        context_used_percent,
-        prompt_mode,
-        approval_prompt,
-        buffer,
-    )?;
+    render_buffer(stderr, chrome, prompt_mode, approval_prompt, buffer)?;
     stderr.queue(Print("\r\n"))?;
     stderr.flush()?;
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+struct PromptChrome<'a> {
+    color: bool,
+    ssh_target: Option<&'a str>,
+    context_used_percent: Option<u16>,
+}
+
 fn render_buffer(
     stderr: &mut io::Stderr,
-    color: bool,
-    ssh_target: Option<&str>,
-    context_used_percent: Option<u16>,
+    chrome: PromptChrome<'_>,
     prompt_mode: PromptMode,
     approval_prompt: Option<&ApprovalPrompt<'_>>,
     buffer: &str,
@@ -748,9 +751,9 @@ fn render_buffer(
     let first = lines.next().unwrap_or("");
     write_primary_prompt(
         stderr,
-        color,
-        ssh_target,
-        context_used_percent,
+        chrome.color,
+        chrome.ssh_target,
+        chrome.context_used_percent,
         prompt_mode,
         approval_prompt,
     )?;
@@ -758,7 +761,7 @@ fn render_buffer(
 
     for line in lines {
         stderr.queue(Print("\r\n"))?;
-        write_continuation_prompt(stderr, color)?;
+        write_continuation_prompt(stderr, chrome.color)?;
         stderr.queue(Print(line))?;
     }
 

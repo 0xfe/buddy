@@ -329,9 +329,7 @@ pub(crate) fn parse_tmux_capture_output(
         })
         .find(|(_, marker)| marker.command_id > start_command_id);
 
-    let Some((end_idx, completion_marker)) = completion_prompt else {
-        return None;
-    };
+    let (end_idx, completion_marker) = completion_prompt?;
     if completion_marker.command_id != expected_completion_id {
         return Some(Err(ToolError::ExecutionFailed(format!(
             "unexpected tmux prompt command id: expected {}, got {}",
@@ -441,8 +439,7 @@ mod tests {
 
     #[test]
     fn parse_tmux_output_between_prompt_markers() {
-        let capture = format!(
-            "if [ \"${{BUDDY_PROMPT_LAYOUT:-}}\" != \"v3\" ]; then ... fi\n\
+        let capture = "if [ \"${BUDDY_PROMPT_LAYOUT:-}\" != \"v3\" ]; then ... fi\n\
 [buddy 1: 0] dev@host:~$ \n\
 dev@host:~$ ls -la\n\
 old-output\n\
@@ -455,7 +452,7 @@ total 8\n\
 file.txt\n\
 err.txt\n\
 [buddy 4: 0] dev@host:~$ "
-        );
+            .to_string();
         let out = parse_tmux_capture_output(&capture, 3, "ls -l")
             .expect("should parse prompts")
             .expect("should parse output");
@@ -470,22 +467,20 @@ err.txt\n\
 
     #[test]
     fn parse_tmux_output_waits_for_completion_prompt() {
-        let capture = format!(
-            "[buddy 10: 0] dev@host:~$ \n\
+        let capture = "[buddy 10: 0] dev@host:~$ \n\
 dev@host:~$ echo hi\n\
 hi\n"
-        );
+            .to_string();
         assert!(parse_tmux_capture_output(&capture, 10, "echo hi").is_none());
     }
 
     #[test]
     fn parse_tmux_output_reads_nonzero_exit_code_from_prompt() {
-        let capture = format!(
-            "[buddy 12: 0] dev@host:~$ \n\
+        let capture = "[buddy 12: 0] dev@host:~$ \n\
 dev@host:~$ missing_command\n\
 zsh: command not found: missing_command\n\
 [buddy 13: 127] dev@host:~$ "
-        );
+            .to_string();
         let out = parse_tmux_capture_output(&capture, 12, "missing_command")
             .expect("should parse prompts")
             .expect("should parse output");
@@ -495,14 +490,13 @@ zsh: command not found: missing_command\n\
 
     #[test]
     fn parse_tmux_output_ignores_repeated_start_marker() {
-        let capture = format!(
-            "[buddy 30: 0] dev@host:~$ \n\
+        let capture = "[buddy 30: 0] dev@host:~$ \n\
 old output\n\
 [buddy 30: 0] dev@host:~$ \n\
 dev@host:~$ ls\n\
 file.txt\n\
 [buddy 31: 0] dev@host:~$ "
-        );
+            .to_string();
         let out = parse_tmux_capture_output(&capture, 30, "ls")
             .expect("parse frame")
             .expect("parse output");
@@ -512,12 +506,11 @@ file.txt\n\
 
     #[test]
     fn parse_tmux_output_rejects_unexpected_next_id() {
-        let capture = format!(
-            "[buddy 20: 0] dev@host:~$ \n\
+        let capture = "[buddy 20: 0] dev@host:~$ \n\
 dev@host:~$ echo hi\n\
 hi\n\
 [buddy 22: 0] dev@host:~$ "
-        );
+            .to_string();
         let result = parse_tmux_capture_output(&capture, 20, "echo hi").expect("parse frame");
         match result {
             Ok(_) => panic!("should reject skipped command id"),

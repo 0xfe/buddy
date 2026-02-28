@@ -7,12 +7,10 @@
 mod handlers;
 
 use crate::config::Config;
-use crate::ui::render::RenderSink;
 use crate::runtime::{RuntimeEvent, RuntimeEventEnvelope};
+use crate::ui::render::RenderSink;
 
-use crate::repl::{
-    BackgroundTask, CompletedBackgroundTask, PendingApproval, RuntimeContextState,
-};
+use crate::repl::{BackgroundTask, CompletedBackgroundTask, PendingApproval, RuntimeContextState};
 
 /// Mutable render-time state mirrored from the interactive loop.
 pub struct RuntimeEventRenderContext<'a> {
@@ -47,8 +45,8 @@ pub fn process_runtime_events(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::render::{ProgressHandle, ProgressMetrics, Renderer};
     use crate::runtime::{TaskEvent, TaskRef, ToolEvent, WarningEvent};
+    use crate::ui::render::{ProgressHandle, ProgressMetrics, Renderer};
     use std::sync::{Arc, Mutex};
 
     #[derive(Clone, Default)]

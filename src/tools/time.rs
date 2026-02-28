@@ -73,7 +73,7 @@ fn build_snapshot(since_epoch: Duration) -> TimeSnapshot {
     let unix_millis = since_epoch
         .as_secs()
         .saturating_mul(1000)
-        .saturating_add((since_epoch.subsec_nanos() / 1_000_000) as u64);
+        .saturating_add(since_epoch.subsec_millis() as u64);
     let unix_nanos = since_epoch
         .as_secs()
         .saturating_mul(1_000_000_000)

@@ -4,8 +4,8 @@
 //! logic stays isolated from top-level boot/runtime wiring.
 
 use buddy::config::{select_model_profile, Config, ModelConfig};
-use buddy::ui::render::RenderSink;
 use buddy::runtime::{BuddyRuntimeHandle, RuntimeCommand};
+use buddy::ui::render::RenderSink;
 use buddy::ui::terminal as term_ui;
 
 /// Handle `/model` command behavior.

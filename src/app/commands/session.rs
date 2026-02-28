@@ -1,11 +1,11 @@
 //! Session command helpers for `/session` and CLI resume flows.
 
 use crate::cli;
-use buddy::repl::{format_elapsed, ResumeRequest};
 use buddy::agent::Agent;
-use buddy::ui::render::RenderSink;
+use buddy::repl::{format_elapsed, ResumeRequest};
 use buddy::runtime::{BuddyRuntimeHandle, RuntimeCommand};
 use buddy::session::{SessionStore, SessionSummary};
+use buddy::ui::render::RenderSink;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Handle `/session` command behavior.
@@ -164,10 +164,7 @@ pub(crate) fn initialize_active_session(
             let session_id = session_store
                 .create_new_session(&snapshot)
                 .map_err(|e| format!("failed to create new session: {e}"))?;
-            Ok((
-                buddy::repl::SessionStartupState::StartedNew,
-                session_id,
-            ))
+            Ok((buddy::repl::SessionStartupState::StartedNew, session_id))
         }
         Some(ResumeRequest::Last) => {
             let Some(last_id) = session_store
@@ -186,10 +183,7 @@ pub(crate) fn initialize_active_session(
             if let Err(e) = session_store.save(&last_id, &snapshot) {
                 renderer.warn(&format!("failed to refresh session {last_id}: {e}"));
             }
-            Ok((
-                buddy::repl::SessionStartupState::ResumedExisting,
-                last_id,
-            ))
+            Ok((buddy::repl::SessionStartupState::ResumedExisting, last_id))
         }
         Some(ResumeRequest::SessionId(session_id)) => {
             let snapshot = session_store

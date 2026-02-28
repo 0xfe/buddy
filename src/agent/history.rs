@@ -133,8 +133,7 @@ fn collect_turn_ranges(messages: &[Message], start_index: usize) -> Vec<TurnRang
     let mut turns = Vec::new();
     let mut current_start: Option<usize> = None;
 
-    for idx in start_index..messages.len() {
-        let message = &messages[idx];
+    for (idx, message) in messages.iter().enumerate().skip(start_index) {
         if message.role == Role::User {
             if let Some(start) = current_start {
                 turns.push(TurnRange { start, end: idx });

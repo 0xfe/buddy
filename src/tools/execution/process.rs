@@ -114,10 +114,10 @@ pub(crate) fn format_duration(duration: Duration) -> String {
         return format!("{millis}ms");
     }
     if millis == 0 {
-        if secs % 3600 == 0 {
+        if secs.is_multiple_of(3600) {
             return format!("{}h", secs / 3600);
         }
-        if secs % 60 == 0 {
+        if secs.is_multiple_of(60) {
             return format!("{}m", secs / 60);
         }
         return format!("{secs}s");

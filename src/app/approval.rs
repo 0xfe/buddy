@@ -1,11 +1,11 @@
 //! Approval prompt rendering and decision helpers.
 
 use buddy::repl::{mark_task_running, ApprovalDecision, BackgroundTask, PendingApproval};
-use buddy::ui::render::RenderSink;
 use buddy::runtime::{
     ApprovalDecision as RuntimeApprovalDecision, BuddyRuntimeHandle, RuntimeCommand,
 };
 use buddy::tools::execution::TmuxAttachInfo;
+use buddy::ui::render::RenderSink;
 use crossterm::style::{Color, Stylize};
 
 /// Build the target label used in approval prompts.

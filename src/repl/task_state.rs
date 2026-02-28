@@ -201,7 +201,6 @@ pub fn mark_task_waiting_for_approval(
     _mutation: Option<bool>,
     _privesc: Option<bool>,
     _why: Option<String>,
-    _approval_id: &str,
 ) -> bool {
     let Some(task) = tasks.iter_mut().find(|task| task.id == task_id) else {
         return false;

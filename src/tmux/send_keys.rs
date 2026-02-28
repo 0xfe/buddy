@@ -39,10 +39,7 @@ pub(crate) async fn send_tmux_line(
 }
 
 /// Send a full command line (text + Enter) to local tmux.
-pub(crate) async fn send_local_tmux_line(
-    pane_id: &str,
-    text: &str,
-) -> Result<(), ToolError> {
+pub(crate) async fn send_local_tmux_line(pane_id: &str, text: &str) -> Result<(), ToolError> {
     let pane_q = shell_quote(pane_id);
     let text_q = shell_quote(text);
     let send_text = run_sh_process(
@@ -161,20 +158,14 @@ pub(crate) async fn send_container_tmux_keys(
 }
 
 /// Build literal tmux send-keys shell command.
-pub(crate) fn build_tmux_send_literal_command(
-    target: &str,
-    text: &str,
-) -> String {
+pub(crate) fn build_tmux_send_literal_command(target: &str, text: &str) -> String {
     let target_q = shell_quote(target);
     let text_q = shell_quote(text);
     format!("tmux send-keys -l -t {target_q} {text_q}")
 }
 
 /// Build tmux send-keys command for key sequence arguments.
-pub(crate) fn build_tmux_send_keys_command(
-    target: &str,
-    keys: &[String],
-) -> String {
+pub(crate) fn build_tmux_send_keys_command(target: &str, keys: &[String]) -> String {
     let target_q = shell_quote(target);
     let keys_q = keys
         .iter()

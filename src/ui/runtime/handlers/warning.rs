@@ -19,10 +19,7 @@ pub(in crate::ui::runtime) fn handle_warning(
     }
 }
 
-pub(in crate::ui::runtime) fn handle_error(
-    ctx: &RuntimeEventRenderContext<'_>,
-    event: ErrorEvent,
-) {
+pub(in crate::ui::runtime) fn handle_error(ctx: &RuntimeEventRenderContext<'_>, event: ErrorEvent) {
     if let Some(task) = event.task {
         ctx.renderer
             .error(&format!("[task #{}] {}", task.task_id, event.message));

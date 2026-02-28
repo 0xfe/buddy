@@ -95,9 +95,9 @@ impl ApiClient {
                 .and_then(ApiError::status_code)
                 .is_some_and(|status| status == 401)
             {
-                return Err(ApiError::LoginRequired(format!(
-                    "OpenAI login is no longer valid. Run `buddy login` and retry.",
-                )));
+                return Err(ApiError::LoginRequired(
+                    "OpenAI login is no longer valid. Run `buddy login` and retry.".to_string(),
+                ));
             }
         }
 
@@ -173,11 +173,13 @@ mod tests {
             tokio::time::sleep(Duration::from_secs(5)).await;
         });
 
-        let mut api = ApiConfig::default();
-        api.base_url = format!("http://{addr}");
-        api.api_key = "test-key".to_string();
-        api.model = "dummy-model".to_string();
-        api.protocol = ApiProtocol::Completions;
+        let api = ApiConfig {
+            base_url: format!("http://{addr}"),
+            api_key: "test-key".to_string(),
+            model: "dummy-model".to_string(),
+            protocol: ApiProtocol::Completions,
+            ..ApiConfig::default()
+        };
 
         let client = ApiClient::new(&api, Duration::from_millis(50));
         let request = ChatRequest {
@@ -229,11 +231,13 @@ mod tests {
             }
         });
 
-        let mut api = ApiConfig::default();
-        api.base_url = format!("http://{addr}");
-        api.api_key = "test-key".to_string();
-        api.model = "dummy-model".to_string();
-        api.protocol = ApiProtocol::Completions;
+        let api = ApiConfig {
+            base_url: format!("http://{addr}"),
+            api_key: "test-key".to_string(),
+            model: "dummy-model".to_string(),
+            protocol: ApiProtocol::Completions,
+            ..ApiConfig::default()
+        };
 
         let retry_policy = RetryPolicy {
             max_attempts: 2,
@@ -258,9 +262,11 @@ mod tests {
 
     #[test]
     fn api_client_adds_protocol_mismatch_hint_to_404() {
-        let mut api = ApiConfig::default();
-        api.protocol = ApiProtocol::Responses;
-        api.base_url = "https://example.com/v1".to_string();
+        let api = ApiConfig {
+            protocol: ApiProtocol::Responses,
+            base_url: "https://example.com/v1".to_string(),
+            ..ApiConfig::default()
+        };
         let client =
             ApiClient::new_with_retry_policy(&api, Duration::from_secs(1), RetryPolicy::default());
         let err = transport::with_diagnostic_hints(

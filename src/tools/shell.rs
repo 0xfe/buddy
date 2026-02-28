@@ -12,9 +12,9 @@ use super::execution::{ExecutionContext, ShellWait};
 use super::result_envelope::wrap_result;
 use super::{Tool, ToolContext, ToolStreamEvent};
 use crate::error::ToolError;
-use crate::ui::render::Renderer;
 use crate::textutil::truncate_with_suffix_by_bytes;
 use crate::types::{FunctionDefinition, ToolDefinition};
+use crate::ui::render::Renderer;
 
 /// Maximum characters of command output to return.
 const MAX_OUTPUT_LEN: usize = 4000;

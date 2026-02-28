@@ -65,10 +65,7 @@ pub fn active_approval_decision(policy: &mut ApprovalPolicy) -> Option<ApprovalD
 }
 
 /// Apply `/approve` command update to current policy.
-pub fn update_approval_policy(
-    input: &str,
-    policy: &mut ApprovalPolicy,
-) -> Result<String, String> {
+pub fn update_approval_policy(input: &str, policy: &mut ApprovalPolicy) -> Result<String, String> {
     let normalized = input.trim().to_ascii_lowercase();
     if normalized.is_empty() {
         return Err("Usage: /approve all|ask|none|<duration>".to_string());

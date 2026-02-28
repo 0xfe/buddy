@@ -11,10 +11,7 @@ use crate::tools::execution::types::{CapturePaneOptions, ContainerTmuxContext};
 use super::run::latest_prompt_marker;
 
 /// Build `tmux capture-pane` shell command from capture options.
-pub(crate) fn build_capture_pane_command(
-    target: &str,
-    options: &CapturePaneOptions,
-) -> String {
+pub(crate) fn build_capture_pane_command(target: &str, options: &CapturePaneOptions) -> String {
     let mut cmd = String::from("tmux capture-pane -p");
     if options.join_wrapped_lines {
         cmd.push_str(" -J");
@@ -162,9 +159,7 @@ pub(crate) async fn capture_tmux_pane(
 }
 
 /// Capture full history for local tmux pane parsing.
-pub(crate) async fn capture_local_tmux_pane(
-    pane_id: &str,
-) -> Result<String, ToolError> {
+pub(crate) async fn capture_local_tmux_pane(pane_id: &str) -> Result<String, ToolError> {
     let capture_cmd = build_capture_pane_command(pane_id, &full_history_capture_options());
     let capture = run_sh_process("sh", &capture_cmd, None).await?;
     ensure_success(capture, "failed to capture tmux pane".into()).map(|out| out.stdout)
@@ -201,9 +196,7 @@ pub(crate) async fn wait_for_tmux_any_prompt(
 }
 
 /// Wait until any prompt marker is visible in local tmux pane.
-pub(crate) async fn wait_for_local_tmux_any_prompt(
-    pane_id: &str,
-) -> Result<(), ToolError> {
+pub(crate) async fn wait_for_local_tmux_any_prompt(pane_id: &str) -> Result<(), ToolError> {
     const MAX_POLLS: usize = 72000;
     for _ in 0..MAX_POLLS {
         let capture = capture_local_tmux_pane(pane_id).await?;
@@ -281,8 +274,10 @@ mod tests {
         let err = ToolError::ExecutionFailed(
             "failed to capture tmux pane: no alternate screen".to_string(),
         );
-        let mut with_alt = CapturePaneOptions::default();
-        with_alt.include_alternate_screen = true;
+        let with_alt = CapturePaneOptions {
+            include_alternate_screen: true,
+            ..CapturePaneOptions::default()
+        };
         assert!(should_fallback_from_alternate_screen(&with_alt, &err));
 
         let without_alt = CapturePaneOptions::default();

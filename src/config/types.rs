@@ -46,8 +46,10 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         let models = default_models_map();
-        let mut agent = AgentConfig::default();
-        agent.model = DEFAULT_MODEL_PROFILE_NAME.into();
+        let agent = AgentConfig {
+            model: DEFAULT_MODEL_PROFILE_NAME.into(),
+            ..AgentConfig::default()
+        };
         let api = super::resolve::resolve_active_api_with(
             &models,
             &agent.model,

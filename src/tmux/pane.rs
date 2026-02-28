@@ -95,9 +95,7 @@ pub(crate) async fn ensure_container_tmux_pane(
 }
 
 /// Parse pane ID and created flag returned by `ensure_tmux_pane_script`.
-pub(crate) fn parse_ensured_tmux_pane(
-    output: &str,
-) -> Option<EnsuredTmuxPane> {
+pub(crate) fn parse_ensured_tmux_pane(output: &str) -> Option<EnsuredTmuxPane> {
     let mut lines = output.lines();
     let pane_id = lines.next()?.trim();
     let created_raw = lines.next()?.trim();

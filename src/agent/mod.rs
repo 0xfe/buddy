@@ -8,13 +8,13 @@
 use crate::api::{ApiClient, ModelClient};
 use crate::config::{ApiConfig, Config};
 use crate::error::AgentError;
-use crate::ui::render::Renderer;
 use crate::runtime::{
     MetricsEvent, ModelEvent, RuntimeEvent, RuntimeEventEnvelope, TaskEvent, ToolEvent,
 };
 use crate::tokens::{self, TokenTracker};
 use crate::tools::{ToolContext, ToolRegistry};
 use crate::types::{ChatRequest, Message};
+use crate::ui::render::Renderer;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, watch};
 

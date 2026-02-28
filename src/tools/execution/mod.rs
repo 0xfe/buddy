@@ -13,6 +13,10 @@ pub(crate) mod process;
 pub(crate) mod types;
 
 use crate::error::ToolError;
+use crate::tmux::pane::{ensure_container_tmux_pane, ensure_local_tmux_pane, ensure_tmux_pane};
+use crate::tmux::prompt::{
+    ensure_container_tmux_prompt_setup, ensure_local_tmux_prompt_setup, ensure_tmux_prompt_setup,
+};
 use backend::local::ensure_not_in_managed_local_tmux_pane;
 use backend::ssh::{
     build_ssh_control_path, close_ssh_control_connection, default_tmux_session_name_for_agent,
@@ -25,10 +29,6 @@ use process::{
 #[cfg(test)]
 use std::path::PathBuf;
 use std::sync::Arc;
-use crate::tmux::pane::{ensure_container_tmux_pane, ensure_local_tmux_pane, ensure_tmux_pane};
-use crate::tmux::prompt::{
-    ensure_container_tmux_prompt_setup, ensure_local_tmux_prompt_setup, ensure_tmux_prompt_setup,
-};
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 #[cfg(test)]
@@ -338,7 +338,7 @@ impl ExecutionContext {
             && options
                 .literal_text
                 .as_deref()
-                .map_or(true, |text| text.trim().is_empty())
+                .is_none_or(|text| text.trim().is_empty())
             && !options.press_enter
         {
             return Err(ToolError::InvalidArguments(

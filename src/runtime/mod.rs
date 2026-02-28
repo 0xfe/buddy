@@ -137,18 +137,18 @@ pub fn spawn_runtime_with_shared_agent(
         loop {
             tokio::select! {
                 Some(command) = command_rx.recv() => {
-                    let should_stop = handle_runtime_command(
-                        command,
-                        &agent,
-                        &mut state,
-                        &mut active_task,
-                        &mut next_task_id,
-                        &mut pending_approvals,
-                        &event_tx,
-                        &mut seq,
-                        &agent_event_tx,
-                        &task_done_tx,
-                    ).await;
+                    let mut command_ctx = RuntimeCommandContext {
+                        agent: &agent,
+                        state: &mut state,
+                        active_task: &mut active_task,
+                        next_task_id: &mut next_task_id,
+                        pending_approvals: &mut pending_approvals,
+                        event_tx: &event_tx,
+                        seq: &mut seq,
+                        agent_event_tx: &agent_event_tx,
+                        task_done_tx: &task_done_tx,
+                    };
+                    let should_stop = handle_runtime_command(command, &mut command_ctx).await;
                     if should_stop {
                         emit_event(
                             &event_tx,
@@ -233,18 +233,32 @@ fn emit_event(
     *seq = seq.saturating_add(1);
 }
 
+struct RuntimeCommandContext<'a> {
+    agent: &'a Arc<Mutex<Agent>>,
+    state: &'a mut RuntimeActorState,
+    active_task: &'a mut Option<ActiveTask>,
+    next_task_id: &'a mut u64,
+    pending_approvals: &'a mut HashMap<String, PendingRuntimeApproval>,
+    event_tx: &'a mpsc::UnboundedSender<RuntimeEventEnvelope>,
+    seq: &'a mut u64,
+    agent_event_tx: &'a mpsc::UnboundedSender<RuntimeEventEnvelope>,
+    task_done_tx: &'a mpsc::UnboundedSender<TaskDone>,
+}
+
 async fn handle_runtime_command(
     command: RuntimeCommand,
-    agent: &Arc<Mutex<Agent>>,
-    state: &mut RuntimeActorState,
-    active_task: &mut Option<ActiveTask>,
-    next_task_id: &mut u64,
-    pending_approvals: &mut HashMap<String, PendingRuntimeApproval>,
-    event_tx: &mpsc::UnboundedSender<RuntimeEventEnvelope>,
-    seq: &mut u64,
-    agent_event_tx: &mpsc::UnboundedSender<RuntimeEventEnvelope>,
-    task_done_tx: &mpsc::UnboundedSender<TaskDone>,
+    ctx: &mut RuntimeCommandContext<'_>,
 ) -> bool {
+    let agent = ctx.agent;
+    let state = &mut *ctx.state;
+    let active_task = &mut *ctx.active_task;
+    let next_task_id = &mut *ctx.next_task_id;
+    let pending_approvals = &mut *ctx.pending_approvals;
+    let event_tx = ctx.event_tx;
+    let seq = &mut *ctx.seq;
+    let agent_event_tx = ctx.agent_event_tx;
+    let task_done_tx = ctx.task_done_tx;
+
     match command {
         RuntimeCommand::SubmitPrompt { prompt, .. } => {
             if active_task.is_some() {
@@ -891,17 +905,15 @@ mod tests {
 
         let mut approval_id = String::new();
         for _ in 0..10 {
-            match recv_event(&mut events).await {
-                RuntimeEvent::Task(TaskEvent::WaitingApproval {
-                    task,
-                    approval_id: id,
-                    ..
-                }) => {
-                    assert_eq!(task.task_id, 1);
-                    approval_id = id;
-                    break;
-                }
-                _ => {}
+            if let RuntimeEvent::Task(TaskEvent::WaitingApproval {
+                task,
+                approval_id: id,
+                ..
+            }) = recv_event(&mut events).await
+            {
+                assert_eq!(task.task_id, 1);
+                approval_id = id;
+                break;
             }
         }
         assert!(

@@ -53,9 +53,7 @@ pub(crate) async fn ensure_tmux_prompt_setup(
 }
 
 /// Ensure prompt bootstrap is installed in local tmux pane.
-pub(crate) async fn ensure_local_tmux_prompt_setup(
-    pane_id: &str,
-) -> Result<(), ToolError> {
+pub(crate) async fn ensure_local_tmux_prompt_setup(pane_id: &str) -> Result<(), ToolError> {
     let configure_prompt = tmux_prompt_setup_script();
     send_local_tmux_line(pane_id, configure_prompt).await?;
     wait_for_local_tmux_any_prompt(pane_id).await?;

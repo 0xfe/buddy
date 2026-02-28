@@ -11,9 +11,9 @@ use buddy::repl::{
     task_is_waiting_for_approval, to_runtime_approval_policy, update_approval_policy,
     ApprovalPolicy, BackgroundTask, PendingApproval,
 };
-use buddy::ui::render::RenderSink;
 use buddy::runtime::BuddyRuntimeHandle;
 use buddy::runtime::RuntimeCommand;
+use buddy::ui::render::RenderSink;
 use buddy::ui::terminal as term_ui;
 
 /// Invocation mode for shared slash-command dispatch.
@@ -38,37 +38,42 @@ pub(crate) enum SharedSlashDispatchOutcome {
     ApprovalResolved,
 }
 
+/// Mutable state used while dispatching shared slash commands.
+pub(crate) struct SharedSlashDispatchContext<'a> {
+    pub(crate) runtime: &'a BuddyRuntimeHandle,
+    pub(crate) background_tasks: &'a mut [BackgroundTask],
+    pub(crate) pending_approval: &'a mut Option<PendingApproval>,
+    pub(crate) active_approval: Option<&'a PendingApproval>,
+    pub(crate) approval_policy: &'a mut ApprovalPolicy,
+    pub(crate) mode: SharedSlashDispatchMode,
+}
+
 /// Handle slash commands shared between normal REPL and approval REPL modes.
 pub(crate) async fn dispatch_shared_slash_action(
     renderer: &dyn RenderSink,
     action: &term_ui::SlashCommandAction,
-    runtime: &BuddyRuntimeHandle,
-    background_tasks: &mut Vec<BackgroundTask>,
-    pending_approval: &mut Option<PendingApproval>,
-    active_approval: Option<&PendingApproval>,
-    approval_policy: &mut ApprovalPolicy,
-    mode: SharedSlashDispatchMode,
+    context: &mut SharedSlashDispatchContext<'_>,
 ) -> SharedSlashDispatchOutcome {
     let mut resolved_approval = false;
     let handled = match action {
         term_ui::SlashCommandAction::Ps => {
-            render_background_tasks(renderer, background_tasks);
+            render_background_tasks(renderer, context.background_tasks);
             true
         }
         term_ui::SlashCommandAction::Kill(id_arg) => {
             let Some(id_arg) = id_arg.as_deref() else {
                 renderer.warn("Usage: /kill <task-id>");
-                return outcome_for_mode(mode, false, background_tasks);
+                return outcome_for_mode(context.mode, false, context.background_tasks);
             };
             let Ok(task_id) = id_arg.parse::<u64>() else {
                 renderer.warn("Task id must be a number. Usage: /kill <task-id>");
-                return outcome_for_mode(mode, false, background_tasks);
+                return outcome_for_mode(context.mode, false, context.background_tasks);
             };
             kill_background_task(
                 renderer,
-                runtime,
-                background_tasks,
-                pending_approval,
+                context.runtime,
+                context.background_tasks,
+                context.pending_approval,
                 task_id,
             )
             .await;
@@ -76,7 +81,7 @@ pub(crate) async fn dispatch_shared_slash_action(
         }
         term_ui::SlashCommandAction::Timeout { duration, task_id } => {
             match apply_task_timeout_command(
-                background_tasks,
+                context.background_tasks,
                 duration.as_deref(),
                 task_id.as_deref(),
             ) {
@@ -90,13 +95,14 @@ pub(crate) async fn dispatch_shared_slash_action(
         }
         term_ui::SlashCommandAction::Approve(mode_arg) => {
             let mode_arg = mode_arg.as_deref().unwrap_or("");
-            match update_approval_policy(mode_arg, approval_policy) {
+            match update_approval_policy(mode_arg, context.approval_policy) {
                 Ok(msg) => {
                     renderer.section(&msg);
                     eprintln!();
-                    if let Err(err) = runtime
+                    if let Err(err) = context
+                        .runtime
                         .send(RuntimeCommand::SetApprovalPolicy {
-                            policy: to_runtime_approval_policy(*approval_policy),
+                            policy: to_runtime_approval_policy(*context.approval_policy),
                         })
                         .await
                     {
@@ -105,20 +111,20 @@ pub(crate) async fn dispatch_shared_slash_action(
                 }
                 Err(msg) => {
                     renderer.warn(&msg);
-                    return outcome_for_mode(mode, false, background_tasks);
+                    return outcome_for_mode(context.mode, false, context.background_tasks);
                 }
             }
 
-            if let SharedSlashDispatchMode::Approval { task_id } = mode {
-                if let Some(decision) = active_approval_decision(approval_policy) {
-                    if let Some(approval) = active_approval {
+            if let SharedSlashDispatchMode::Approval { task_id } = context.mode {
+                if let Some(decision) = active_approval_decision(context.approval_policy) {
+                    if let Some(approval) = context.active_approval {
                         if approval.task_id == task_id {
                             if let Err(err) =
-                                send_approval_decision(runtime, approval, decision).await
+                                send_approval_decision(context.runtime, approval, decision).await
                             {
                                 renderer.warn(&err);
                             } else {
-                                mark_task_running(background_tasks, task_id);
+                                mark_task_running(context.background_tasks, task_id);
                                 resolved_approval = true;
                             }
                         }
@@ -137,7 +143,7 @@ pub(crate) async fn dispatch_shared_slash_action(
     if resolved_approval {
         return SharedSlashDispatchOutcome::ApprovalResolved;
     }
-    outcome_for_mode(mode, true, background_tasks)
+    outcome_for_mode(context.mode, true, context.background_tasks)
 }
 
 fn outcome_for_mode(
