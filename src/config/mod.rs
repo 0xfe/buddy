@@ -692,6 +692,87 @@ mod tests {
             .any(|msg| msg.contains("AGENT_MODEL")));
     }
 
+    #[test]
+    fn injected_sources_prefer_canonical_env_over_legacy_alias() {
+        let mut files = BTreeMap::<String, String>::new();
+        files.insert(
+            "buddy.toml".to_string(),
+            r#"
+            [models.gpt-codex]
+            model = "gpt-5.3-codex"
+
+            [agent]
+            model = "gpt-codex"
+            "#
+            .to_string(),
+        );
+        let mut env = BTreeMap::<String, String>::new();
+        env.insert("BUDDY_MODEL".to_string(), "canonical-model".to_string());
+        env.insert("AGENT_MODEL".to_string(), "legacy-model".to_string());
+
+        let loaded =
+            load_config_with_sources_for_test(None, files, env, Some(PathBuf::from("/cfg")))
+                .unwrap();
+
+        assert_eq!(loaded.config.api.model, "canonical-model");
+        assert!(!loaded
+            .diagnostics
+            .deprecations
+            .iter()
+            .any(|msg| msg.contains("AGENT_MODEL")));
+    }
+
+    #[test]
+    fn injected_sources_explicit_path_override_beats_local_and_global() {
+        let mut files = BTreeMap::<String, String>::new();
+        files.insert(
+            "/override.toml".to_string(),
+            r#"
+            [models.explicit]
+            model = "explicit-model"
+            api_base_url = "https://explicit.example/v1"
+
+            [agent]
+            model = "explicit"
+            "#
+            .to_string(),
+        );
+        files.insert(
+            "buddy.toml".to_string(),
+            r#"
+            [models.local]
+            model = "local-model"
+
+            [agent]
+            model = "local"
+            "#
+            .to_string(),
+        );
+        files.insert(
+            "/cfg/buddy/buddy.toml".to_string(),
+            r#"
+            [models.global]
+            model = "global-model"
+
+            [agent]
+            model = "global"
+            "#
+            .to_string(),
+        );
+
+        let loaded = load_config_with_sources_for_test(
+            Some("/override.toml"),
+            files,
+            BTreeMap::new(),
+            Some(PathBuf::from("/cfg")),
+        )
+        .unwrap();
+
+        assert_eq!(loaded.config.agent.model, "explicit");
+        assert_eq!(loaded.config.api.model, "explicit-model");
+        assert_eq!(loaded.config.api.base_url, "https://explicit.example/v1");
+    }
+
     fn load_config_with_sources_for_test(
         path_override: Option<&str>,
         files: BTreeMap<String, String>,

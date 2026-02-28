@@ -167,6 +167,22 @@ mod tests {
     }
 
     #[test]
+    fn resolve_provider_tokens_falls_back_to_first_legacy_profile_for_unknown_provider() {
+        let legacy_tokens = OAuthTokens {
+            access_token: "legacy-access".into(),
+            refresh_token: "legacy-refresh".into(),
+            expires_at_unix: unix_now_secs() + 3600,
+        };
+        let mut store = AuthStore::default();
+        store
+            .profiles
+            .insert("some-legacy-profile".to_string(), legacy_tokens.clone());
+
+        let resolved = resolve_provider_tokens(&store, "non-openai-provider").expect("tokens");
+        assert_eq!(resolved, legacy_tokens);
+    }
+
+    #[test]
     fn write_store_encrypts_tokens_on_disk() {
         let path = temp_auth_store_path();
         let tokens = OAuthTokens {
@@ -252,5 +268,13 @@ mod tests {
 
         let err = load_store(&path).expect_err("tampered payload should fail");
         assert!(err.to_string().contains("failed to decrypt"));
+    }
+
+    #[test]
+    fn load_store_missing_path_returns_default_store() {
+        let path = temp_auth_store_path();
+        let loaded = load_store(&path).expect("missing file should load default store");
+        assert!(loaded.providers.is_empty());
+        assert!(loaded.profiles.is_empty());
     }
 }
