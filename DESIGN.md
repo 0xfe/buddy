@@ -7,22 +7,22 @@ How the agent works, module by module.
 The agent is a single Rust crate that produces both a library (`lib.rs`) and a binary (`main.rs`). The binary is a thin CLI wrapper; all logic lives in the library modules.
 
 ```
-main.rs + cli.rs + tui/  CLI entry point, argument parsing, REPL loop + slash autocomplete
-        |
-        v
-    agent.rs              Core orchestration — the agentic loop
-   /    |    \
-  v     v     v
-api/    tools/  tui/      HTTP client, tool dispatch, terminal output
-  |       |
-  v       v
-types.rs  error.rs          Shared data model and error types
-  |
-  v
-config.rs  tokens.rs        Configuration loading, token tracking
+main.rs + cli.rs + app/                    CLI/subcommand wiring + REPL orchestration
+      |            |
+      |            +--> runtime/ + cli_event_renderer/ + repl_support/
+      |                      (runtime commands/events + terminal event mapping)
+      |
+      +--> agent/ + api/ + auth/           Agent loop + model transport + login/auth
+      |
+      +--> tools/ + tools/execution/       Tool registry + execution backends
+      |
+      +--> tui/ + render.rs                Terminal renderer + compat shim
+      |
+      +--> config/ + session.rs + tokens.rs + types.rs + error.rs
+             (config/session/token/state primitives)
 ```
 
-Every module has a single responsibility. Dependencies flow downward — `agent.rs` depends on everything below it, but `types.rs` and `error.rs` depend on nothing within the crate.
+Every module has a single responsibility. Dependencies flow downward — `agent/mod.rs` depends on lower-level modules, while `types.rs` and `error.rs` remain foundational primitives.
 
 ## Features
 
@@ -35,7 +35,7 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
   - One-shot mode via `buddy exec <prompt>`.
   - One-shot mode fails closed when `tools.shell_confirm=true` unless `--dangerously-auto-approve` is passed.
 - Developer-facing runtime event schema scaffolding:
-  - `src/runtime.rs` defines typed `RuntimeCommand` and `RuntimeEvent` families plus `RuntimeEventEnvelope`.
+  - `src/runtime/schema.rs` defines typed `RuntimeCommand` and `RuntimeEvent` families plus `RuntimeEventEnvelope`.
   - Includes adapter helpers from existing `AgentUiEvent` into runtime events.
   - `Agent` exposes `set_runtime_event_sink(...)` and emits runtime events for task/model/tool/metrics lifecycle during `send()`.
   - Added `ModelClient` trait and `Agent::with_client(...)` injection path so runtime/event behavior can be tested offline with deterministic mock clients.
@@ -44,7 +44,7 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
   - Both one-shot `exec` and interactive REPL prompt execution run through runtime commands/events.
   - Explicit approval flow is runtime-commanded (`RuntimeCommand::Approve`) and surfaced as `TaskEvent::WaitingApproval`.
   - Tool runtime events now include incremental tool-stream variants (`CallStarted`, `StdoutChunk`, `StderrChunk`, `Info`, `Completed`) in addition to final `Result`.
-  - CLI runtime-event rendering is isolated in `src/cli_event_renderer.rs` so terminal rendering is no longer coupled to runtime orchestration code paths.
+  - CLI runtime-event rendering is isolated in `src/cli_event_renderer/mod.rs` (+ handler modules) so terminal rendering is no longer coupled to runtime orchestration code paths.
   - `examples/alternate_frontend.rs` demonstrates driving Buddy entirely through runtime commands/events from a non-default frontend.
 - CLI subcommands:
   - `buddy` (REPL)
@@ -61,6 +61,7 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
   - `buddy init` creates `~/.config/buddy/buddy.toml` from a compiled template (`src/templates/buddy.toml`).
   - `buddy init --force` overwrites the file after writing a timestamped backup into the same directory.
   - Startup still auto-creates `~/.config/buddy/buddy.toml` when missing.
+  - `agent.name` defaults to `agent-mo` and drives default managed tmux session naming (`buddy-<agent.name>`).
   - Built-in template includes OpenAI `responses` profiles for `gpt-codex` (`gpt-5.3-codex`) and `gpt-spark` (`gpt-5.3-codex-spark`), plus OpenRouter examples for DeepSeek V3.2 and GLM, with `gpt-codex` selected by default.
   - Active-profile preflight validation runs at startup and `/model` switches (base URL validity, model name, and auth readiness) to surface actionable config errors before API calls.
   - Network timeout policy is configurable via `[network]`:
@@ -74,21 +75,23 @@ Every module has a single responsibility. Dependencies flow downward — `agent.
   - Executes returned tool calls.
   - Feeds tool results back until a final assistant response or max-iteration cap.
 - Built-in tools:
-  - `run_shell` with optional confirmation flow, denylist guardrails, output truncation, and configurable wait modes (`true`, `false`, or duration timeout).
+  - `run_shell` with optional confirmation flow, denylist guardrails, output truncation, configurable wait modes (`true`, `false`, or duration timeout), and required safety metadata args (`risk`, `mutation`, `privesc`, `why`).
   - `read_file` and `write_file` with output safety limits; `write_file` blocks sensitive directories by default and supports path allowlisting.
   - `fetch_url` HTTP GET tool with default SSRF protections (localhost/private/link-local blocking), optional domain allow/deny policy, and optional confirmation prompts.
   - `web_search` (DuckDuckGo HTML parsing via CSS selectors with parser-break diagnostics).
   - `capture-pane` for tmux pane snapshots (supports common `tmux capture-pane` options plus delayed capture for polling); defaults to tmux screenshot behavior (visible pane content) and gracefully falls back when alternate screen is unavailable.
-  - `send-keys` for tmux key injection (for example Ctrl-C/Ctrl-Z/Enter/arrows) to control interactive terminal programs.
+  - `send-keys` for tmux key injection (for example Ctrl-C/Ctrl-Z/Enter/arrows) to control interactive terminal programs, with required safety metadata args (`risk`, `mutation`, `privesc`, `why`).
   - `time` for harness-recorded wall-clock time in multiple common UTC/epoch formats.
+  - All built-in tool responses return a JSON envelope with `result` + `harness_timestamp` (harness unix-millis).
 - Multi-target execution for shell/file tools:
   - Local host execution by default, tmux-backed when shell/file tools are enabled.
   - Container execution with `--container`.
   - Remote SSH execution with `--ssh`.
-  - Tmux-backed execution is the default for local/container/SSH targets (auto session `buddy-xxxx`), with optional override via `--tmux [session]`.
+  - Tmux-backed execution is the default for local/container/SSH targets (default session `buddy-<agent.name>`), with optional override via `--tmux [session]`.
   - On tmux-backed startup, buddy prints friendly attach instructions (local, SSH, or container) including the resolved session name.
-  - Managed tmux setup uses a single shared window (`buddy-shared`) with one pane by default.
-  - Local tmux startup refuses to run from the managed `buddy-shared` pane to avoid self-injection loops; run buddy from a different terminal/pane.
+  - Managed tmux setup uses a single shared window and a managed pane titled `shared`; newly created sessions start with one pane.
+  - Local tmux startup refuses to run from the managed `shared` pane to avoid self-injection loops; run buddy from a different terminal/pane.
+  - Before every model request (when tmux capture is available), buddy captures the current pane screenshot and rewrites the primary system prompt snapshot block in-place (replacing the old snapshot instead of accumulating stale screenshots in history).
   - `capture-pane` is only enabled when tmux pane capture is available for the active execution target.
   - In tmux-backed targets, `run_shell` supports non-blocking dispatch (`wait: false`) and timeout-bound waits (`wait: "10m"` style) for interactive workflows.
 - System prompt templating:
@@ -149,13 +152,13 @@ Key types:
 
 `Message` has convenience constructors — `Message::system()`, `Message::user()`, `Message::tool_result()` — that set the right role and fields without boilerplate.
 
-### `config.rs` — Configuration
+### `config/mod.rs` — Configuration
 
 Configuration is defined with model profiles and runtime resolution:
 
 - **`ModelConfig`** — profile fields under `[models.<name>]`: `api_base_url`, `api` (`completions|responses`), `auth` (`api-key|login`), `api_key`, `api_key_env`, `api_key_file`, optional `model`, optional `context_limit`
 - **`ApiConfig`** — resolved active runtime API settings (`base_url`, resolved `api_key`, concrete `model`, resolved `protocol`, resolved `auth`, active `profile`, optional `context_limit`)
-- **`AgentConfig`** — `model` (active profile key), `system_prompt`, `max_iterations`, optional `temperature`/`top_p`
+- **`AgentConfig`** — `name` (tmux session suffix), `model` (active profile key), `system_prompt`, `max_iterations`, optional `temperature`/`top_p`
 - **`ToolsConfig`** — boolean flags for each built-in tool, plus `shell_confirm`, `shell_denylist`, `fetch_confirm`, `fetch_allowed_domains`, `fetch_blocked_domains`, and `files_allowed_paths`
 - **`NetworkConfig`** — HTTP timeout policy (`api_timeout_secs`, `fetch_timeout_secs`)
 - **`DisplayConfig`** — `color`, `show_tokens`, `show_tool_calls`
@@ -181,7 +184,7 @@ API key resolution supports exactly one configured source per model profile: `ap
 
 ### `api/` — HTTP client
 
-A thin wrapper around `reqwest::Client`. `ApiClient` lives in `src/api/client.rs`, with protocol-specific modules split into `src/api/completions.rs` and `src/api/responses.rs`, plus provider policy rules in `src/api/policy.rs`.
+A thin wrapper around `reqwest::Client`. `ApiClient` lives in `src/api/client/mod.rs` (with `auth`, `retry`, and `transport` submodules), with protocol-specific modules in `src/api/completions.rs` and `src/api/responses/{mod,request_builder,response_parser,sse_parser}.rs`, plus provider policy rules in `src/api/policy.rs`.
 
 The public method `chat()`:
 1. Resolves auth header:
@@ -224,17 +227,17 @@ The trait uses `async_trait` because dyn dispatch with native async fn in traits
 
 **Built-in tools:**
 
-**`shell.rs` — `run_shell`**: Executes commands via execution backends (`local`, `container`, `ssh`, tmux variants). Commands are screened against `tools.shell_denylist` before execution. If `confirm` is true, the tool either prompts directly (one-shot / non-brokered mode) or sends a foreground approval request through a channel consumed by the interactive REPL loop. Output (stdout + stderr + exit code) is truncated to 4000 characters to prevent blowing up the context window. It emits tool stream events into `ToolContext` (`Started`, `StdoutChunk`, `StderrChunk`, `Completed`) so runtime consumers can render tool activity incrementally.
+**`shell.rs` — `run_shell`**: Executes commands via execution backends (`local`, `container`, `ssh`, tmux variants). Commands are screened against `tools.shell_denylist` before execution. Calls must include safety metadata (`risk`, `mutation`, `privesc`, `why`). If `confirm` is true, the tool either prompts directly (one-shot / non-brokered mode) or sends a foreground approval request through a channel consumed by the interactive REPL loop. Output (stdout + stderr + exit code) is truncated to 4000 characters to prevent blowing up the context window. It emits tool stream events into `ToolContext` (`Started`, `StdoutChunk`, `StderrChunk`, `Completed`) so runtime consumers can render tool activity incrementally. Returned payloads are wrapped in a JSON tool envelope with harness timestamp metadata.
 
 **`fetch.rs` — `fetch_url`**: Async HTTP GET via a timeout-configured reqwest client. Enforces SSRF policy (blocks localhost/private/link-local targets by default), supports optional domain allow/deny policy, and returns response text truncated to 8000 characters.
 
 **`files.rs` — `read_file` / `write_file`**: Two tool structs in one module. `ReadFileTool` reads via `tokio::fs::read_to_string`, truncating to 8000 chars. `WriteFileTool` validates path policy (sensitive-directory blocklist + optional `files_allowed_paths` allowlist), writes via `tokio::fs::write`, and returns a confirmation message with the byte count.
 
-**`search.rs` — `web_search`**: Searches DuckDuckGo's HTML endpoint (`html.duckduckgo.com/html/?q=...`) which requires no API key. The response HTML is parsed with a crude string-based scraper that extracts result titles, URLs, and snippets. This is intentionally simple — no HTML parser dependency. Results are capped at 8 entries.
+**`search.rs` — `web_search`**: Searches DuckDuckGo's HTML endpoint (`html.duckduckgo.com/html/?q=...`) which requires no API key. The response HTML is parsed via CSS selectors (`scraper`) and returns titles, URLs, and snippets, with parser-break diagnostics when selectors stop matching. Results are capped at 8 entries.
 
 All tools truncate their output. This is a deliberate design decision: tool output goes into the conversation history, so unbounded output can exhaust the context window in a single call.
 
-### `agent.rs` — The agentic loop
+### `agent/mod.rs` — The agentic loop
 
 This is the central module. The `Agent` struct owns everything:
 
@@ -403,16 +406,16 @@ User types: "What's in /tmp?"
 main.rs: agent.send("What's in /tmp?")
      |
      v
-agent.rs: push Message::user("What's in /tmp?")
-agent.rs: check context limit — ok
-agent.rs: build ChatRequest { messages: [system, user], tools: [run_shell, ...] }
+agent/mod.rs: push Message::user("What's in /tmp?")
+agent/mod.rs: check context limit — ok
+agent/mod.rs: build ChatRequest { messages: [system, user], tools: [run_shell, ...] }
      |
      v
-api/client.rs: POST /responses (or /chat/completions) → 200 OK
+api/client/mod.rs: POST /responses (or /chat/completions) → 200 OK
      |
      v
-agent.rs: response has tool_calls: [{ id: "call_1", function: { name: "run_shell", arguments: '{"command":"ls /tmp"}' } }]
-agent.rs: push assistant message (with tool_calls) to history
+agent/mod.rs: response has tool_calls: [{ id: "call_1", function: { name: "run_shell", arguments: '{"command":"ls /tmp"}' } }]
+agent/mod.rs: push assistant message (with tool_calls) to history
      |
      v
 tui/renderer.rs: ▶ run_shell({"command":"ls /tmp"})
@@ -425,17 +428,17 @@ tools/shell.rs: return "exit code: 0\nstdout:\nfile1.txt\nfile2.log\n..."
      |
      v
 tui/renderer.rs: ← exit code: 0 stdout: file1.txt file2.log...
-agent.rs: push Message::tool_result("call_1", "exit code: 0\n...")
+agent/mod.rs: push Message::tool_result("call_1", "exit code: 0\n...")
      |
      v
-agent.rs: loop continues — build new ChatRequest { messages: [system, user, assistant+tool_calls, tool_result] }
+agent/mod.rs: loop continues — build new ChatRequest { messages: [system, user, assistant+tool_calls, tool_result] }
      |
      v
-api/client.rs: POST /responses (or /chat/completions) → 200 OK
+api/client/mod.rs: POST /responses (or /chat/completions) → 200 OK
      |
      v
-agent.rs: response has content: "The /tmp directory contains: file1.txt, file2.log, ..."
-agent.rs: no tool_calls — loop exits
+agent/mod.rs: response has content: "The /tmp directory contains: file1.txt, file2.log, ..."
+agent/mod.rs: no tool_calls — loop exits
      |
      v
 main.rs: print response to stdout
