@@ -64,6 +64,13 @@ impl SshContext {
         &self,
         tmux_session: &str,
     ) -> Result<String, ToolError> {
+        let configured_pane = self.configured_tmux_pane.lock().await.clone();
+        if let Some(pane_id) = configured_pane {
+            if self.tmux_pane_exists(&pane_id).await? {
+                return Ok(pane_id);
+            }
+        }
+
         let ensured = ensure_tmux_pane(&self.target, &self.control_path, tmux_session).await?;
         let mut configured = self.configured_tmux_pane.lock().await;
         if ensured.created {
@@ -73,6 +80,14 @@ impl SshContext {
             *configured = Some(ensured.pane_id.clone());
         }
         Ok(ensured.pane_id)
+    }
+
+    async fn tmux_pane_exists(&self, pane_id: &str) -> Result<bool, ToolError> {
+        let pane_q = crate::tools::execution::process::shell_quote(pane_id);
+        let probe =
+            format!("tmux list-panes -a -F '#{{pane_id}}' | grep -Fx -- {pane_q} >/dev/null 2>&1");
+        let output = run_ssh_raw_process(&self.target, &self.control_path, &probe, None).await?;
+        Ok(output.exit_code == 0)
     }
 }
 

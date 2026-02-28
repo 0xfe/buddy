@@ -10,6 +10,9 @@ use crate::tools::execution::types::{
 };
 
 /// Script that ensures a shared pane exists and returns `<pane_id>\n<created_flag>`.
+///
+/// `created_flag` is `1` only when this invocation had to create a new pane.
+/// Reusing an existing pane (even if it had to be re-titled) returns `0`.
 pub(crate) fn ensure_tmux_pane_script(tmux_session: &str) -> String {
     let session_q = shell_quote(tmux_session);
     let window_q = shell_quote(TMUX_WINDOW_NAME);
@@ -40,8 +43,8 @@ if [ -z \"$PANE\" ]; then\n\
       PANE=\"$(tmux list-panes -t \"$SESSION:$WINDOW\" -F '#{{pane_id}}' | head -n1)\"\n\
     else\n\
       PANE=\"$(tmux split-window -d -P -F '#{{pane_id}}' -t \"$SESSION:$WINDOW\")\"\n\
+      CREATED=1\n\
     fi\n\
-    CREATED=1\n\
   fi\n\
   if [ -n \"$PANE\" ]; then\n\
     tmux select-pane -t \"$PANE\" -T \"$PANE_TITLE\" >/dev/null 2>&1 || true\n\

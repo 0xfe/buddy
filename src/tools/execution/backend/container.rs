@@ -12,7 +12,9 @@ use crate::tools::execution::contracts::{CommandBackend, ExecutionBackendOps};
 use crate::tools::execution::file_io::{
     read_file_via_command_backend, write_file_via_command_backend,
 };
-use crate::tools::execution::process::{run_container_sh_process, run_with_wait};
+use crate::tools::execution::process::{
+    run_container_sh_process, run_container_tmux_sh_process, run_with_wait,
+};
 use crate::tools::execution::types::{
     CapturePaneOptions, ContainerContext, ContainerEngineKind, ContainerTmuxContext, ExecOutput,
     SendKeysOptions, ShellWait, TmuxAttachInfo, TmuxAttachTarget, TMUX_WINDOW_NAME,
@@ -32,6 +34,13 @@ impl ContainerTmuxContext {
     pub(in crate::tools::execution) async fn ensure_prompt_ready(
         &self,
     ) -> Result<String, ToolError> {
+        let configured_pane = self.configured_tmux_pane.lock().await.clone();
+        if let Some(pane_id) = configured_pane {
+            if self.tmux_pane_exists(&pane_id).await? {
+                return Ok(pane_id);
+            }
+        }
+
         let ensured = ensure_container_tmux_pane(self, &self.tmux_session).await?;
         let mut configured = self.configured_tmux_pane.lock().await;
         if ensured.created {
@@ -41,6 +50,14 @@ impl ContainerTmuxContext {
             *configured = Some(ensured.pane_id.clone());
         }
         Ok(ensured.pane_id)
+    }
+
+    async fn tmux_pane_exists(&self, pane_id: &str) -> Result<bool, ToolError> {
+        let pane_q = crate::tools::execution::process::shell_quote(pane_id);
+        let probe =
+            format!("tmux list-panes -a -F '#{{pane_id}}' | grep -Fx -- {pane_q} >/dev/null 2>&1");
+        let output = run_container_tmux_sh_process(self, &probe, None).await?;
+        Ok(output.exit_code == 0)
     }
 }
 

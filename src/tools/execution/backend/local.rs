@@ -32,6 +32,13 @@ impl LocalTmuxContext {
     pub(in crate::tools::execution) async fn ensure_prompt_ready(
         &self,
     ) -> Result<String, ToolError> {
+        let configured_pane = self.configured_tmux_pane.lock().await.clone();
+        if let Some(pane_id) = configured_pane {
+            if local_tmux_pane_exists(&pane_id).await? {
+                return Ok(pane_id);
+            }
+        }
+
         let ensured = ensure_local_tmux_pane(&self.tmux_session).await?;
         let mut configured = self.configured_tmux_pane.lock().await;
         if ensured.created {
@@ -42,6 +49,14 @@ impl LocalTmuxContext {
         }
         Ok(ensured.pane_id)
     }
+}
+
+async fn local_tmux_pane_exists(pane_id: &str) -> Result<bool, ToolError> {
+    let pane_q = shell_quote(pane_id);
+    let probe =
+        format!("tmux list-panes -a -F '#{{pane_id}}' | grep -Fx -- {pane_q} >/dev/null 2>&1");
+    let output = run_sh_process("sh", &probe, None).await?;
+    Ok(output.exit_code == 0)
 }
 
 #[async_trait]
