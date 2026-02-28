@@ -49,6 +49,7 @@ pub(crate) fn parse_retry_after_secs(headers: &HeaderMap) -> Option<u64> {
 mod tests {
     use super::*;
     use reqwest::header::HeaderValue;
+    use serde_json::{json, Value};
 
     #[test]
     fn parse_retry_after_supports_delta_seconds() {
@@ -75,5 +76,106 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(RETRY_AFTER, HeaderValue::from_static("not-a-date"));
         assert_eq!(parse_retry_after_secs(&headers), None);
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct SemanticShape {
+        content: Option<String>,
+        tool_calls: Vec<(String, String, String)>,
+        usage: Option<(u64, u64, u64)>,
+    }
+
+    fn semantic_shape(response: &ChatResponse) -> SemanticShape {
+        let message = &response.choices[0].message;
+        let tool_calls = message
+            .tool_calls
+            .as_ref()
+            .map(|calls| {
+                calls
+                    .iter()
+                    .map(|call| {
+                        (
+                            call.id.clone(),
+                            call.function.name.clone(),
+                            call.function.arguments.clone(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let usage = response
+            .usage
+            .as_ref()
+            .map(|u| (u.prompt_tokens, u.completion_tokens, u.total_tokens));
+        SemanticShape {
+            content: message.content.clone(),
+            tool_calls,
+            usage,
+        }
+    }
+
+    fn parse_completions_fixture(raw: Value) -> ChatResponse {
+        serde_json::from_value(raw).expect("valid completions fixture")
+    }
+
+    #[test]
+    fn protocol_fixture_text_response_normalizes_like_completions() {
+        let completions = parse_completions_fixture(json!({
+            "id": "chatcmpl_1",
+            "choices": [{
+                "index": 0,
+                "message": { "role": "assistant", "content": "done" },
+                "finish_reason": "stop"
+            }],
+            "usage": { "prompt_tokens": 9, "completion_tokens": 3, "total_tokens": 12 }
+        }));
+        let responses = responses::parse_responses_payload(&json!({
+            "id": "resp_1",
+            "status": "completed",
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [{ "type": "output_text", "text": "done" }]
+            }],
+            "usage": { "input_tokens": 9, "output_tokens": 3, "total_tokens": 12 }
+        }))
+        .expect("valid responses fixture");
+
+        assert_eq!(semantic_shape(&responses), semantic_shape(&completions));
+    }
+
+    #[test]
+    fn protocol_fixture_tool_call_normalizes_like_completions() {
+        let completions = parse_completions_fixture(json!({
+            "id": "chatcmpl_2",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": { "name": "run_shell", "arguments": "{\"command\":\"ls\"}" }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": { "prompt_tokens": 20, "completion_tokens": 5, "total_tokens": 25 }
+        }));
+        let responses = responses::parse_responses_payload(&json!({
+            "id": "resp_2",
+            "status": "completed",
+            "output": [{
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "run_shell",
+                "arguments": "{\"command\":\"ls\"}"
+            }],
+            "usage": { "input_tokens": 20, "output_tokens": 5, "total_tokens": 25 }
+        }))
+        .expect("valid responses fixture");
+
+        assert_eq!(semantic_shape(&responses), semantic_shape(&completions));
     }
 }
