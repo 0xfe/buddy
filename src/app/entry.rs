@@ -1,24 +1,15 @@
 //! Application entry orchestration for the buddy CLI.
 
-use crate::app::approval::{
-    approval_prompt_actor, deny_pending_approval, render_shell_approval_request,
-    send_approval_decision,
-};
-use crate::app::commands::model::{
-    configured_model_profile_names, handle_model_command, resolve_model_profile_selector,
-};
-use crate::app::commands::session::{
-    handle_session_command, initialize_active_session, resume_request_from_command,
-};
-use crate::app::repl_loop::{
-    dispatch_shared_slash_action, SharedSlashDispatchContext, SharedSlashDispatchMode,
-    SharedSlashDispatchOutcome,
-};
-use crate::app::startup::{render_session_startup_line, render_startup_banner};
-use crate::app::tasks::{
-    background_liveness_line, collect_runtime_events, drain_completed_tasks, enforce_task_timeouts,
-    process_runtime_events, ProcessRuntimeEventsContext,
-};
+#[cfg(test)]
+use crate::app::commands::model::handle_model_command;
+use crate::app::commands::model::{configured_model_profile_names, resolve_model_profile_selector};
+#[cfg(test)]
+use crate::app::commands::session::handle_session_command;
+use crate::app::commands::session::resume_request_from_command;
+#[cfg(test)]
+use crate::app::tasks::background_liveness_line;
+#[cfg(test)]
+use crate::app::tasks::{process_runtime_events, ProcessRuntimeEventsContext};
 use crate::cli;
 use buddy::agent::Agent;
 use buddy::auth::{
@@ -26,7 +17,6 @@ use buddy::auth::{
     login_provider_key_for_base_url, provider_login_health, reset_provider_tokens,
     save_provider_tokens, start_openai_device_login, supports_openai_login, try_open_browser,
 };
-use buddy::config::default_history_path;
 use buddy::config::ensure_default_global_config;
 use buddy::config::initialize_default_global_config;
 use buddy::config::load_config_with_diagnostics;
@@ -35,25 +25,23 @@ use buddy::config::{AuthMode, Config, GlobalConfigInitResult, ToolsConfig};
 use buddy::preflight::validate_active_profile_ready;
 use buddy::prompt::{render_system_prompt, ExecutionTarget, SystemPromptParams};
 #[cfg(test)]
-use buddy::repl::BackgroundTaskState;
-#[cfg(test)]
 use buddy::repl::{
     apply_task_timeout_command, mark_task_waiting_for_approval, parse_duration_arg,
     parse_shell_tool_result, tool_result_display_text, update_approval_policy, ApprovalDecision,
 };
+#[cfg(test)]
 use buddy::repl::{
-    approval_policy_label, has_elapsed_timeouts, mark_task_running, parse_approval_decision,
-    task_is_waiting_for_approval, ApprovalPolicy, BackgroundTask, CompletedBackgroundTask,
-    PendingApproval, RuntimeContextState,
+    parse_approval_decision, task_is_waiting_for_approval, ApprovalPolicy, BackgroundTask,
+    BackgroundTaskState, RuntimeContextState,
 };
 #[cfg(test)]
 use buddy::runtime::BuddyRuntimeHandle;
-use buddy::runtime::{
-    spawn_runtime_with_agent, spawn_runtime_with_shared_agent, ModelEvent, PromptMetadata,
-    RuntimeCommand, RuntimeEvent, RuntimeEventEnvelope, TaskEvent,
-};
-use buddy::session::{default_uses_legacy_root, SessionStore};
-use buddy::tokens::TokenTracker;
+#[cfg(test)]
+use buddy::runtime::RuntimeCommand;
+#[cfg(test)]
+use buddy::runtime::{RuntimeEvent, RuntimeEventEnvelope};
+#[cfg(test)]
+use buddy::session::SessionStore;
 use buddy::tools::capture_pane::CapturePaneTool;
 use buddy::tools::execution::ExecutionContext;
 use buddy::tools::fetch::FetchTool;
@@ -63,9 +51,7 @@ use buddy::tools::send_keys::SendKeysTool;
 use buddy::tools::shell::{ShellApprovalBroker, ShellTool};
 use buddy::tools::time::TimeTool;
 use buddy::tools::ToolRegistry;
-use buddy::ui::render::{set_progress_enabled, RenderSink, Renderer};
-use buddy::ui::terminal as term_ui;
-use std::sync::Arc;
+use buddy::ui::render::{RenderSink, Renderer};
 use std::time::Duration;
 #[cfg(test)]
 use std::time::Instant;
@@ -73,10 +59,6 @@ use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
 #[cfg(test)]
 use tokio::sync::mpsc;
-use tokio::sync::Mutex;
-
-const BACKGROUND_TASK_WARNING: &str =
-    "Background tasks are in progress. Allowed commands now: /ps, /kill <id>, /timeout <dur> [id], /approve <mode>, /status, /context.";
 
 fn enforce_exec_shell_guardrails(
     is_exec_command: bool,
@@ -100,38 +82,130 @@ fn enforce_exec_shell_guardrails(
 }
 
 pub(crate) async fn run(args: crate::cli::Args) -> i32 {
-    let renderer = Renderer::new(!args.no_color);
-
+    let bootstrap_renderer = Renderer::new(!args.no_color);
     if let Some(cli::Command::Init { force }) = args.command.as_ref() {
-        if let Err(msg) = run_init_flow(&renderer, *force) {
+        if let Err(msg) = run_init_flow(&bootstrap_renderer, *force) {
+            bootstrap_renderer.error(&msg);
+            return 1;
+        }
+        return 0;
+    }
+
+    let loaded = match load_config_state(&args) {
+        Ok(state) => state,
+        Err(msg) => {
+            bootstrap_renderer.error(&msg);
+            return 1;
+        }
+    };
+    let renderer = Renderer::new(loaded.config.display.color);
+    for warning in &loaded.warnings {
+        renderer.warn(warning);
+    }
+
+    if let Some(cli::Command::Login {
+        model,
+        reset,
+        check,
+    }) = args.command.as_ref()
+    {
+        if let Err(msg) =
+            run_login_flow(&renderer, &loaded.config, model.as_deref(), *reset, *check).await
+        {
             renderer.error(&msg);
             return 1;
         }
         return 0;
     }
 
-    if let Err(e) = ensure_default_global_config() {
-        eprintln!("warning: failed to initialize ~/.config/buddy/buddy.toml: {e}");
-    }
-
-    // Load config + compatibility diagnostics.
-    let loaded_config = match load_config_with_diagnostics(args.config.as_deref()) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("error: {e}");
+    let runtime_setup = match prepare_runtime_setup(&args, &renderer, loaded).await {
+        Ok(setup) => setup,
+        Err(msg) => {
+            renderer.error(&msg);
             return 1;
         }
     };
-    let mut config = loaded_config.config;
-    let mut compatibility_warnings = loaded_config.diagnostics.deprecations;
 
-    // Apply CLI overrides.
+    if let Some(cli::Command::Exec { prompt }) = args.command.as_ref() {
+        return crate::app::exec_mode::run_exec_mode(
+            &renderer,
+            runtime_setup.agent,
+            runtime_setup.config,
+            prompt.clone(),
+        )
+        .await;
+    }
+
+    crate::app::repl_mode::run_repl_mode(crate::app::repl_mode::ReplModeInputs {
+        renderer: &renderer,
+        cli_args: &args,
+        config: runtime_setup.config,
+        execution: runtime_setup.execution,
+        capture_pane_enabled: runtime_setup.capture_pane_enabled,
+        agent: runtime_setup.agent,
+        resume_request: runtime_setup.resume_request,
+        shell_approval_rx: runtime_setup.shell_approval_rx,
+    })
+    .await
+}
+
+struct LoadedConfigState {
+    config: Config,
+    warnings: Vec<String>,
+    resume_request: Option<buddy::repl::ResumeRequest>,
+}
+
+struct RuntimeSetup {
+    config: Config,
+    execution: ExecutionContext,
+    capture_pane_enabled: bool,
+    agent: Agent,
+    resume_request: Option<buddy::repl::ResumeRequest>,
+    shell_approval_rx:
+        Option<tokio::sync::mpsc::UnboundedReceiver<buddy::tools::shell::ShellApprovalRequest>>,
+}
+
+struct ToolSetup {
+    tools: ToolRegistry,
+    shell_approval_rx:
+        Option<tokio::sync::mpsc::UnboundedReceiver<buddy::tools::shell::ShellApprovalRequest>>,
+}
+
+fn load_config_state(args: &crate::cli::Args) -> Result<LoadedConfigState, String> {
+    if let Err(err) = ensure_default_global_config() {
+        eprintln!("warning: failed to initialize ~/.config/buddy/buddy.toml: {err}");
+    }
+
+    let loaded =
+        load_config_with_diagnostics(args.config.as_deref()).map_err(|err| err.to_string())?;
+    let mut config = loaded.config;
+    apply_cli_overrides(args, &mut config)?;
+
+    let mut warnings = loaded.diagnostics.deprecations;
+    match has_legacy_profile_token_records() {
+        Ok(true) => warnings.push(
+            "Auth store uses deprecated profile-scoped login records; run `buddy login` to migrate to provider-scoped records before v0.4."
+                .to_string(),
+        ),
+        Ok(false) => {}
+        Err(err) => warnings.push(format!(
+            "failed to inspect auth store for legacy credentials: {err}"
+        )),
+    }
+    let resume_request = resume_request_from_command(args.command.as_ref())?;
+
+    Ok(LoadedConfigState {
+        config,
+        warnings,
+        resume_request,
+    })
+}
+
+fn apply_cli_overrides(args: &crate::cli::Args, config: &mut Config) -> Result<(), String> {
     if let Some(model) = &args.model {
         if config.models.contains_key(model) {
-            if let Err(e) = select_model_profile(&mut config, model) {
-                eprintln!("error: failed to select model profile `{model}`: {e}");
-                return 1;
-            }
+            select_model_profile(config, model)
+                .map_err(|err| format!("failed to select model profile `{model}`: {err}"))?;
         } else {
             // Backward-compatible behavior: if the argument is not a configured
             // profile key, treat it as a direct API model-id override.
@@ -144,123 +218,105 @@ pub(crate) async fn run(args: crate::cli::Args) -> i32 {
     if args.no_color {
         config.display.color = false;
     }
+    Ok(())
+}
 
-    let renderer = Renderer::new(config.display.color);
-    for warning in compatibility_warnings.drain(..) {
-        renderer.warn(&warning);
-    }
-    match has_legacy_profile_token_records() {
-        Ok(true) => renderer.warn(
-            "Auth store uses deprecated profile-scoped login records; run `buddy login` to migrate to provider-scoped records before v0.4.",
-        ),
-        Ok(false) => {}
-        Err(err) => renderer.warn(&format!(
-            "failed to inspect auth store for legacy credentials: {err}"
-        )),
-    }
-
-    let resume_request = match resume_request_from_command(args.command.as_ref()) {
-        Ok(request) => request,
-        Err(msg) => {
-            renderer.error(&msg);
-            return 1;
-        }
-    };
-
-    if let Some(cli::Command::Login {
-        model,
-        reset,
-        check,
-    }) = args.command.as_ref()
-    {
-        let selector = model.as_deref();
-        if let Err(msg) = run_login_flow(&renderer, &config, selector, *reset, *check).await {
-            renderer.error(&msg);
-            return 1;
-        }
-        return 0;
-    }
-
-    // Validate minimum config.
-    if config.api.base_url.is_empty() {
-        renderer.error(
-            "No API base URL configured. Set models.<name>.api_base_url in buddy.toml or BUDDY_BASE_URL env var.",
+async fn prepare_runtime_setup(
+    args: &crate::cli::Args,
+    renderer: &dyn RenderSink,
+    mut loaded: LoadedConfigState,
+) -> Result<RuntimeSetup, String> {
+    if loaded.config.api.base_url.is_empty() {
+        return Err(
+            "No API base URL configured. Set models.<name>.api_base_url in buddy.toml or BUDDY_BASE_URL env var."
+                .to_string(),
         );
-        return 1;
     }
-
-    if let Err(msg) = validate_active_profile_ready(&config) {
-        renderer.error(&msg);
-        return 1;
-    }
+    validate_active_profile_ready(&loaded.config)?;
 
     let is_exec_command = matches!(args.command.as_ref(), Some(cli::Command::Exec { .. }));
     match enforce_exec_shell_guardrails(
         is_exec_command,
         args.dangerously_auto_approve,
-        &mut config.tools,
+        &mut loaded.config.tools,
     ) {
         Ok(Some(warning)) => renderer.warn(&warning),
         Ok(None) => {}
-        Err(msg) => {
-            renderer.error(&msg);
-            return 1;
-        }
+        Err(msg) => return Err(msg),
     }
+    validate_execution_target_flags(args, &loaded.config)?;
 
+    let execution = initialize_execution_context(args, &loaded.config).await?;
+    let capture_pane_enabled = execution.capture_pane_available();
+    configure_system_prompt(&mut loaded.config, args, capture_pane_enabled);
+    let tool_setup = build_tools(
+        &loaded.config,
+        &execution,
+        !is_exec_command,
+        capture_pane_enabled,
+    );
+    let agent = Agent::new(loaded.config.clone(), tool_setup.tools);
+
+    Ok(RuntimeSetup {
+        config: loaded.config,
+        execution,
+        capture_pane_enabled,
+        agent,
+        resume_request: loaded.resume_request,
+        shell_approval_rx: tool_setup.shell_approval_rx,
+    })
+}
+
+fn validate_execution_target_flags(args: &crate::cli::Args, config: &Config) -> Result<(), String> {
     if (args.container.is_some() || args.ssh.is_some() || args.tmux.is_some())
         && !config.tools.shell_enabled
         && !config.tools.files_enabled
     {
-        renderer.error(
-            "Execution target flags (--container/--ssh/--tmux) require `run_shell` or file tools to be enabled.",
+        return Err(
+            "Execution target flags (--container/--ssh/--tmux) require `run_shell` or file tools to be enabled. Enable `tools.shell_enabled` and/or `tools.files_enabled` in config."
+                .to_string(),
         );
-        renderer.error("Enable `tools.shell_enabled` and/or `tools.files_enabled` in config.");
-        return 1;
     }
+    Ok(())
+}
 
+async fn initialize_execution_context(
+    args: &crate::cli::Args,
+    config: &Config,
+) -> Result<ExecutionContext, String> {
     let execution_tools_enabled = config.tools.shell_enabled || config.tools.files_enabled;
     let requested_tmux_session = args.tmux.clone().flatten();
-    let execution = if !execution_tools_enabled {
-        ExecutionContext::local()
-    } else if let Some(container) = &args.container {
-        match ExecutionContext::container_tmux(
+    if !execution_tools_enabled {
+        return Ok(ExecutionContext::local());
+    }
+
+    if let Some(container) = &args.container {
+        return ExecutionContext::container_tmux(
             container.clone(),
             requested_tmux_session,
             &config.agent.name,
         )
         .await
-        {
-            Ok(ctx) => ctx,
-            Err(e) => {
-                renderer.error(&format!("failed to initialize container execution: {e}"));
-                return 1;
-            }
-        }
-    } else if let Some(target) = &args.ssh {
-        match ExecutionContext::ssh(target.clone(), requested_tmux_session, &config.agent.name)
+        .map_err(|err| format!("failed to initialize container execution: {err}"));
+    }
+
+    if let Some(target) = &args.ssh {
+        return ExecutionContext::ssh(target.clone(), requested_tmux_session, &config.agent.name)
             .await
-        {
-            Ok(ctx) => ctx,
-            Err(e) => {
-                renderer.error(&format!("failed to initialize ssh execution: {e}"));
-                return 1;
-            }
-        }
-    } else {
-        match ExecutionContext::local_tmux(requested_tmux_session, &config.agent.name).await {
-            Ok(ctx) => ctx,
-            Err(e) => {
-                renderer.error(&format!("failed to initialize local tmux execution: {e}"));
-                return 1;
-            }
-        }
-    };
+            .map_err(|err| format!("failed to initialize ssh execution: {err}"));
+    }
 
-    let capture_pane_enabled = execution.capture_pane_available();
-    let prompt_tool_names = enabled_tool_names(&config, capture_pane_enabled);
+    ExecutionContext::local_tmux(requested_tmux_session, &config.agent.name)
+        .await
+        .map_err(|err| format!("failed to initialize local tmux execution: {err}"))
+}
 
-    // Render the built-in prompt template in one place with runtime parameters.
+fn configure_system_prompt(
+    config: &mut Config,
+    args: &crate::cli::Args,
+    capture_pane_enabled: bool,
+) {
+    let prompt_tool_names = enabled_tool_names(config, capture_pane_enabled);
     let custom_prompt = config.agent.system_prompt.trim().to_string();
     config.agent.system_prompt = render_system_prompt(SystemPromptParams {
         execution_target: if let Some(container) = args.container.as_deref() {
@@ -270,17 +326,22 @@ pub(crate) async fn run(args: crate::cli::Args) -> i32 {
         } else {
             ExecutionTarget::Local
         },
-        enabled_tools: prompt_tool_names.clone(),
+        enabled_tools: prompt_tool_names,
         custom_instructions: (!custom_prompt.is_empty()).then_some(custom_prompt.as_str()),
     });
+}
 
-    // Build tool registry from config.
+fn build_tools(
+    config: &Config,
+    execution: &ExecutionContext,
+    interactive_mode: bool,
+    capture_pane_enabled: bool,
+) -> ToolSetup {
     let mut tools = ToolRegistry::new();
-    let interactive_mode = !matches!(args.command.as_ref(), Some(cli::Command::Exec { .. }));
     let needs_approval_broker = interactive_mode
         && ((config.tools.shell_enabled && config.tools.shell_confirm)
             || (config.tools.fetch_enabled && config.tools.fetch_confirm));
-    let (shell_approval_broker, mut shell_approval_rx) = if needs_approval_broker {
+    let (shell_approval_broker, shell_approval_rx) = if needs_approval_broker {
         let (broker, rx) = ShellApprovalBroker::channel();
         (Some(broker), Some(rx))
     } else {
@@ -310,7 +371,7 @@ pub(crate) async fn run(args: crate::cli::Args) -> i32 {
             config.tools.fetch_confirm,
             config.tools.fetch_allowed_domains.clone(),
             config.tools.fetch_blocked_domains.clone(),
-            shell_approval_broker.clone(),
+            shell_approval_broker,
         ));
     }
     if config.tools.files_enabled {
@@ -329,498 +390,10 @@ pub(crate) async fn run(args: crate::cli::Args) -> i32 {
     }
     tools.register(TimeTool);
 
-    // Create agent.
-    let mut agent = Agent::new(config.clone(), tools);
-
-    if let Some(cli::Command::Exec { prompt }) = args.command.as_ref() {
-        // One-shot mode: run through the runtime actor command/event interface.
-        let (runtime, mut events) =
-            spawn_runtime_with_agent(agent, config.clone(), None, None, None);
-        if let Err(e) = runtime
-            .send(RuntimeCommand::SubmitPrompt {
-                prompt: prompt.clone(),
-                metadata: PromptMetadata {
-                    source: Some("cli-exec".to_string()),
-                    correlation_id: None,
-                },
-            })
-            .await
-        {
-            renderer.error(&format!("failed to submit prompt: {e}"));
-            return 1;
-        }
-
-        let mut final_response: Option<String> = None;
-        let mut failure_message: Option<String> = None;
-        while let Some(envelope) = events.recv().await {
-            match envelope.event {
-                RuntimeEvent::Model(ModelEvent::MessageFinal { content, .. }) => {
-                    final_response = Some(content);
-                }
-                RuntimeEvent::Task(TaskEvent::Failed { message, .. }) => {
-                    failure_message = Some(message);
-                }
-                RuntimeEvent::Task(TaskEvent::Completed { .. }) => {
-                    break;
-                }
-                _ => {}
-            }
-        }
-        let _ = runtime.send(RuntimeCommand::Shutdown).await;
-
-        if let Some(message) = failure_message {
-            renderer.error(&message);
-            return 1;
-        }
-        if let Some(response) = final_response {
-            renderer.assistant_message(&response);
-        } else {
-            renderer.error("runtime finished without a final assistant message");
-            return 1;
-        }
-    } else {
-        // Interactive REPL.
-        if default_uses_legacy_root() {
-            renderer.warn(
-                "Using deprecated `.agentx/` session root; migrate to `.buddyx/` before legacy support is removed after v0.4.",
-            );
-        }
-        let session_store = match SessionStore::open_default() {
-            Ok(store) => store,
-            Err(e) => {
-                renderer.error(&e);
-                return 1;
-            }
-        };
-        let (startup_session_state, mut active_session) = match initialize_active_session(
-            &renderer,
-            &session_store,
-            &mut agent,
-            resume_request,
-        ) {
-            Ok(value) => value,
-            Err(msg) => {
-                renderer.error(&msg);
-                return 1;
-            }
-        };
-
-        render_startup_banner(
-            config.display.color,
-            &config.api.model,
-            execution.tmux_attach_info().as_ref(),
-        );
-        render_session_startup_line(
-            config.display.color,
-            startup_session_state,
-            &active_session,
-            context_used_percent(&agent).unwrap_or(0),
-        );
-
-        let mut repl_state = term_ui::ReplState::default();
-        let history_path = if config.display.persist_history {
-            default_history_path()
-        } else {
-            None
-        };
-        if let Some(path) = history_path.as_ref() {
-            if let Err(err) = repl_state.load_history_file(path) {
-                renderer.warn(&format!(
-                    "failed to load command history from {}: {err}",
-                    path.display()
-                ));
-            }
-        }
-        let agent = Arc::new(Mutex::new(agent));
-        let (runtime, mut runtime_events) = spawn_runtime_with_shared_agent(
-            Arc::clone(&agent),
-            config.clone(),
-            Some(session_store.clone()),
-            Some(active_session.clone()),
-            shell_approval_rx.take(),
-        );
-        let mut background_tasks: Vec<BackgroundTask> = Vec::new();
-        let mut completed_tasks: Vec<CompletedBackgroundTask> = Vec::new();
-        let mut pending_approval: Option<PendingApproval> = None;
-        let mut approval_policy = ApprovalPolicy::Ask;
-        let mut pending_runtime_events: Vec<RuntimeEventEnvelope> = Vec::new();
-        let mut runtime_context =
-            RuntimeContextState::new(config.api.context_limit.map(|limit| limit as u64));
-        let mut last_prompt_context_used_percent: Option<u16> = None;
-
-        loop {
-            enforce_task_timeouts(
-                &renderer,
-                &runtime,
-                &mut background_tasks,
-                &mut pending_approval,
-            )
-            .await;
-            collect_runtime_events(&mut runtime_events, &mut pending_runtime_events);
-            let mut runtime_event_context = ProcessRuntimeEventsContext {
-                renderer: &renderer,
-                background_tasks: &mut background_tasks,
-                completed_tasks: &mut completed_tasks,
-                pending_approval: &mut pending_approval,
-                config: &mut config,
-                active_session: &mut active_session,
-                runtime_context: &mut runtime_context,
-            };
-            process_runtime_events(&mut pending_runtime_events, &mut runtime_event_context);
-            let _ = drain_completed_tasks(&renderer, &mut completed_tasks);
-            if background_tasks.is_empty() {
-                set_progress_enabled(true);
-            }
-
-            if let Some(approval) = pending_approval.take() {
-                let approval_actor = approval_prompt_actor(
-                    args.ssh.as_deref(),
-                    args.container.as_deref(),
-                    execution.tmux_attach_info().as_ref(),
-                );
-                render_shell_approval_request(
-                    config.display.color,
-                    &renderer,
-                    &approval_actor,
-                    &approval.command,
-                    approval.risk.as_deref(),
-                    approval.why.as_deref(),
-                );
-                let approval_prompt = term_ui::ApprovalPrompt {
-                    actor: &approval_actor,
-                    command: &approval.command,
-                    privileged: approval.privesc.unwrap_or(false),
-                    mutation: approval.mutation.unwrap_or(false),
-                };
-
-                let approval_input = match term_ui::read_repl_line_with_interrupt(
-                    config.display.color,
-                    &mut repl_state,
-                    args.ssh.as_deref(),
-                    None,
-                    term_ui::PromptMode::Approval,
-                    Some(&approval_prompt),
-                    || term_ui::ReadPoll {
-                        interrupt: has_elapsed_timeouts(&background_tasks),
-                        status_line: None,
-                    },
-                ) {
-                    Ok(term_ui::ReadOutcome::Line(line)) => line,
-                    Ok(term_ui::ReadOutcome::Eof) => {
-                        deny_pending_approval(&runtime, &mut background_tasks, approval).await;
-                        continue;
-                    }
-                    Ok(term_ui::ReadOutcome::Cancelled) => {
-                        deny_pending_approval(&runtime, &mut background_tasks, approval).await;
-                        break;
-                    }
-                    Ok(term_ui::ReadOutcome::Interrupted) => {
-                        pending_approval = Some(approval);
-                        continue;
-                    }
-                    Err(e) => {
-                        renderer.error(&format!("failed to read approval input: {e}"));
-                        deny_pending_approval(&runtime, &mut background_tasks, approval).await;
-                        continue;
-                    }
-                };
-
-                let approval_input = approval_input.trim();
-                eprintln!();
-                if let Some(decision) = parse_approval_decision(approval_input) {
-                    let task_id = approval.task_id;
-                    if let Err(err) = send_approval_decision(&runtime, &approval, decision).await {
-                        renderer.warn(&err);
-                    } else {
-                        mark_task_running(&mut background_tasks, task_id);
-                    }
-                    continue;
-                }
-
-                if let Some(action) = term_ui::parse_slash_command(approval_input) {
-                    match &action {
-                        term_ui::SlashCommandAction::Status => {
-                            let guard = agent.try_lock().ok();
-                            render_status(
-                                &renderer,
-                                &config,
-                                guard.as_deref(),
-                                runtime_context,
-                                &background_tasks,
-                                approval_policy,
-                                capture_pane_enabled,
-                            );
-                            pending_approval = Some(approval);
-                            continue;
-                        }
-                        term_ui::SlashCommandAction::Context => {
-                            let guard = agent.try_lock().ok();
-                            render_context(
-                                &renderer,
-                                guard.as_deref(),
-                                runtime_context,
-                                &background_tasks,
-                            );
-                            pending_approval = Some(approval);
-                            continue;
-                        }
-                        _ => {}
-                    }
-                    let mut dispatch_context = SharedSlashDispatchContext {
-                        runtime: &runtime,
-                        background_tasks: background_tasks.as_mut_slice(),
-                        pending_approval: &mut pending_approval,
-                        active_approval: Some(&approval),
-                        approval_policy: &mut approval_policy,
-                        mode: SharedSlashDispatchMode::Approval {
-                            task_id: approval.task_id,
-                        },
-                    };
-                    let dispatch_outcome =
-                        dispatch_shared_slash_action(&renderer, &action, &mut dispatch_context)
-                            .await;
-                    match dispatch_outcome {
-                        SharedSlashDispatchOutcome::Unhandled => {
-                            renderer.warn(BACKGROUND_TASK_WARNING);
-                            if task_is_waiting_for_approval(&background_tasks, approval.task_id) {
-                                pending_approval = Some(approval);
-                            }
-                        }
-                        SharedSlashDispatchOutcome::RequeueApproval => {
-                            pending_approval = Some(approval);
-                        }
-                        SharedSlashDispatchOutcome::Handled
-                        | SharedSlashDispatchOutcome::ApprovalResolved => {}
-                    }
-                    continue;
-                }
-
-                renderer.warn(
-                    "Approval required. Reply with y/yes or n/no. You can also use /ps, /kill <id>, /timeout <dur> [id], /approve <mode>, /status, /context, /compact.",
-                );
-                pending_approval = Some(approval);
-                continue;
-            }
-
-            if let Some(latest) = agent
-                .try_lock()
-                .ok()
-                .and_then(|guard| context_used_percent(&guard))
-            {
-                last_prompt_context_used_percent = Some(latest);
-            } else if runtime_context.context_limit > 0 {
-                last_prompt_context_used_percent =
-                    Some(display_context_percent(runtime_context.used_percent as f64));
-            }
-            let input = match term_ui::read_repl_line_with_interrupt(
-                config.display.color,
-                &mut repl_state,
-                args.ssh.as_deref(),
-                last_prompt_context_used_percent,
-                term_ui::PromptMode::Normal,
-                None,
-                || {
-                    // If runtime events arrive while the input editor is visible, interrupt the
-                    // editor immediately. Rendering those events while raw-mode input is active
-                    // causes overlapping lines and cursor drift.
-                    let has_new_runtime_events =
-                        collect_runtime_events(&mut runtime_events, &mut pending_runtime_events);
-                    term_ui::ReadPoll {
-                        interrupt: has_new_runtime_events
-                            || has_elapsed_timeouts(&background_tasks),
-                        status_line: background_liveness_line(&background_tasks),
-                    }
-                },
-            ) {
-                Ok(term_ui::ReadOutcome::Line(line)) => line,
-                Ok(term_ui::ReadOutcome::Eof) => break,
-                Ok(term_ui::ReadOutcome::Cancelled) => break,
-                Ok(term_ui::ReadOutcome::Interrupted) => continue,
-                Err(e) => {
-                    renderer.error(&format!("failed to read input: {e}"));
-                    break;
-                }
-            };
-
-            let input = input.trim_end();
-            if input.trim().is_empty() {
-                continue;
-            }
-
-            collect_runtime_events(&mut runtime_events, &mut pending_runtime_events);
-            let mut runtime_event_context = ProcessRuntimeEventsContext {
-                renderer: &renderer,
-                background_tasks: &mut background_tasks,
-                completed_tasks: &mut completed_tasks,
-                pending_approval: &mut pending_approval,
-                config: &mut config,
-                active_session: &mut active_session,
-                runtime_context: &mut runtime_context,
-            };
-            process_runtime_events(&mut pending_runtime_events, &mut runtime_event_context);
-            let _ = drain_completed_tasks(&renderer, &mut completed_tasks);
-
-            repl_state.push_history(input);
-            let has_background_tasks = !background_tasks.is_empty();
-
-            if let Some(action) = term_ui::parse_slash_command(input) {
-                match &action {
-                    term_ui::SlashCommandAction::Status => {
-                        let guard = agent.try_lock().ok();
-                        render_status(
-                            &renderer,
-                            &config,
-                            guard.as_deref(),
-                            runtime_context,
-                            &background_tasks,
-                            approval_policy,
-                            capture_pane_enabled,
-                        );
-                        continue;
-                    }
-                    term_ui::SlashCommandAction::Context => {
-                        let guard = agent.try_lock().ok();
-                        render_context(
-                            &renderer,
-                            guard.as_deref(),
-                            runtime_context,
-                            &background_tasks,
-                        );
-                        continue;
-                    }
-                    _ => {}
-                }
-
-                let mut dispatch_context = SharedSlashDispatchContext {
-                    runtime: &runtime,
-                    background_tasks: background_tasks.as_mut_slice(),
-                    pending_approval: &mut pending_approval,
-                    active_approval: None,
-                    approval_policy: &mut approval_policy,
-                    mode: SharedSlashDispatchMode::Repl,
-                };
-                let dispatch_outcome =
-                    dispatch_shared_slash_action(&renderer, &action, &mut dispatch_context).await;
-                if !matches!(dispatch_outcome, SharedSlashDispatchOutcome::Unhandled) {
-                    continue;
-                }
-
-                match action {
-                    term_ui::SlashCommandAction::Quit => {
-                        if has_background_tasks {
-                            renderer.warn(BACKGROUND_TASK_WARNING);
-                        } else {
-                            break;
-                        }
-                    }
-                    term_ui::SlashCommandAction::Session { verb, name } => {
-                        if has_background_tasks {
-                            renderer.warn(BACKGROUND_TASK_WARNING);
-                        } else {
-                            handle_session_command(
-                                &renderer,
-                                &session_store,
-                                &runtime,
-                                &mut active_session,
-                                verb.as_deref(),
-                                name.as_deref(),
-                            )
-                            .await;
-                        }
-                    }
-                    term_ui::SlashCommandAction::Compact => {
-                        if has_background_tasks {
-                            renderer.warn(BACKGROUND_TASK_WARNING);
-                        } else if let Err(e) = runtime.send(RuntimeCommand::SessionCompact).await {
-                            renderer
-                                .warn(&format!("failed to submit session compact command: {e}"));
-                        }
-                    }
-                    term_ui::SlashCommandAction::Model(selector) => {
-                        if has_background_tasks {
-                            renderer.warn(BACKGROUND_TASK_WARNING);
-                        } else {
-                            handle_model_command(
-                                &renderer,
-                                &mut config,
-                                &runtime,
-                                selector.as_deref(),
-                            )
-                            .await;
-                        }
-                    }
-                    term_ui::SlashCommandAction::Login(selector) => {
-                        if has_background_tasks {
-                            renderer.warn(BACKGROUND_TASK_WARNING);
-                        } else if let Err(msg) =
-                            run_login_flow(&renderer, &config, selector.as_deref(), false, false)
-                                .await
-                        {
-                            renderer.warn(&msg);
-                        }
-                    }
-                    term_ui::SlashCommandAction::Help => {
-                        if has_background_tasks {
-                            renderer.warn(BACKGROUND_TASK_WARNING);
-                        } else {
-                            render_help(&renderer);
-                        }
-                    }
-                    term_ui::SlashCommandAction::Unknown(cmd) => {
-                        if has_background_tasks {
-                            renderer.warn(BACKGROUND_TASK_WARNING);
-                        } else {
-                            renderer.warn(&format!("Unknown slash command: {cmd}. Try /help."));
-                        }
-                    }
-                    term_ui::SlashCommandAction::Ps
-                    | term_ui::SlashCommandAction::Kill(_)
-                    | term_ui::SlashCommandAction::Timeout { .. }
-                    | term_ui::SlashCommandAction::Approve(_) => {}
-                    term_ui::SlashCommandAction::Status | term_ui::SlashCommandAction::Context => {}
-                }
-                continue;
-            }
-
-            if has_background_tasks {
-                renderer.warn(BACKGROUND_TASK_WARNING);
-                continue;
-            }
-
-            set_progress_enabled(false);
-            if let Err(err) = runtime
-                .send(RuntimeCommand::SubmitPrompt {
-                    prompt: input.to_string(),
-                    metadata: PromptMetadata {
-                        source: Some("repl".to_string()),
-                        correlation_id: None,
-                    },
-                })
-                .await
-            {
-                renderer.error(&format!("failed to start background task: {err}"));
-            }
-        }
-        if let Some(path) = history_path.as_ref() {
-            if let Err(err) = repl_state.save_history_file(path) {
-                renderer.warn(&format!(
-                    "failed to save command history to {}: {err}",
-                    path.display()
-                ));
-            }
-        }
-        let _ = runtime.send(RuntimeCommand::Shutdown).await;
+    ToolSetup {
+        tools,
+        shell_approval_rx,
     }
-
-    0
-}
-
-fn render_help(renderer: &dyn RenderSink) {
-    renderer.section("slash commands");
-    for cmd in &term_ui::SLASH_COMMANDS {
-        renderer.field(cmd.name, cmd.description);
-    }
-    eprintln!();
 }
 
 fn run_init_flow(renderer: &dyn RenderSink, force: bool) -> Result<(), String> {
@@ -847,7 +420,7 @@ fn run_init_flow(renderer: &dyn RenderSink, force: bool) -> Result<(), String> {
     }
 }
 
-async fn run_login_flow(
+pub(crate) async fn run_login_flow(
     renderer: &dyn RenderSink,
     config: &Config,
     selector: Option<&str>,
@@ -960,124 +533,6 @@ async fn run_login_flow(
     Ok(())
 }
 
-fn render_status(
-    renderer: &dyn RenderSink,
-    config: &Config,
-    agent: Option<&Agent>,
-    runtime_context: RuntimeContextState,
-    background_tasks: &[BackgroundTask],
-    approval_policy: ApprovalPolicy,
-    capture_pane_enabled: bool,
-) {
-    renderer.section("status");
-    renderer.field("model_profile", &config.agent.model);
-    renderer.field("model", &config.api.model);
-    renderer.field("base_url", &config.api.base_url);
-    renderer.field("api", &format!("{:?}", config.api.protocol));
-    renderer.field("auth", &format!("{:?}", config.api.auth));
-    renderer.field("max_iterations", &config.agent.max_iterations.to_string());
-    renderer.field("tools", &enabled_tools(config, capture_pane_enabled));
-    renderer.field("background_tasks", &background_tasks.len().to_string());
-    renderer.field("approval_policy", &approval_policy_label(approval_policy));
-
-    if let Some(agent) = agent {
-        renderer.field("context_limit", &agent.tracker().context_limit.to_string());
-        renderer.field("messages", &agent.messages().len().to_string());
-        renderer.field(
-            "session_tokens",
-            &agent.tracker().session_total().to_string(),
-        );
-    } else {
-        let context_limit = if runtime_context.context_limit == 0 {
-            "auto".to_string()
-        } else {
-            runtime_context.context_limit.to_string()
-        };
-        renderer.field("context_limit", &context_limit);
-        renderer.field("messages", "busy (task in progress)");
-        renderer.field(
-            "session_tokens",
-            &runtime_context.session_total_tokens.to_string(),
-        );
-    }
-
-    eprintln!();
-}
-
-fn render_context(
-    renderer: &dyn RenderSink,
-    agent: Option<&Agent>,
-    runtime_context: RuntimeContextState,
-    background_tasks: &[BackgroundTask],
-) {
-    renderer.section("context");
-    renderer.field("background_tasks", &background_tasks.len().to_string());
-
-    if let Some(agent) = agent {
-        let tracker = agent.tracker();
-        let estimated = TokenTracker::estimate_messages(agent.messages());
-        let percent = if tracker.context_limit == 0 {
-            0.0
-        } else {
-            (estimated as f64 / tracker.context_limit as f64) * 100.0
-        };
-
-        renderer.field(
-            "window_estimate",
-            &format!(
-                "{estimated} / {} tokens ({percent:.1}%)",
-                tracker.context_limit
-            ),
-        );
-        renderer.field(
-            "last_call",
-            &format!(
-                "prompt:{} completion:{}",
-                tracker.last_prompt_tokens, tracker.last_completion_tokens
-            ),
-        );
-        renderer.field("session_total", &tracker.session_total().to_string());
-        renderer.field("messages", &agent.messages().len().to_string());
-    } else {
-        if runtime_context.context_limit == 0 {
-            renderer.field("window_estimate", "unknown (context limit auto)");
-        } else {
-            renderer.field(
-                "window_estimate",
-                &format!(
-                    "{} / {} tokens ({:.1}%)",
-                    runtime_context.estimated_tokens,
-                    runtime_context.context_limit,
-                    runtime_context.used_percent
-                ),
-            );
-        }
-        renderer.field(
-            "last_call",
-            &format!(
-                "prompt:{} completion:{}",
-                runtime_context.last_prompt_tokens, runtime_context.last_completion_tokens
-            ),
-        );
-        renderer.field(
-            "session_total",
-            &runtime_context.session_total_tokens.to_string(),
-        );
-        renderer.field("messages", "busy (task in progress)");
-    }
-
-    eprintln!();
-}
-
-fn enabled_tools(config: &Config, capture_pane_enabled: bool) -> String {
-    let tools = enabled_tool_names(config, capture_pane_enabled);
-    if tools.is_empty() {
-        "none".to_string()
-    } else {
-        tools.join(", ")
-    }
-}
-
 fn enabled_tool_names(config: &Config, capture_pane_enabled: bool) -> Vec<&'static str> {
     let mut tools = Vec::new();
     if config.tools.shell_enabled {
@@ -1099,28 +554,6 @@ fn enabled_tool_names(config: &Config, capture_pane_enabled: bool) -> Vec<&'stat
     }
     tools.push("time");
     tools
-}
-
-fn context_used_percent(agent: &Agent) -> Option<u16> {
-    let tracker = agent.tracker();
-    if tracker.context_limit == 0 {
-        return None;
-    }
-    let estimated = TokenTracker::estimate_messages(agent.messages());
-    let percent = (estimated as f64 / tracker.context_limit as f64) * 100.0;
-    Some(display_context_percent(percent))
-}
-
-fn display_context_percent(percent: f64) -> u16 {
-    if percent.is_nan() || percent <= 0.0 {
-        return 0;
-    }
-    let rounded = percent.round().clamp(0.0, 9_999.0) as u16;
-    if rounded == 0 {
-        1
-    } else {
-        rounded
-    }
 }
 
 #[cfg(test)]
@@ -1276,26 +709,6 @@ mod tests {
         assert_eq!(parse_approval_decision("n"), Some(ApprovalDecision::Deny));
         assert_eq!(parse_approval_decision(""), Some(ApprovalDecision::Deny));
         assert_eq!(parse_approval_decision("maybe"), None);
-    }
-
-    #[test]
-    fn context_used_percent_rounds_and_handles_zero_limit() {
-        let mut cfg = Config::default();
-        cfg.api.context_limit = Some(100);
-        let tools = ToolRegistry::new();
-        let mut agent = Agent::new(cfg, tools);
-        let mut snapshot = agent.snapshot_session();
-        snapshot
-            .messages
-            .push(buddy::types::Message::user("a".repeat(100)));
-        agent.restore_session(snapshot);
-        let used = context_used_percent(&agent).expect("has context limit");
-        assert!(used > 0);
-
-        let mut cfg_zero = Config::default();
-        cfg_zero.api.context_limit = Some(0);
-        let agent_zero = Agent::new(cfg_zero, ToolRegistry::new());
-        assert_eq!(context_used_percent(&agent_zero), None);
     }
 
     #[test]

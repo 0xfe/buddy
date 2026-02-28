@@ -6,7 +6,9 @@
 pub(crate) mod approval;
 pub(crate) mod commands;
 pub(crate) mod entry;
+pub(crate) mod exec_mode;
 pub(crate) mod repl_loop;
+pub(crate) mod repl_mode;
 pub(crate) mod startup;
 pub(crate) mod tasks;
 
