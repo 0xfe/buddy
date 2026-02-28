@@ -128,11 +128,6 @@ pub(super) fn resolve_pending_approval(
             );
         }
     }
-    emit_event(
-        event_tx,
-        seq,
-        RuntimeEvent::Task(TaskEvent::Started { task }),
-    );
 }
 
 pub(super) fn deny_pending_approvals_for_task(

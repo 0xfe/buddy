@@ -9,7 +9,7 @@ use crate::preflight::validate_active_profile_ready;
 use crate::session::SessionStore;
 use crate::textutil::truncate_with_suffix_by_chars;
 use crate::tools::shell::ShellApprovalRequest;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch, Mutex};
 
@@ -114,6 +114,7 @@ pub fn spawn_runtime_with_shared_agent(
         let mut next_task_id: u64 = 1;
         let mut active_task: Option<ActiveTask> = None;
         let mut pending_approvals = HashMap::<String, PendingRuntimeApproval>::new();
+        let mut failed_tasks = HashSet::<u64>::new();
         let mut next_approval_nonce: u64 = 1;
         let mut state = RuntimeActorState {
             config,
@@ -158,6 +159,11 @@ pub fn spawn_runtime_with_shared_agent(
                     }
                 }
                 Some(agent_envelope) = agent_event_rx.recv() => {
+                    if let RuntimeEvent::Task(TaskEvent::Failed { task, .. }) = &agent_envelope.event {
+                        if !failed_tasks.insert(task.task_id) {
+                            continue;
+                        }
+                    }
                     emit_event(&event_tx, &mut seq, agent_envelope.event);
                 }
                 Some(done) = task_done_rx.recv() => {
@@ -169,6 +175,9 @@ pub fn spawn_runtime_with_shared_agent(
                     persist_active_session_snapshot(&agent, &state, &event_tx, &mut seq).await;
 
                     if let Err(err) = done.result {
+                        if !failed_tasks.insert(done.task_id) {
+                            continue;
+                        }
                         emit_event(
                             &event_tx,
                             &mut seq,
@@ -913,6 +922,120 @@ mod tests {
             .expect("join should succeed")
             .expect("decision");
         assert!(approved);
+    }
+
+    #[tokio::test]
+    async fn runtime_actor_emits_single_started_event_when_approval_resolves() {
+        let agent = Agent::with_client(
+            Config::default(),
+            crate::tools::ToolRegistry::new(),
+            Box::new(MockClient::with_delay(
+                vec![chat_response_text("r1", "ok")],
+                Duration::from_millis(250),
+            )),
+        );
+        let (broker, approval_rx) = ShellApprovalBroker::channel();
+        let (handle, mut events) =
+            spawn_runtime_with_agent(agent, Config::default(), None, None, Some(approval_rx));
+        let _ = recv_event(&mut events).await;
+        let _ = recv_event(&mut events).await;
+
+        handle
+            .send(RuntimeCommand::SubmitPrompt {
+                prompt: "slow".to_string(),
+                metadata: PromptMetadata::default(),
+            })
+            .await
+            .expect("send submit");
+
+        let waiter = tokio::spawn(async move { broker.request("echo hi".to_string(), None).await });
+
+        let mut approval_id = String::new();
+        let mut started_count = 0usize;
+        for _ in 0..12 {
+            match recv_event(&mut events).await {
+                RuntimeEvent::Task(TaskEvent::Started { task }) if task.task_id == 1 => {
+                    started_count += 1;
+                }
+                RuntimeEvent::Task(TaskEvent::WaitingApproval {
+                    task,
+                    approval_id: id,
+                    ..
+                }) if task.task_id == 1 => {
+                    approval_id = id;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        assert!(
+            !approval_id.is_empty(),
+            "runtime did not emit waiting-approval event"
+        );
+
+        handle
+            .send(RuntimeCommand::Approve {
+                approval_id,
+                decision: ApprovalDecision::Approve,
+            })
+            .await
+            .expect("send approve");
+
+        let approved = waiter
+            .await
+            .expect("join should succeed")
+            .expect("decision");
+        assert!(approved);
+
+        for _ in 0..12 {
+            match recv_event(&mut events).await {
+                RuntimeEvent::Task(TaskEvent::Started { task }) if task.task_id == 1 => {
+                    started_count += 1;
+                }
+                RuntimeEvent::Task(TaskEvent::Completed { task }) if task.task_id == 1 => break,
+                _ => {}
+            }
+        }
+
+        assert_eq!(started_count, 1, "expected exactly one started event");
+    }
+
+    #[tokio::test]
+    async fn runtime_actor_deduplicates_failed_event_from_task_done_path() {
+        // No queued response forces the mock client to return an API error, which
+        // already causes the agent to emit TaskEvent::Failed.
+        let agent = Agent::with_client(
+            Config::default(),
+            crate::tools::ToolRegistry::new(),
+            Box::new(MockClient::new(vec![])),
+        );
+        let (handle, mut events) =
+            spawn_runtime_with_agent(agent, Config::default(), None, None, None);
+        let _ = recv_event(&mut events).await;
+        let _ = recv_event(&mut events).await;
+
+        handle
+            .send(RuntimeCommand::SubmitPrompt {
+                prompt: "trigger failure".to_string(),
+                metadata: PromptMetadata::default(),
+            })
+            .await
+            .expect("send submit");
+
+        let mut failed_count = 0usize;
+        for _ in 0..20 {
+            let maybe_event = timeout(Duration::from_millis(250), events.recv()).await;
+            let Ok(Some(envelope)) = maybe_event else {
+                break;
+            };
+            if let RuntimeEvent::Task(TaskEvent::Failed { task, .. }) = envelope.event {
+                if task.task_id == 1 {
+                    failed_count += 1;
+                }
+            }
+        }
+
+        assert_eq!(failed_count, 1, "expected exactly one failed event");
     }
 
     #[tokio::test]
