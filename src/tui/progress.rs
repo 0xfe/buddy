@@ -15,6 +15,7 @@ static PROGRESS_ENABLED: AtomicBool = AtomicBool::new(true);
 /// Optional key/value metrics displayed next to a spinner label.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProgressMetrics {
+    /// Ordered key/value metrics appended to the spinner label.
     entries: Vec<(String, String)>,
 }
 
@@ -25,6 +26,7 @@ impl ProgressMetrics {
         self
     }
 
+    /// Render metrics as `[k:v ...]` suffix text.
     fn render_suffix(&self) -> String {
         if self.entries.is_empty() {
             return String::new();
@@ -41,11 +43,14 @@ impl ProgressMetrics {
 
 /// RAII handle for an active spinner/progress indicator.
 pub struct ProgressHandle {
+    /// Stop signal shared with the spinner thread.
     stop: Arc<AtomicBool>,
+    /// Background writer thread, present only when spinner is active.
     thread: Option<thread::JoinHandle<()>>,
 }
 
 impl ProgressHandle {
+    /// Construct a no-op handle used when progress output is disabled.
     pub(crate) fn disabled() -> Self {
         Self {
             stop: Arc::new(AtomicBool::new(true)),
@@ -126,6 +131,7 @@ fn progress_line(
     color: bool,
     metrics: &ProgressMetrics,
 ) -> String {
+    // Keep elapsed formatting stable so tests can assert deterministic text.
     let elapsed_s = elapsed.as_millis() as f64 / 1000.0;
     let suffix = metrics.render_suffix();
     if color {
@@ -157,6 +163,7 @@ mod tests {
 
     #[test]
     fn progress_line_plain_contains_label() {
+        // Plain mode should still include frame, label, and elapsed seconds.
         let out = progress_line(
             '|',
             "calling model",
@@ -169,6 +176,7 @@ mod tests {
 
     #[test]
     fn progress_line_includes_metrics_suffix() {
+        // Metric entries should render as a bracketed suffix.
         let metrics = ProgressMetrics::default()
             .with_entry("in", "12kb")
             .with_entry("out", "42kb");

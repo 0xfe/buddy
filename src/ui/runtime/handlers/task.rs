@@ -9,16 +9,19 @@ use crate::repl::{
 };
 use crate::ui::runtime::RuntimeEventRenderContext;
 
+/// Apply one task event and update reducer-owned task collections.
 pub(in crate::ui::runtime) fn handle_task(
     ctx: &mut RuntimeEventRenderContext<'_>,
     event: TaskEvent,
 ) {
+    // Keep reducer-owned task state synchronized with runtime task lifecycle events.
     match event {
         TaskEvent::Queued {
             task,
             kind,
             details,
         } => {
+            // New queued tasks are immediately visible as running background work.
             ctx.background_tasks.push(BackgroundTask {
                 id: task.task_id,
                 kind,
@@ -42,6 +45,7 @@ pub(in crate::ui::runtime) fn handle_task(
             privesc,
             why,
         } => {
+            // Only surface one pending approval prompt at a time to avoid prompt clashes.
             if mark_task_waiting_for_approval(
                 ctx.background_tasks,
                 task.task_id,
@@ -75,6 +79,7 @@ pub(in crate::ui::runtime) fn handle_task(
             }
         }
         TaskEvent::Completed { task } => {
+            // Completed tasks migrate from in-flight storage into completion history.
             if ctx
                 .pending_approval
                 .as_ref()
@@ -97,6 +102,7 @@ pub(in crate::ui::runtime) fn handle_task(
             }
         }
         TaskEvent::Failed { task, message } => {
+            // Failed tasks also migrate into completion history with an error payload.
             if ctx
                 .pending_approval
                 .as_ref()

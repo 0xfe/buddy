@@ -11,24 +11,43 @@ pub use crate::tui::renderer::Renderer;
 /// `Renderer` remains the default terminal implementation, but consumers/tests
 /// can substitute a mock sink without coupling to stderr output.
 pub trait RenderSink: Send + Sync {
+    /// Render the interactive prompt chrome.
     fn prompt(&self);
+    /// Render one assistant message destined for stdout.
     fn assistant_message(&self, content: &str);
+    /// Start a progress indicator for a long-running task.
     fn progress(&self, label: &str) -> ProgressHandle;
+    /// Start a progress indicator enriched with metrics.
     fn progress_with_metrics(&self, label: &str, metrics: ProgressMetrics) -> ProgressHandle;
+    /// Render a session/model header line.
     fn header(&self, model: &str);
+    /// Render a tool invocation summary.
     fn tool_call(&self, name: &str, args: &str);
+    /// Render a tool result summary.
     fn tool_result(&self, result: &str);
+    /// Render token usage counters.
     fn token_usage(&self, prompt: u64, completion: u64, session_total: u64);
+    /// Render reasoning trace fragments with a field label.
     fn reasoning_trace(&self, field: &str, trace: &str);
+    /// Render a warning line.
     fn warn(&self, msg: &str);
+    /// Render a titled section divider.
     fn section(&self, title: &str);
+    /// Render activity/lifecycle text.
     fn activity(&self, text: &str);
+    /// Render one key/value field row.
     fn field(&self, key: &str, value: &str);
+    /// Render additional detail text.
     fn detail(&self, text: &str);
+    /// Render an error line.
     fn error(&self, msg: &str);
+    /// Render syntax-aware tool output as a block.
     fn tool_output_block(&self, text: &str, syntax_path: Option<&str>);
+    /// Render raw command output as a block.
     fn command_output_block(&self, text: &str);
+    /// Render model reasoning text as a block.
     fn reasoning_block(&self, text: &str);
+    /// Render approval-related text as a block.
     fn approval_block(&self, text: &str);
 }
 

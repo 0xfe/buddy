@@ -5,7 +5,9 @@ use crate::textutil::truncate_with_suffix_by_chars;
 /// A clipped text preview used for compact block rendering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SnippetPreview<'a> {
+    /// Lines selected for display in the preview block.
     pub lines: Vec<&'a str>,
+    /// Number of omitted lines not present in `lines`.
     pub remaining_lines: usize,
 }
 
@@ -107,18 +109,21 @@ mod tests {
 
     #[test]
     fn truncate_flattens_and_clips() {
+        // Newlines are flattened before clipping for single-line contexts.
         let out = truncate_single_line("hello\nworld", 8);
         assert_eq!(out, "hello wo...");
     }
 
     #[test]
     fn truncate_single_line_handles_utf8_without_panicking() {
+        // UTF-8 strings should clip on char boundaries without panics.
         let out = truncate_single_line("🙂🙂🙂", 2);
         assert_eq!(out, "🙂🙂...");
     }
 
     #[test]
     fn snippet_preview_limits_lines_and_counts_remaining() {
+        // Preview reports both visible lines and hidden-line count.
         let input = "1\n2\n3\n4";
         let preview = snippet_preview(input, 2);
         assert_eq!(preview.lines, vec!["1", "2"]);
@@ -127,6 +132,7 @@ mod tests {
 
     #[test]
     fn snippet_preview_handles_empty_input() {
+        // Empty input should produce an empty preview with zero remainder.
         let preview = snippet_preview("", 10);
         assert!(preview.lines.is_empty());
         assert_eq!(preview.remaining_lines, 0);
@@ -134,17 +140,20 @@ mod tests {
 
     #[test]
     fn clip_to_width_limits_by_chars() {
+        // Width clipping is character-based rather than byte-based.
         assert_eq!(clip_to_width("abcdef", 3), "abc");
     }
 
     #[test]
     fn wrap_for_block_prefers_word_boundaries() {
+        // Wrapping should favor splitting on whitespace when possible.
         let wrapped = wrap_for_block("one two three", 7);
         assert_eq!(wrapped, vec!["one two".to_string(), "three".to_string()]);
     }
 
     #[test]
     fn wrap_for_block_falls_back_to_hard_wrap() {
+        // Long tokens without spaces should be hard-wrapped.
         let wrapped = wrap_for_block("superlongtoken", 5);
         assert_eq!(
             wrapped,
@@ -154,6 +163,7 @@ mod tests {
 
     #[test]
     fn visible_width_counts_chars() {
+        // Visible width helper currently uses simple char-count approximation.
         assert_eq!(visible_width("abc"), 3);
     }
 }

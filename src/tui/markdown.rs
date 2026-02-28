@@ -26,6 +26,7 @@ mod tests {
 
     #[test]
     fn preserves_list_layout() {
+        // Lists/headings should survive markdown rendering in readable form.
         let md = "# Title\n\n- a\n- b";
         let out = render_markdown_for_terminal(md);
         assert!(out.contains("Title"));
@@ -35,6 +36,7 @@ mod tests {
 
     #[test]
     fn keeps_code_content() {
+        // Code fence contents should remain intact after rendering.
         let md = "```rust\nfn main() {}\n```";
         let out = render_markdown_for_terminal(md);
         assert!(out.contains("fn main() {}"));

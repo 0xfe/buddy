@@ -15,13 +15,18 @@ use std::sync::{Mutex, OnceLock};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SnippetTone {
+    /// Tool/file output blocks.
     Tool,
+    /// Model reasoning trace blocks.
     Reasoning,
+    /// Approval-related blocks.
     Approval,
+    /// Assistant response blocks written to stdout.
     Assistant,
 }
 
 impl SnippetTone {
+    /// Background color assigned to this tone.
     fn bg(self) -> Color {
         match self {
             Self::Tool => settings::COLOR_SNIPPET_TOOL_BG,
@@ -31,6 +36,7 @@ impl SnippetTone {
         }
     }
 
+    /// Foreground color assigned to this tone.
     fn fg(self) -> Color {
         match self {
             Self::Tool => settings::COLOR_SNIPPET_TOOL_TEXT,
@@ -43,23 +49,30 @@ impl SnippetTone {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BlockWrapMode {
+    /// Soft-wrap long lines within the block width.
     Wrap,
+    /// Clip long lines at the block width.
     Clip,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BlockTarget {
+    /// Write block rows to stdout.
     Stdout,
+    /// Write block rows to stderr.
     Stderr,
 }
 
 #[derive(Debug, Default)]
 struct StreamSpacingState {
+    /// Whether stdout currently ends on a blank separator row.
     stdout_blank: bool,
+    /// Whether stderr currently ends on a blank separator row.
     stderr_blank: bool,
 }
 
 impl StreamSpacingState {
+    /// Query blank-state bookkeeping for a specific stream.
     fn is_blank(&self, target: BlockTarget) -> bool {
         match target {
             BlockTarget::Stdout => self.stdout_blank,
@@ -67,6 +80,7 @@ impl StreamSpacingState {
         }
     }
 
+    /// Update blank-state bookkeeping for a specific stream.
     fn set_blank(&mut self, target: BlockTarget, blank: bool) {
         match target {
             BlockTarget::Stdout => self.stdout_blank = blank,
@@ -82,26 +96,36 @@ fn spacing_state() -> &'static Mutex<StreamSpacingState> {
 
 #[derive(Debug, Clone, Copy)]
 struct BlockSpec<'a> {
+    /// Visual tone for colors/semantics.
     tone: SnippetTone,
+    /// Destination stream.
     target: BlockTarget,
+    /// Wrapping policy applied to long rows.
     wrap_mode: BlockWrapMode,
+    /// Optional source-line cap before adding truncation marker.
     max_source_lines: Option<usize>,
+    /// Optional path hint used for syntax highlighting.
     syntax_path: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum RowContent {
+    /// Unstyled plain text row.
     Plain(String),
+    /// Row carrying pre-split style tokens.
     Highlighted(Vec<StyledToken>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RenderedRow {
+    /// Row payload.
     content: RowContent,
+    /// Whether this row should render with muted/truncation color.
     muted: bool,
 }
 
 impl RenderedRow {
+    /// Construct a non-muted plain row.
     fn plain(text: String) -> Self {
         Self {
             content: RowContent::Plain(text),
@@ -109,6 +133,7 @@ impl RenderedRow {
         }
     }
 
+    /// Construct a non-muted highlighted row.
     fn highlighted(tokens: Vec<StyledToken>) -> Self {
         Self {
             content: RowContent::Highlighted(tokens),
@@ -116,6 +141,7 @@ impl RenderedRow {
         }
     }
 
+    /// Construct a muted plain row.
     fn muted(text: String) -> Self {
         Self {
             content: RowContent::Plain(text),
@@ -123,6 +149,7 @@ impl RenderedRow {
         }
     }
 
+    /// Convert highlighted/plain content into plain text fallback.
     fn as_plain_text(&self) -> String {
         match &self.content {
             RowContent::Plain(text) => text.clone(),
@@ -140,6 +167,7 @@ impl RenderedRow {
 /// Handles all terminal output formatting.
 #[derive(Debug, Clone, Copy)]
 pub struct Renderer {
+    /// Whether ANSI color/style output is enabled.
     color: bool,
 }
 
@@ -451,7 +479,13 @@ impl Renderer {
         );
     }
 
+    /// Core block renderer shared by assistant/tool/reasoning output helpers.
     fn render_block(&self, text: &str, spec: BlockSpec<'_>) {
+        // Walkthrough:
+        // 1) choose source lines (with optional preview truncation),
+        // 2) split each source line into render rows with optional highlighting,
+        // 3) write rows to target stream with spacing management,
+        // 4) fall back to plain printing if queue-based writes fail.
         let preview = match spec.max_source_lines {
             Some(max_lines) => snippet_preview(text, max_lines),
             None => {
@@ -474,6 +508,8 @@ impl Renderer {
         let mut rows = Vec::<RenderedRow>::new();
 
         for (idx, line) in preview.lines.iter().enumerate() {
+            // Prefer syntax-highlighter output, then assistant-markdown styling,
+            // and finally plain wrapping/clipping.
             if let Some(tokens_by_line) = &highlighted {
                 if let Some(tokens) = tokens_by_line.get(idx) {
                     rows.extend(split_highlighted_line(tokens, block_width, spec.wrap_mode));
@@ -517,6 +553,7 @@ impl Renderer {
             }
         };
         if write_result.is_err() {
+            // Degrade gracefully if terminal queueing fails; preserve content.
             if !stream_is_blank(spec.target) {
                 match spec.target {
                     BlockTarget::Stdout => println!(),
@@ -548,6 +585,8 @@ impl Renderer {
         block_width: usize,
         tone: SnippetTone,
     ) -> io::Result<()> {
+        // Render each logical row as:
+        // "\r" + indent + styled/clipped payload + "\r\n".
         let bg = tone.bg();
         let default_fg = tone.fg();
 
@@ -614,6 +653,7 @@ impl Renderer {
         out: &mut W,
         target: BlockTarget,
     ) -> io::Result<()> {
+        // Ensure a blank separator exists between consecutive non-blank sections.
         out.queue(Print("\r"))?;
         if !stream_is_blank(target) {
             out.queue(Print("\r\n"))?;
@@ -627,6 +667,7 @@ impl Renderer {
         out: &mut W,
         target: BlockTarget,
     ) -> io::Result<()> {
+        // Leave stream in a blank-separated state after each rendered block.
         out.queue(Print("\r\n"))?;
         out.flush()?;
         mark_stream_blank(target);
@@ -643,6 +684,7 @@ fn block_content_width() -> usize {
         .max(1)
 }
 
+/// Split one plain line into one-or-more rendered rows.
 fn split_plain_line(line: &str, width: usize, wrap_mode: BlockWrapMode) -> Vec<RenderedRow> {
     match wrap_mode {
         BlockWrapMode::Wrap => wrap_for_block(line, width)
@@ -653,6 +695,7 @@ fn split_plain_line(line: &str, width: usize, wrap_mode: BlockWrapMode) -> Vec<R
     }
 }
 
+/// Apply lightweight markdown-oriented styling for assistant plain-text output.
 fn style_assistant_markdown_line(line: &str) -> Option<Vec<StyledToken>> {
     if line.trim().is_empty() {
         return None;
@@ -759,6 +802,7 @@ fn style_assistant_markdown_line(line: &str) -> Option<Vec<StyledToken>> {
     None
 }
 
+/// Parse ordered-list prefixes like `1. ` and return `(prefix, rest)`.
 fn split_ordered_list_prefix(line: &str) -> Option<(&str, &str)> {
     let digit_chars = line.chars().take_while(|ch| ch.is_ascii_digit()).count();
     if digit_chars == 0 {
@@ -776,6 +820,7 @@ fn split_ordered_list_prefix(line: &str) -> Option<(&str, &str)> {
     Some((prefix, rest))
 }
 
+/// Return true when a line starts with a markdown heading marker.
 fn is_markdown_heading(line: &str) -> bool {
     let hash_chars = line.chars().take_while(|ch| *ch == '#').count();
     if hash_chars == 0 {
@@ -784,6 +829,7 @@ fn is_markdown_heading(line: &str) -> bool {
     line.chars().nth(hash_chars) == Some(' ')
 }
 
+/// Style backtick-delimited inline code segments inside one line.
 fn style_inline_code(line: &str, base_rgb: (u8, u8, u8)) -> Vec<StyledToken> {
     let mut tokens = Vec::new();
     let mut in_code = false;
@@ -825,6 +871,7 @@ fn style_inline_code(line: &str, base_rgb: (u8, u8, u8)) -> Vec<StyledToken> {
     tokens
 }
 
+/// Convenience constructor for one `StyledToken`.
 fn styled_token(
     text: impl Into<String>,
     rgb: (u8, u8, u8),
@@ -841,6 +888,7 @@ fn styled_token(
     }
 }
 
+/// Split highlighted tokens into wrapped/clipped rows while preserving style spans.
 fn split_highlighted_line(
     tokens: &[StyledToken],
     width: usize,
@@ -875,6 +923,7 @@ fn split_highlighted_line(
     rows.into_iter().map(RenderedRow::highlighted).collect()
 }
 
+/// Append one char to the current row, merging with previous token when style matches.
 fn push_highlighted_char(current: &mut Vec<StyledToken>, style: &StyledToken, ch: char) {
     if let Some(last) = current.last_mut() {
         if same_style(last, style) {
@@ -892,10 +941,12 @@ fn push_highlighted_char(current: &mut Vec<StyledToken>, style: &StyledToken, ch
     });
 }
 
+/// Compare style attributes while ignoring token text content.
 fn same_style(a: &StyledToken, b: &StyledToken) -> bool {
     a.rgb == b.rgb && a.bold == b.bold && a.italic == b.italic && a.underline == b.underline
 }
 
+/// Read current stream-spacing state.
 fn stream_is_blank(target: BlockTarget) -> bool {
     spacing_state()
         .lock()
@@ -903,12 +954,14 @@ fn stream_is_blank(target: BlockTarget) -> bool {
         .unwrap_or(false)
 }
 
+/// Mark stream as containing non-blank content.
 fn mark_stream_nonblank(target: BlockTarget) {
     if let Ok(mut state) = spacing_state().lock() {
         state.set_blank(target, false);
     }
 }
 
+/// Mark stream as ending on a blank separator row.
 fn mark_stream_blank(target: BlockTarget) {
     if let Ok(mut state) = spacing_state().lock() {
         state.set_blank(target, true);
@@ -921,6 +974,7 @@ mod tests {
 
     #[test]
     fn assistant_heading_line_gets_heading_style() {
+        // Headings should be promoted to heading color + bold style.
         let tokens = style_assistant_markdown_line("## Heading").expect("styled");
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0].text, "## Heading");
@@ -930,11 +984,13 @@ mod tests {
 
     #[test]
     fn assistant_plain_line_has_no_extra_style() {
+        // Plain prose should render with default assistant tone only.
         assert!(style_assistant_markdown_line("plain sentence").is_none());
     }
 
     #[test]
     fn assistant_inline_code_preserves_text_and_styles_code_segments() {
+        // Inline code styling must preserve exact source text while tagging code spans.
         let tokens = style_assistant_markdown_line("Use `ls -la` now").expect("styled");
         let rendered = tokens
             .iter()

@@ -32,16 +32,22 @@ pub use crate::tui::input_buffer::ReplState;
 /// Result of reading one interactive input line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReadOutcome {
+    /// User submitted a full line.
     Line(String),
+    /// End-of-file (`Ctrl-D` on empty buffer / stdin EOF).
     Eof,
+    /// User cancelled input (`Ctrl-C`).
     Cancelled,
+    /// External interrupt requested by the poll callback.
     Interrupted,
 }
 
 /// Input-loop poll result (interrupt signal + optional status line).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ReadPoll {
+    /// Request that the read loop exits with `ReadOutcome::Interrupted`.
     pub interrupt: bool,
+    /// Optional transient status line to draw above the prompt.
     pub status_line: Option<String>,
 }
 
@@ -116,6 +122,7 @@ fn read_line_fallback<F>(
 where
     F: FnMut() -> ReadPoll,
 {
+    // Non-TTY path: probe once for interrupt/status, then block on stdin.
     let poll_state = poll();
     if poll_state.interrupt {
         return Ok(ReadOutcome::Interrupted);
@@ -160,6 +167,7 @@ fn read_line_interactive(
     approval_prompt: Option<&ApprovalPrompt<'_>>,
     poll: &mut dyn FnMut() -> ReadPoll,
 ) -> io::Result<ReadOutcome> {
+    // Interactive editor state uses character indices to preserve UTF-8 safety.
     let _guard = RawModeGuard::acquire()?;
     let mut stderr = io::stderr();
     let primary_prompt = primary_prompt_text(
@@ -192,6 +200,7 @@ fn read_line_interactive(
             &matches,
         );
         if last_render_signature.as_deref() != Some(signature.as_str()) {
+            // Skip full repaint when nothing visual changed.
             previous_cursor_row = render_editor(
                 &mut stderr,
                 color,
@@ -211,6 +220,7 @@ fn read_line_interactive(
         }
 
         if poll_state.interrupt {
+            // Preserve the in-progress draft so caller interruptions are lossless.
             state.save_draft(
                 prompt_mode,
                 InputDraft {
@@ -239,11 +249,13 @@ fn read_line_interactive(
 
         match key.code {
             KeyCode::Enter if key.modifiers.contains(KeyModifiers::ALT) => {
+                // Alt+Enter inserts a literal newline.
                 insert_char_at_cursor(&mut buffer, &mut cursor, '\n');
                 selected = 0;
                 history_index = None;
             }
             KeyCode::Enter => {
+                // Enter submits the current buffer.
                 state.clear_draft(prompt_mode);
                 finalize_editor(
                     &mut stderr,
@@ -260,6 +272,7 @@ fn read_line_interactive(
                 return Ok(ReadOutcome::Line(buffer));
             }
             KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Ctrl-D exits only when no text is present.
                 if buffer.is_empty() {
                     state.clear_draft(prompt_mode);
                     finalize_editor(
@@ -278,6 +291,7 @@ fn read_line_interactive(
                 }
             }
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Ctrl-C cancels the active entry.
                 state.clear_draft(prompt_mode);
                 finalize_editor(
                     &mut stderr,
@@ -294,6 +308,7 @@ fn read_line_interactive(
                 return Ok(ReadOutcome::Cancelled);
             }
             KeyCode::Tab => {
+                // Tab accepts the selected slash-command suggestion.
                 if let Some(choice) = matches.get(selected) {
                     buffer = choice.name.to_string();
                     cursor = char_count(&buffer);
@@ -302,6 +317,7 @@ fn read_line_interactive(
                 }
             }
             KeyCode::Up => {
+                // Up cycles suggestions for slash commands, otherwise history.
                 if buffer.starts_with('/') && !matches.is_empty() {
                     selected = if selected == 0 {
                         matches.len() - 1
@@ -315,6 +331,7 @@ fn read_line_interactive(
                 }
             }
             KeyCode::Down => {
+                // Down mirrors Up navigation behavior.
                 if buffer.starts_with('/') && !matches.is_empty() {
                     selected = (selected + 1) % matches.len();
                 } else {
@@ -367,12 +384,14 @@ fn read_line_interactive(
                 }
             }
             KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Emacs-style kill-to-end-of-line.
                 let end = line_end_char_index(&buffer, cursor);
                 delete_char_range(&mut buffer, cursor, end);
                 selected = 0;
                 history_index = None;
             }
             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Emacs-style kill-to-start-of-line.
                 let start = line_start_char_index(&buffer, cursor);
                 delete_char_range(&mut buffer, start, cursor);
                 cursor = start;
@@ -380,6 +399,7 @@ fn read_line_interactive(
                 history_index = None;
             }
             KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Emacs-style backward-kill-word.
                 let start = previous_word_start(&buffer, cursor);
                 delete_char_range(&mut buffer, start, cursor);
                 cursor = start;
@@ -397,6 +417,7 @@ fn read_line_interactive(
                 selected = 0;
             }
             KeyCode::Char(ch) => {
+                // Ignore control/alt-modified printable keys.
                 if key.modifiers.contains(KeyModifiers::CONTROL)
                     || key.modifiers.contains(KeyModifiers::ALT)
                 {
@@ -437,6 +458,7 @@ fn pick_from_list_fallback(title: &str, options: &[String]) -> io::Result<Option
     Ok(Some(index - 1))
 }
 
+/// Full-screen interactive picker used when stdin/stderr are terminals.
 fn pick_from_list_interactive(
     color: bool,
     title: &str,
@@ -500,6 +522,7 @@ fn pick_from_list_interactive(
     }
 }
 
+/// Draw picker chrome/options and return the last drawn row index.
 fn render_picker(
     stderr: &mut io::Stderr,
     color: bool,
@@ -569,6 +592,7 @@ fn render_picker(
     Ok(total_rows.saturating_sub(1))
 }
 
+/// Clear rows previously painted by the interactive editor.
 fn clear_editor_surface(stderr: &mut io::Stderr, previous_cursor_row: usize) -> io::Result<()> {
     if previous_cursor_row > 0 {
         stderr.queue(MoveUp(previous_cursor_row as u16))?;
@@ -579,6 +603,7 @@ fn clear_editor_surface(stderr: &mut io::Stderr, previous_cursor_row: usize) -> 
     Ok(())
 }
 
+/// Build a lightweight render-state signature for redraw suppression.
 fn editor_render_signature(
     status_line: Option<&str>,
     buffer: &str,
@@ -602,6 +627,7 @@ fn editor_render_signature(
     signature
 }
 
+/// Flatten and clip a status line so it always fits on one terminal row.
 fn single_line_status(status_line: &str, cols: usize) -> String {
     let flat = status_line.replace('\n', " ");
     if cols == 0 {
@@ -617,6 +643,7 @@ fn single_line_status(status_line: &str, cols: usize) -> String {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Render status/prompt/input/suggestions and restore cursor to edit position.
 fn render_editor(
     stderr: &mut io::Stderr,
     color: bool,
@@ -632,6 +659,11 @@ fn render_editor(
     selected: usize,
     previous_cursor_row: usize,
 ) -> io::Result<usize> {
+    // Rendering walkthrough:
+    // 1) clear the previous frame,
+    // 2) draw status + prompt + buffer,
+    // 3) draw autocomplete rows,
+    // 4) move cursor back to the buffer location.
     if previous_cursor_row > 0 {
         stderr.queue(MoveUp(previous_cursor_row as u16))?;
     }
@@ -722,6 +754,7 @@ fn finalize_editor(
     buffer: &str,
     previous_cursor_row: usize,
 ) -> io::Result<()> {
+    // Redraw a clean final frame and append a newline before returning.
     if previous_cursor_row > 0 {
         stderr.queue(MoveUp(previous_cursor_row as u16))?;
     }
@@ -735,11 +768,15 @@ fn finalize_editor(
 
 #[derive(Clone, Copy)]
 struct PromptChrome<'a> {
+    /// Whether colored prompt styling is enabled.
     color: bool,
+    /// Optional SSH target label shown in the normal prompt.
     ssh_target: Option<&'a str>,
+    /// Optional context percentage shown near the prompt.
     context_used_percent: Option<u16>,
 }
 
+/// Render prompt chrome plus multiline buffer text.
 fn render_buffer(
     stderr: &mut io::Stderr,
     chrome: PromptChrome<'_>,
@@ -772,6 +809,7 @@ fn render_buffer(
 struct RawModeGuard;
 
 impl RawModeGuard {
+    /// Enable terminal raw mode and return a guard that disables it on drop.
     fn acquire() -> io::Result<Self> {
         terminal::enable_raw_mode()?;
         Ok(Self)
@@ -790,6 +828,7 @@ mod tests {
 
     #[test]
     fn fallback_reader_can_be_interrupted_before_blocking() {
+        // Non-interactive path should honor interrupts before reading stdin.
         let mut poll = || ReadPoll {
             interrupt: true,
             status_line: None,
@@ -801,12 +840,14 @@ mod tests {
 
     #[test]
     fn single_line_status_truncates_to_terminal_width() {
+        // Long status lines should truncate with an ellipsis.
         assert_eq!(single_line_status("abcdef", 4), "a...");
         assert_eq!(single_line_status("abc", 4), "abc");
     }
 
     #[test]
     fn render_signature_changes_with_status_and_selection() {
+        // Signature changes whenever a render-relevant field changes.
         let matches = [SlashCommand {
             name: "/model",
             description: "model switch",

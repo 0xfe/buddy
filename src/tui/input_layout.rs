@@ -7,8 +7,11 @@ use crossterm::terminal;
 /// Computed layout for prompt + input buffer on the terminal surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct InputLayout {
+    /// Total terminal rows consumed by prompt + buffer.
     pub(crate) total_rows: usize,
+    /// Row index where the cursor should be placed.
     pub(crate) cursor_row: usize,
+    /// Column index where the cursor should be placed.
     pub(crate) cursor_col: usize,
 }
 
@@ -105,6 +108,7 @@ fn advance_text(text: &str, cols: usize, row: &mut usize, col: &mut usize) {
     }
 }
 
+/// Advance by one printable cell, wrapping to the next row when needed.
 fn advance_char(cols: usize, row: &mut usize, col: &mut usize) {
     if cols == 0 {
         return;
@@ -131,6 +135,7 @@ mod tests {
         color: bool,
         cols: usize,
     ) -> usize {
+        // Mirrors the render-time cursor math used by `render_editor`.
         let input_layout = compute_input_layout(buffer, cursor, cols, LOCAL_PRIMARY_PROMPT);
         let suggestion_rows = suggestion_rows(matches, selected, color, cols);
         let bottom_row = input_layout
@@ -142,6 +147,7 @@ mod tests {
 
     #[test]
     fn input_layout_tracks_soft_wraps() {
+        // Long single lines should soft-wrap into additional rows.
         let layout = compute_input_layout("abcdefghij", 10, 8, LOCAL_PRIMARY_PROMPT);
         assert_eq!(layout.total_rows, 2);
         assert_eq!(layout.cursor_row, 1);
@@ -149,6 +155,7 @@ mod tests {
 
     #[test]
     fn input_layout_tracks_multiline_and_cursor_position() {
+        // Newlines must advance rows while preserving cursor row correctness.
         let layout = compute_input_layout("ab\ncde", 4, 20, LOCAL_PRIMARY_PROMPT);
         assert_eq!(layout.cursor_row, 1);
         assert_eq!(layout.total_rows, 2);
@@ -156,6 +163,7 @@ mod tests {
 
     #[test]
     fn input_layout_wraps_exactly_at_terminal_edge() {
+        // Exact-edge cases should not introduce spurious extra rows.
         let layout = compute_input_layout("abcd", 4, 11, LOCAL_PRIMARY_PROMPT);
         assert_eq!(layout.cursor_row, 0);
         assert_eq!(layout.cursor_col, 6);
@@ -164,6 +172,7 @@ mod tests {
 
     #[test]
     fn input_layout_handles_very_narrow_terminal() {
+        // Narrow widths should remain stable for empty and short buffers.
         let empty = compute_input_layout("", 0, 4, LOCAL_PRIMARY_PROMPT);
         assert_eq!(empty.cursor_row, 0);
         assert_eq!(empty.cursor_col, 2);
@@ -177,6 +186,7 @@ mod tests {
 
     #[test]
     fn input_layout_handles_wrapped_continuation_prompt() {
+        // Continuation prompts may themselves wrap in very narrow terminals.
         let layout = compute_input_layout("\na", 2, 4, LOCAL_PRIMARY_PROMPT);
         assert_eq!(layout.cursor_row, 3);
         assert_eq!(layout.cursor_col, 0);
@@ -185,6 +195,7 @@ mod tests {
 
     #[test]
     fn input_layout_cursor_can_be_mid_buffer() {
+        // Cursor position should be accurate for mid-buffer edits.
         let layout = compute_input_layout("abcdef", 2, 10, LOCAL_PRIMARY_PROMPT);
         assert_eq!(layout.cursor_row, 0);
         assert_eq!(layout.cursor_col, 4);
@@ -193,6 +204,7 @@ mod tests {
 
     #[test]
     fn suggestion_rows_include_wrapped_lines() {
+        // Suggestion row counting includes wrapped description text.
         const LONG_DESC: &str = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
         let cmd = SlashCommand {
             name: "/status",
@@ -204,6 +216,7 @@ mod tests {
 
     #[test]
     fn suggestion_rows_scale_with_multiple_commands() {
+        // Total suggestion rows should grow with command count.
         const LONG_DESC: &str = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
         let cmds = [
             SlashCommand {
@@ -225,6 +238,7 @@ mod tests {
 
     #[test]
     fn lines_to_move_up_matches_visual_distance() {
+        // Cursor reset distance should match the visible suggestion footprint.
         const LONG_DESC: &str = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
         let cmds = [SlashCommand {
             name: "/status",
@@ -237,6 +251,7 @@ mod tests {
 
     #[test]
     fn lines_to_move_up_zero_at_bottom_without_suggestions() {
+        // With no suggestions and cursor at end, no upward cursor move is needed.
         let lines = lines_to_move_up_for("hello", 5, &[], 0, false, 80);
         assert_eq!(lines, 0);
     }

@@ -12,10 +12,15 @@ use syntect::parsing::SyntaxSet;
 /// A highlighted text fragment with display attributes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StyledToken {
+    /// Source text fragment for this style span.
     pub text: String,
+    /// RGB foreground color to apply.
     pub rgb: (u8, u8, u8),
+    /// Bold attribute flag.
     pub bold: bool,
+    /// Italic attribute flag.
     pub italic: bool,
+    /// Underline attribute flag.
     pub underline: bool,
 }
 
@@ -30,6 +35,7 @@ fn theme_set() -> &'static ThemeSet {
     THEME_SET.get_or_init(ThemeSet::load_defaults)
 }
 
+/// Pick a deterministic preferred theme with a stable fallback.
 fn preferred_theme(theme_set: &ThemeSet) -> Option<&Theme> {
     theme_set
         .themes
@@ -87,6 +93,7 @@ mod tests {
 
     #[test]
     fn highlights_rust_code_when_extension_is_known() {
+        // Known extensions should resolve to a syntax and produce style spans.
         let lines = vec!["fn main() {", "    println!(\"hi\");", "}"];
         let highlighted = highlight_lines_for_path("demo.rs", &lines);
         assert!(highlighted.is_some());
@@ -95,6 +102,7 @@ mod tests {
 
     #[test]
     fn returns_none_for_plain_text_files() {
+        // Unknown extensions should remain unhighlighted to avoid false coloring.
         let lines = vec!["just text"];
         let highlighted = highlight_lines_for_path("notes.unknownext", &lines);
         assert!(highlighted.is_none());

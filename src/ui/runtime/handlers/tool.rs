@@ -9,10 +9,13 @@ use crate::repl::{
 };
 use crate::ui::runtime::RuntimeEventRenderContext;
 
+/// Apply one tool lifecycle event and render the corresponding UI output.
 pub(in crate::ui::runtime) fn handle_tool(
     ctx: &mut RuntimeEventRenderContext<'_>,
     event: ToolEvent,
 ) {
+    // Tool events are intentionally summarized at a high level so noisy tools
+    // do not drown interactive status lines.
     match event {
         ToolEvent::CallRequested { .. } => {}
         ToolEvent::CallStarted { task, name, detail } => {
@@ -72,6 +75,7 @@ pub(in crate::ui::runtime) fn handle_tool(
                 truncate_preview(&detail, 120)
             ));
         }
+        // Delegate terminal rendering details to a dedicated formatter.
         ToolEvent::Result {
             task,
             name,
@@ -81,6 +85,7 @@ pub(in crate::ui::runtime) fn handle_tool(
     }
 }
 
+/// Render a normalized tool result view with tool-specific formatting rules.
 fn render_tool_result(
     renderer: &dyn RenderSink,
     task_id: u64,
@@ -91,6 +96,7 @@ fn render_tool_result(
     let display_result = tool_result_display_text(result);
     match name {
         "run_shell" => {
+            // Prefer structured shell rendering when we can parse an exit code.
             if let Some(shell) = parse_shell_tool_result(result) {
                 renderer.activity(&format!(
                     "task #{task_id} exited with code {}",
@@ -106,6 +112,7 @@ fn render_tool_result(
                 return;
             }
             if display_result.contains("command dispatched to tmux pane") {
+                // tmux-dispatch responses are terse status lines (not full output blocks).
                 renderer.activity(&format!(
                     "task #{task_id} run_shell: {}",
                     truncate_preview(&display_result, 140)
@@ -115,6 +122,7 @@ fn render_tool_result(
             }
         }
         "read_file" => {
+            // read_file output is most useful as a syntax-aware block preview.
             let path = parse_tool_arg(args, "path").unwrap_or_else(|| "<path>".to_string());
             renderer.activity(&format!("task #{task_id} read {path}"));
             renderer.tool_output_block(&display_result, Some(path.as_str()));
@@ -148,6 +156,7 @@ fn render_tool_result(
             return;
         }
         "capture-pane" => {
+            // capture-pane payloads are already formatted terminal text.
             let target = parse_tool_arg(args, "target").unwrap_or_else(|| "<default>".to_string());
             renderer.activity(&format!("task #{task_id} captured pane {target}"));
             renderer.command_output_block(&display_result);

@@ -9,6 +9,7 @@ use crossterm::style::Color;
 // Layout / indentation
 // ---------------------------------------------------------------------------
 
+/// First-level indentation used for status/detail rows.
 pub const INDENT_1: &str = "  ";
 pub const INDENT_2: &str = "    ";
 pub const SNIPPET_PREVIEW_LINES: usize = 10;
@@ -19,6 +20,7 @@ pub const BLOCK_RIGHT_MARGIN: usize = 2;
 // Prompt strings
 // ---------------------------------------------------------------------------
 
+/// Default local prompt shown in non-annotated mode.
 pub const PROMPT_LOCAL_PRIMARY: &str = "> ";
 pub const PROMPT_LOCAL_APPROVAL: &str = "• approve? [y/n] ";
 pub const PROMPT_APPROVAL_SEPARATOR: &str = " \u{2022} ";
@@ -65,6 +67,7 @@ pub const AUTOCOMPLETE_UNSELECTED_PLAIN: &str = "-";
 // ---------------------------------------------------------------------------
 
 pub const PROGRESS_CLEAR_LINE: &str = "\r\x1b[2K";
+/// ASCII spinner frames used by the progress indicator.
 pub const PROGRESS_FRAMES: [char; 4] = ['|', '/', '-', '\\'];
 pub const PROGRESS_TICK_MS: u64 = 100;
 
@@ -173,6 +176,7 @@ pub const RGB_SNIPPET_ASSISTANT_MD_CODE: (u8, u8, u8) = (238, 224, 188);
 // Small helpers
 // ---------------------------------------------------------------------------
 
+/// Build the normal prompt text shown for command entry.
 pub fn normal_prompt_text(ssh_target: Option<&str>, context_used_percent: Option<u16>) -> String {
     if ssh_target.is_none() && context_used_percent.is_none() {
         return PROMPT_LOCAL_PRIMARY.to_string();
@@ -197,6 +201,7 @@ pub fn approval_prompt_text() -> &'static str {
     PROMPT_LOCAL_APPROVAL
 }
 
+/// Return the autocomplete marker glyph based on selection and color mode.
 pub fn suggestion_marker(is_selected: bool, color: bool) -> &'static str {
     match (is_selected, color) {
         (true, true) => AUTOCOMPLETE_SELECTED_COLOR,

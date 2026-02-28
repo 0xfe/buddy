@@ -4,6 +4,7 @@ use crate::runtime::SessionEvent;
 
 use crate::ui::runtime::RuntimeEventRenderContext;
 
+/// Apply one session event and keep active session state in sync.
 pub(in crate::ui::runtime) fn handle_session(
     ctx: &mut RuntimeEventRenderContext<'_>,
     event: SessionEvent,

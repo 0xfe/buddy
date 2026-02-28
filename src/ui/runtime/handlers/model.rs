@@ -5,6 +5,7 @@ use crate::runtime::ModelEvent;
 
 use crate::ui::runtime::RuntimeEventRenderContext;
 
+/// Apply one model event to render output and reducer state.
 pub(in crate::ui::runtime) fn handle_model(
     ctx: &mut RuntimeEventRenderContext<'_>,
     event: ModelEvent,

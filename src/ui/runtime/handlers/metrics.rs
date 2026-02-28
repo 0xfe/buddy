@@ -4,6 +4,7 @@ use crate::runtime::MetricsEvent;
 
 use crate::ui::runtime::RuntimeEventRenderContext;
 
+/// Apply metrics updates to runtime context and optional UI output.
 pub(in crate::ui::runtime) fn handle_metrics(
     ctx: &mut RuntimeEventRenderContext<'_>,
     event: MetricsEvent,

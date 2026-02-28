@@ -1,11 +1,14 @@
 //! Slash-command metadata and parsing.
 
+/// Maximum number of autocomplete candidates rendered under the prompt.
 const MAX_SUGGESTIONS: usize = 6;
 
 /// Static slash command metadata used by both parsing and autocomplete.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SlashCommand {
+    /// Slash command token (for example `/status`).
     pub name: &'static str,
+    /// Human-readable one-line summary shown in autocomplete.
     pub description: &'static str,
 }
 
@@ -72,24 +75,41 @@ pub const SLASH_COMMANDS: [SlashCommand; 14] = [
 /// Parsed slash command actions consumed by the main loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SlashCommandAction {
+    /// Exit interactive mode.
     Quit,
+    /// Print current runtime/model status.
     Status,
+    /// Print current context-window usage.
     Context,
+    /// List active background tasks.
     Ps,
+    /// Cancel a task by optional id.
     Kill(Option<String>),
+    /// Configure timeout duration, optionally for one task.
     Timeout {
+        /// Timeout duration string (for example `10m`).
         duration: Option<String>,
+        /// Optional task id override.
         task_id: Option<String>,
     },
+    /// Configure approval policy.
     Approve(Option<String>),
+    /// Session management operation.
     Session {
+        /// Session command verb (for example `list`, `resume`, `create`).
         verb: Option<String>,
+        /// Optional session name/id argument.
         name: Option<String>,
     },
+    /// Compact session history.
     Compact,
+    /// Switch the active model profile.
     Model(Option<String>),
+    /// Start login flow for a model profile.
     Login(Option<String>),
+    /// Show slash-command help.
     Help,
+    /// Preserve unknown command token for higher-level UX handling.
     Unknown(String),
 }
 
@@ -165,6 +185,7 @@ mod tests {
 
     #[test]
     fn parse_known_slash_commands() {
+        // Covers all built-ins and ensures payload extraction stays stable.
         assert_eq!(
             parse_slash_command("/status"),
             Some(SlashCommandAction::Status)
@@ -229,6 +250,7 @@ mod tests {
 
     #[test]
     fn matching_filters_by_prefix() {
+        // Ensures autocomplete filtering is prefix-based and empty-safe.
         let all = matching_slash_commands("/");
         assert!(!all.is_empty());
         let status = matching_slash_commands("/st");

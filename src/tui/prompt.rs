@@ -8,16 +8,22 @@ use std::io::{self, Write};
 /// Prompt mode for the REPL input renderer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PromptMode {
+    /// Standard command-entry prompt.
     Normal,
+    /// Approval response prompt (y/n style).
     Approval,
 }
 
 /// Dynamic approval prompt content rendered inline on one line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ApprovalPrompt<'a> {
+    /// Actor label associated with the approval request.
     pub actor: &'a str,
+    /// Command text under approval.
     pub command: &'a str,
+    /// Whether the requested action requires elevated privileges.
     pub privileged: bool,
+    /// Whether the requested action may mutate state.
     pub mutation: bool,
 }
 
@@ -38,6 +44,7 @@ pub fn primary_prompt_text(
 
 /// Build the fallback/plain two-line approval prompt.
 pub fn approval_prompt_text(prompt: &ApprovalPrompt<'_>) -> String {
+    // Plain-text variant used in non-color/non-interactive rendering paths.
     let mut line = String::from("• approve");
     if prompt.privileged {
         line.push_str(" (privileged)");
@@ -82,6 +89,7 @@ pub(crate) fn write_primary_prompt<W>(
 where
     W: Write + QueueableCommand,
 {
+    // Color mode composes prompt fragments so risk tags can be emphasized.
     if color {
         match prompt_mode {
             PromptMode::Normal => {
@@ -181,6 +189,7 @@ mod tests {
 
     #[test]
     fn primary_prompt_includes_ssh_target_when_present() {
+        // Normal prompts should include host and context metadata when provided.
         assert_eq!(
             primary_prompt_text(None, None, PromptMode::Normal, None),
             settings::PROMPT_LOCAL_PRIMARY
@@ -205,6 +214,7 @@ mod tests {
 
     #[test]
     fn approval_prompt_formats_on_two_lines() {
+        // Approval prompt string should include both risk qualifiers.
         let prompt = ApprovalPrompt {
             actor: "mo@bee",
             command: "top",

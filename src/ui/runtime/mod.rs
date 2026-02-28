@@ -14,12 +14,19 @@ use crate::repl::{BackgroundTask, CompletedBackgroundTask, PendingApproval, Runt
 
 /// Mutable render-time state mirrored from the interactive loop.
 pub struct RuntimeEventRenderContext<'a> {
+    /// Active render backend used to print runtime updates.
     pub renderer: &'a dyn RenderSink,
+    /// In-flight background tasks shown by `/ps`.
     pub background_tasks: &'a mut Vec<BackgroundTask>,
+    /// Finished tasks kept for completion summaries.
     pub completed_tasks: &'a mut Vec<CompletedBackgroundTask>,
+    /// Pending approval request currently visible to the operator, if any.
     pub pending_approval: &'a mut Option<PendingApproval>,
+    /// Mutable config so runtime model/profile switches can be persisted in-memory.
     pub config: &'a mut Config,
+    /// Current session identifier shown in status output.
     pub active_session: &'a mut String,
+    /// Shared runtime metrics/state consumed by prompt/status rendering.
     pub runtime_context: &'a mut RuntimeContextState,
 }
 
@@ -28,6 +35,7 @@ pub fn process_runtime_events(
     events: &mut Vec<RuntimeEventEnvelope>,
     ctx: &mut RuntimeEventRenderContext<'_>,
 ) {
+    // Drain in sequence order so UI state mutations mirror runtime ordering.
     for envelope in events.drain(..) {
         match envelope.event {
             RuntimeEvent::Lifecycle(_) => {}
@@ -51,10 +59,12 @@ mod tests {
 
     #[derive(Clone, Default)]
     struct MockRenderer {
+        /// Captured `(kind, message)` tuples for assertion-friendly matching.
         entries: Arc<Mutex<Vec<(String, String)>>>,
     }
 
     impl MockRenderer {
+        /// Record one synthetic render event.
         fn record(&self, kind: &str, message: &str) {
             self.entries
                 .lock()
@@ -62,6 +72,7 @@ mod tests {
                 .push((kind.to_string(), message.to_string()));
         }
 
+        /// Return true when any captured event contains the given marker.
         fn saw(&self, kind: &str, needle: &str) -> bool {
             self.entries
                 .lock()
@@ -154,6 +165,7 @@ mod tests {
 
     #[test]
     fn reducer_transitions_task_into_and_out_of_waiting_approval() {
+        // Ensures waiting-approval state is entered and later cleaned up on completion.
         let renderer = MockRenderer::default();
         let mut events = vec![
             RuntimeEventEnvelope {
@@ -224,6 +236,7 @@ mod tests {
 
     #[test]
     fn reducer_suppresses_transient_approval_warnings() {
+        // Guards against noisy transient approval warnings while preserving normal warnings.
         let renderer = MockRenderer::default();
         let mut events = vec![
             RuntimeEventEnvelope {
@@ -266,6 +279,7 @@ mod tests {
 
     #[test]
     fn reducer_renders_tool_result_branches_without_duplicate_run_shell_chatter() {
+        // Verifies run_shell result formatting and non-run_shell formatting stay distinct.
         let renderer = MockRenderer::default();
         let shell_result = serde_json::json!({
             "result": {

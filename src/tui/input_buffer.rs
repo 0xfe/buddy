@@ -5,13 +5,17 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+/// Maximum number of persisted history entries retained in memory/on disk.
 const MAX_HISTORY: usize = 1000;
 
 /// Persistent REPL state across input reads.
 #[derive(Debug, Clone, Default)]
 pub struct ReplState {
+    /// Command history ordered oldest -> newest.
     history: Vec<String>,
+    /// Draft restored when returning to normal prompt mode.
     normal_draft: Option<InputDraft>,
+    /// Draft restored when returning to approval prompt mode.
     approval_draft: Option<InputDraft>,
 }
 
@@ -21,10 +25,15 @@ pub struct ReplState {
 /// to render background task output or approval requests.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct InputDraft {
+    /// User-entered text buffer.
     pub(crate) buffer: String,
+    /// Cursor position as a character index.
     pub(crate) cursor: usize,
+    /// Currently highlighted slash-command suggestion index.
     pub(crate) selected: usize,
+    /// Active history navigation index, if browsing history.
     pub(crate) history_index: Option<usize>,
+    /// Unsaved input snapshot captured before history navigation began.
     pub(crate) history_draft: String,
 }
 
@@ -134,6 +143,7 @@ impl InputDraft {
     fn sanitize(mut self, history_len: usize) -> Self {
         let char_len = char_count(&self.buffer);
         self.cursor = self.cursor.min(char_len);
+        // Autocomplete selection only applies to slash-prefixed commands.
         if self.selected > 0 && !self.buffer.starts_with('/') {
             self.selected = 0;
         }
@@ -301,6 +311,7 @@ mod tests {
 
     #[test]
     fn history_round_trip() {
+        // Duplicate consecutive entries should collapse to one history item.
         let mut state = ReplState::default();
         state.push_history("one");
         state.push_history("two");
@@ -310,6 +321,7 @@ mod tests {
 
     #[test]
     fn history_persistence_round_trip_json() {
+        // Verifies JSON save/load format remains stable for current history files.
         let temp =
             std::env::temp_dir().join(format!("buddy-repl-history-{}.json", std::process::id()));
         let _ = std::fs::remove_file(&temp);
@@ -332,6 +344,7 @@ mod tests {
 
     #[test]
     fn history_loader_supports_line_fallback() {
+        // Preserves compatibility with legacy line-based history files.
         let temp = std::env::temp_dir().join(format!(
             "buddy-repl-history-lines-{}.txt",
             std::process::id()
@@ -352,6 +365,7 @@ mod tests {
 
     #[test]
     fn line_boundaries_for_multiline_buffer() {
+        // Exercises Home/End helpers across newline boundaries.
         let buffer = "abc\ndef";
         assert_eq!(line_start_char_index(buffer, 1), 0);
         assert_eq!(line_end_char_index(buffer, 1), 3);
@@ -361,6 +375,7 @@ mod tests {
 
     #[test]
     fn byte_index_respects_utf8_boundaries() {
+        // Ensures char-index operations never split a UTF-8 codepoint.
         let s = "aéz";
         assert_eq!(byte_index_at_char(s, 0), 0);
         assert_eq!(byte_index_at_char(s, 1), 1);
@@ -370,6 +385,7 @@ mod tests {
 
     #[test]
     fn drafts_are_saved_per_prompt_mode() {
+        // Normal and approval prompts keep independent drafts.
         let mut state = ReplState::default();
         state.push_history("one");
         state.save_draft(
@@ -401,6 +417,7 @@ mod tests {
 
     #[test]
     fn draft_sanitize_clamps_invalid_indexes() {
+        // Invalid persisted cursor/history indices should be clamped safely.
         let mut state = ReplState::default();
         state.push_history("first");
         state.save_draft(
