@@ -47,6 +47,7 @@ api_key_env = "MOONSHOT_API_KEY"
 model = "kimi-k2.5"
 
 [agent]
+name = "agent-mo"                            # tmux defaults use session name buddy-<name>
 model = "gpt-codex"                           # active profile key from [models.<name>]
 # system_prompt = "Optional override. If unset, uses the built-in prompt template."
 max_iterations = 20

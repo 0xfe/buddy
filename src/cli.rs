@@ -26,8 +26,8 @@ pub struct Args {
     #[arg(long = "ssh", global = true, conflicts_with = "container")]
     pub ssh: Option<String>,
 
-    /// Optional tmux session name. Without a value, uses an auto `buddy-xxxx`
-    /// name for the active target (local, --ssh, or --container).
+    /// Optional tmux session name. Without a value, uses `buddy-<agent.name>`
+    /// for the active target (local, --ssh, or --container).
     #[arg(long = "tmux", global = true, num_args = 0..=1, value_name = "SESSION")]
     pub tmux: Option<Option<String>>,
 

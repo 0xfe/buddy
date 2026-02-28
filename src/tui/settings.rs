@@ -78,6 +78,8 @@ pub const COLOR_PROMPT_HOST: Color = Color::Grey;
 pub const COLOR_PROMPT_SYMBOL: Color = Color::White;
 pub const COLOR_PROMPT_APPROVAL_QUERY: Color = Color::Yellow;
 pub const COLOR_PROMPT_APPROVAL_COMMAND: Color = Color::White;
+pub const COLOR_PROMPT_APPROVAL_PRIVILEGED: Color = Color::Red;
+pub const COLOR_PROMPT_APPROVAL_MUTATION: Color = Color::Yellow;
 pub const COLOR_PROMPT_APPROVAL_BG: Color = Color::Rgb {
     r: 58,
     g: 26,

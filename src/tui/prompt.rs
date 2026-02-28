@@ -17,6 +17,8 @@ pub enum PromptMode {
 pub struct ApprovalPrompt<'a> {
     pub actor: &'a str,
     pub command: &'a str,
+    pub privileged: bool,
+    pub mutation: bool,
 }
 
 /// Build the visible primary prompt string.
@@ -36,8 +38,15 @@ pub fn primary_prompt_text(
 
 /// Build the fallback/plain two-line approval prompt.
 pub fn approval_prompt_text(prompt: &ApprovalPrompt<'_>) -> String {
-    let _ = prompt;
-    settings::approval_prompt_text().to_string()
+    let mut line = String::from("• approve");
+    if prompt.privileged {
+        line.push_str(" (privileged)");
+    }
+    if prompt.mutation {
+        line.push_str(" (mutation)");
+    }
+    line.push_str(" command ? [y/n] ");
+    line
 }
 
 /// Queue a one-line status indicator above the active prompt.
@@ -98,7 +107,12 @@ where
                 stderr.queue(Print(settings::PROMPT_SPACER))?;
             }
             PromptMode::Approval => {
-                let _ = approval_prompt;
+                let prompt = approval_prompt.copied().unwrap_or(ApprovalPrompt {
+                    actor: "",
+                    command: "",
+                    privileged: false,
+                    mutation: false,
+                });
                 stderr.queue(PrintStyledContent(
                     settings::GLYPH_SECTION_BULLET
                         .with(settings::COLOR_SECTION_BULLET)
@@ -106,9 +120,27 @@ where
                 ))?;
                 stderr.queue(Print(settings::PROMPT_SPACER))?;
                 stderr.queue(PrintStyledContent(
-                    "approve?"
-                        .with(settings::COLOR_PROMPT_APPROVAL_QUERY)
-                        .bold(),
+                    "approve".with(settings::COLOR_PROMPT_APPROVAL_QUERY).bold(),
+                ))?;
+                if prompt.privileged {
+                    stderr.queue(Print(settings::PROMPT_SPACER))?;
+                    stderr.queue(PrintStyledContent(
+                        "(privileged)"
+                            .with(settings::COLOR_PROMPT_APPROVAL_PRIVILEGED)
+                            .bold(),
+                    ))?;
+                }
+                if prompt.mutation {
+                    stderr.queue(Print(settings::PROMPT_SPACER))?;
+                    stderr.queue(PrintStyledContent(
+                        "(mutation)"
+                            .with(settings::COLOR_PROMPT_APPROVAL_MUTATION)
+                            .bold(),
+                    ))?;
+                }
+                stderr.queue(Print(settings::PROMPT_SPACER))?;
+                stderr.queue(PrintStyledContent(
+                    "command ?".with(settings::COLOR_PROMPT_APPROVAL_COMMAND),
                 ))?;
                 stderr.queue(PrintStyledContent(
                     " [y/n]".with(settings::COLOR_PROMPT_APPROVAL_COMMAND),
@@ -176,10 +208,12 @@ mod tests {
         let prompt = ApprovalPrompt {
             actor: "mo@bee",
             command: "top",
+            privileged: true,
+            mutation: true,
         };
         assert_eq!(
             approval_prompt_text(&prompt),
-            settings::PROMPT_LOCAL_APPROVAL
+            "• approve (privileged) (mutation) command ? [y/n] "
         );
     }
 }

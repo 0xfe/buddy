@@ -23,9 +23,9 @@ use process::{
     detect_container_engine, ensure_success, run_container_tmux_sh_process, run_process,
     run_sh_process, run_ssh_raw_process, shell_quote,
 };
-use std::sync::Arc;
 #[cfg(test)]
 use std::path::PathBuf;
+use std::sync::Arc;
 use tmux::pane::{ensure_container_tmux_pane, ensure_local_tmux_pane, ensure_tmux_pane};
 use tmux::prompt::{
     ensure_container_tmux_prompt_setup, ensure_local_tmux_prompt_setup, ensure_tmux_prompt_setup,

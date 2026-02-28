@@ -310,10 +310,8 @@ mod tests {
 
     #[test]
     fn history_persistence_round_trip_json() {
-        let temp = std::env::temp_dir().join(format!(
-            "buddy-repl-history-{}.json",
-            std::process::id()
-        ));
+        let temp =
+            std::env::temp_dir().join(format!("buddy-repl-history-{}.json", std::process::id()));
         let _ = std::fs::remove_file(&temp);
 
         let mut state = ReplState::default();

@@ -28,8 +28,12 @@ fn validate_base_url(config: &Config) -> Result<String, String> {
         );
     }
 
-    let parsed = reqwest::Url::parse(trimmed)
-        .map_err(|err| format!("invalid api_base_url `{trimmed}` for profile `{}`: {err}", config.api.profile))?;
+    let parsed = reqwest::Url::parse(trimmed).map_err(|err| {
+        format!(
+            "invalid api_base_url `{trimmed}` for profile `{}`: {err}",
+            config.api.profile
+        )
+    })?;
     match parsed.scheme() {
         "http" | "https" => {}
         other => {

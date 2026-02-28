@@ -140,6 +140,11 @@ impl ToolRegistry {
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
     }
+
+    /// True when a tool with the given name is registered.
+    pub fn has_tool(&self, name: &str) -> bool {
+        self.tools.iter().any(|tool| tool.name() == name)
+    }
 }
 
 impl Default for ToolRegistry {

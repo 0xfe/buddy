@@ -111,3 +111,7 @@ Every function, constant, enum, class, or major relevant identifier should be cl
 ### Terminal Output
 
 Use pretty terminal output: use colors, minimal glyphs (check marks, crosses, etc.), and indentation for hierarchy. All output should be consistent looking, and really make use of terminal display features. Add progress bars and/or live update areas for long operations. Write a custom helper library for this if needed.
+
+### Committing
+
+Always commit after a change. Use `git add` to stage all relevant changes, and `git commit -m "<message>"` to commit. The commit message should have a short summary of the changes, and a blank line, followed by a more detailed description of the changes. If you're working with planning docs, include the commit IDs when you mark tasks closed.
