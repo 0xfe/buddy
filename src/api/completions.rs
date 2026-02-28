@@ -1,7 +1,10 @@
+//! `/chat/completions` protocol request helper.
+
 use crate::api::parse_retry_after_secs;
 use crate::error::ApiError;
 use crate::types::{ChatRequest, ChatResponse};
 
+/// Send one `/chat/completions` request and parse the chat response payload.
 pub(crate) async fn request(
     http: &reqwest::Client,
     base_url: &str,

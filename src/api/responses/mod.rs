@@ -19,7 +19,9 @@ use sse_parser::parse_streaming_responses_payload;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct ResponsesRequestOptions {
+    /// Emit `"store": false` for providers that should not persist prompts.
     pub(crate) store_false: bool,
+    /// Request SSE streaming and parse streamed events when true.
     pub(crate) stream: bool,
 }
 
@@ -32,6 +34,7 @@ pub(crate) async fn request(
     options: ResponsesRequestOptions,
 ) -> Result<ChatResponse, ApiError> {
     let url = format!("{base_url}/responses");
+    // Translate chat-style request shape into the `/responses` wire format.
     let payload = build_responses_payload(request, options.store_false, options.stream);
     let mut req = http.post(&url).json(&payload);
     if let Some(token) = bearer.filter(|value| !value.trim().is_empty()) {
@@ -46,6 +49,7 @@ pub(crate) async fn request(
         return Err(ApiError::status(status, body, retry_after_secs));
     }
 
+    // Some providers return SSE text while others return plain JSON.
     if options.stream {
         let body = response.text().await?;
         parse_streaming_responses_payload(&body)

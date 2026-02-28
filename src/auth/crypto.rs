@@ -14,42 +14,60 @@ use super::error::AuthError;
 use super::store::AuthStore;
 use super::types::OAuthTokens;
 
+/// On-disk auth store version used for encrypted credential records.
 pub(crate) const AUTH_STORE_VERSION_ENCRYPTED: u32 = 3;
+/// Random salt bytes used for machine-key derivation.
 const AUTH_STORE_SALT_LEN: usize = 16;
+/// AEAD nonce bytes for wrapped DEK and token record encryption.
 const AUTH_STORE_NONCE_LEN: usize = 12;
+/// Symmetric key length for AES-256.
 const AUTH_STORE_KEY_LEN: usize = 32;
+/// Domain-separation label mixed into machine-derived key material.
 const AUTH_MACHINE_KEY_CONTEXT: &str = "buddy-auth-machine-kek-v1";
 
+/// Serialized encrypted auth store payload.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct EncryptedAuthStore {
+    /// Encrypted store schema version.
     #[serde(default)]
     pub(crate) version: u32,
+    /// Envelope containing wrapped DEK metadata.
     #[serde(default)]
     pub(crate) encryption: EncryptedAuthEnvelope,
+    /// Provider-scoped encrypted token records.
     #[serde(default)]
     pub(crate) providers: BTreeMap<String, EncryptedTokenRecord>,
+    /// Legacy profile-scoped encrypted token records.
     #[serde(default)]
     pub(crate) profiles: BTreeMap<String, EncryptedTokenRecord>,
 }
 
+/// Envelope holding DEK wrapping parameters and ciphertext.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct EncryptedAuthEnvelope {
+    /// Base64-encoded KDF salt.
     #[serde(default)]
     pub(crate) salt: String,
+    /// Base64-encoded nonce used when wrapping the DEK.
     #[serde(default)]
     pub(crate) wrapped_dek_nonce: String,
+    /// Base64-encoded wrapped DEK ciphertext.
     #[serde(default)]
     pub(crate) wrapped_dek_ciphertext: String,
 }
 
+/// Encrypted OAuth token record stored under provider/profile keys.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct EncryptedTokenRecord {
+    /// Base64-encoded nonce used for this token record.
     #[serde(default)]
     pub(crate) nonce: String,
+    /// Base64-encoded encrypted token payload.
     #[serde(default)]
     pub(crate) ciphertext: String,
 }
 
+/// Detect whether a JSON value appears to be an encrypted auth store payload.
 pub(crate) fn looks_encrypted_store(value: &serde_json::Value) -> bool {
     value
         .get("encryption")
@@ -57,7 +75,9 @@ pub(crate) fn looks_encrypted_store(value: &serde_json::Value) -> bool {
         .is_some()
 }
 
+/// Encrypt an in-memory auth store for secure persistence.
 pub(crate) fn encrypt_store(store: &AuthStore) -> Result<EncryptedAuthStore, AuthError> {
+    // Derive a machine-bound KEK and use it to wrap a random DEK.
     let mut salt = [0u8; AUTH_STORE_SALT_LEN];
     rand::thread_rng().fill_bytes(&mut salt);
     let kek = derive_machine_kek(&salt)?;
@@ -68,12 +88,14 @@ pub(crate) fn encrypt_store(store: &AuthStore) -> Result<EncryptedAuthStore, Aut
 
     let mut providers = BTreeMap::new();
     for (provider, tokens) in &store.providers {
+        // Encrypt each provider token record with the DEK.
         let record = encrypt_token_record(&dek, tokens)?;
         providers.insert(provider.clone(), record);
     }
 
     let mut profiles = BTreeMap::new();
     for (profile, tokens) in &store.profiles {
+        // Encrypt legacy profile token records for compatibility reads.
         let record = encrypt_token_record(&dek, tokens)?;
         profiles.insert(profile.clone(), record);
     }
@@ -90,6 +112,7 @@ pub(crate) fn encrypt_store(store: &AuthStore) -> Result<EncryptedAuthStore, Aut
     })
 }
 
+/// Decrypt an encrypted auth store payload into plaintext in-memory records.
 pub(crate) fn decrypt_store(store: &EncryptedAuthStore) -> Result<AuthStore, AuthError> {
     let salt = decode_fixed::<AUTH_STORE_SALT_LEN>(&store.encryption.salt, "salt")?;
     let kek = derive_machine_kek(&salt)?;
@@ -101,6 +124,7 @@ pub(crate) fn decrypt_store(store: &EncryptedAuthStore) -> Result<AuthStore, Aut
         &store.encryption.wrapped_dek_ciphertext,
         "wrapped_dek_ciphertext",
     )?;
+    // Decrypt the DEK first, then decrypt each record payload with that key.
     let dek_raw = decrypt_blob(&kek, &wrapped_nonce, &wrapped_dek).map_err(|_| {
         AuthError::Invalid(
             "failed to decrypt auth credentials (machine identity may have changed). Run `buddy login --reset` and login again."
@@ -142,6 +166,7 @@ pub(crate) fn decrypt_store(store: &EncryptedAuthStore) -> Result<AuthStore, Aut
     })
 }
 
+/// Encrypt one OAuth token record using the provided DEK.
 fn encrypt_token_record(
     key: &[u8; AUTH_STORE_KEY_LEN],
     tokens: &OAuthTokens,
@@ -155,6 +180,7 @@ fn encrypt_token_record(
     })
 }
 
+/// Decrypt one OAuth token record using the provided DEK.
 fn decrypt_token_record(
     key: &[u8; AUTH_STORE_KEY_LEN],
     record: &EncryptedTokenRecord,
@@ -168,6 +194,7 @@ fn decrypt_token_record(
     })
 }
 
+/// Derive a machine-bound key-encryption key (KEK) from host/user material.
 fn derive_machine_kek(
     salt: &[u8; AUTH_STORE_SALT_LEN],
 ) -> Result<[u8; AUTH_STORE_KEY_LEN], AuthError> {
@@ -186,6 +213,7 @@ fn derive_machine_kek(
     Ok(key)
 }
 
+/// Build a best-effort machine identity string used for key derivation.
 fn machine_secret_material() -> Result<Vec<u8>, AuthError> {
     let hostname = hostname::get()
         .map(|value| value.to_string_lossy().to_string())
@@ -208,6 +236,7 @@ fn machine_secret_material() -> Result<Vec<u8>, AuthError> {
     Ok(joined.into_bytes())
 }
 
+/// Read a platform machine identifier from common Unix locations.
 fn read_machine_id() -> Option<String> {
     for path in ["/etc/machine-id", "/var/lib/dbus/machine-id", "/etc/hostid"] {
         if let Ok(value) = std::fs::read_to_string(path) {
@@ -220,6 +249,7 @@ fn read_machine_id() -> Option<String> {
     None
 }
 
+/// Encrypt an arbitrary byte payload with AES-256-GCM-SIV.
 fn encrypt_blob(
     key: &[u8; AUTH_STORE_KEY_LEN],
     plaintext: &[u8],
@@ -234,6 +264,7 @@ fn encrypt_blob(
     Ok((nonce.to_vec(), ciphertext))
 }
 
+/// Decrypt an arbitrary byte payload with AES-256-GCM-SIV.
 fn decrypt_blob(
     key: &[u8; AUTH_STORE_KEY_LEN],
     nonce: &[u8; AUTH_STORE_NONCE_LEN],
@@ -246,6 +277,7 @@ fn decrypt_blob(
         .map_err(|_| AuthError::Invalid("failed to decrypt auth data".to_string()))
 }
 
+/// Decode base64 text for one auth-store field.
 fn decode_bytes(value: &str, field: &str) -> Result<Vec<u8>, AuthError> {
     B64.decode(value).map_err(|err| {
         AuthError::Invalid(format!(
@@ -254,6 +286,7 @@ fn decode_bytes(value: &str, field: &str) -> Result<Vec<u8>, AuthError> {
     })
 }
 
+/// Decode base64 text and enforce an exact byte length for one field.
 fn decode_fixed<const N: usize>(value: &str, field: &str) -> Result<[u8; N], AuthError> {
     let bytes = decode_bytes(value, field)?;
     if bytes.len() != N {

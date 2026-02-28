@@ -7,33 +7,51 @@ use std::time::Duration;
 use super::error::AuthError;
 use super::types::{unix_now_secs, OAuthTokens, OpenAiDeviceLogin};
 
+/// OpenAI Accounts API base used by the device login flow.
 const OPENAI_ACCOUNTS_API_BASE: &str = "https://auth.openai.com/api/accounts";
+/// OAuth token endpoint used for exchange and refresh.
 const OPENAI_OAUTH_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
+/// User-facing verification page for device login.
 const OPENAI_DEVICE_LOGIN_URL: &str = "https://auth.openai.com/codex/device";
+/// Redirect URI registered for the CLI device flow.
 const OPENAI_DEVICE_REDIRECT_URI: &str = "https://auth.openai.com/deviceauth/callback";
+/// OpenAI public client id used by this login flow.
 const OPENAI_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
+/// Maximum allowed wait while polling for device authorization.
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+/// Shared HTTP timeout for auth requests.
 const AUTH_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Response payload returned when creating a device login session.
 #[derive(Debug, Deserialize)]
 struct DeviceCodeResponse {
+    /// Opaque device session id used for polling.
     device_auth_id: String,
+    /// Short code shown to the user.
     #[serde(alias = "usercode")]
     user_code: String,
+    /// Polling interval hint returned by the provider.
     #[serde(deserialize_with = "deserialize_interval", default)]
     interval: u64,
 }
 
+/// Payload returned once device login is approved.
 #[derive(Debug, Deserialize)]
 struct DeviceTokenResponse {
+    /// Authorization code for final token exchange.
     authorization_code: String,
+    /// PKCE verifier bound to the authorization code.
     code_verifier: String,
 }
 
+/// OAuth token endpoint response shape.
 #[derive(Debug, Deserialize)]
 struct OAuthTokenResponse {
+    /// Newly issued access token.
     access_token: Option<String>,
+    /// Newly issued refresh token (may be omitted on refresh).
     refresh_token: Option<String>,
+    /// Access token lifetime in seconds.
     #[serde(deserialize_with = "deserialize_i64_option", default)]
     expires_in: Option<i64>,
 }
@@ -69,6 +87,7 @@ pub async fn complete_openai_device_login(
     login: &OpenAiDeviceLogin,
 ) -> Result<OAuthTokens, AuthError> {
     let client = shared_auth_http_client();
+    // Poll until the user approves device login, then exchange code for tokens.
     let code = poll_openai_device_code(client, login).await?;
     exchange_openai_code(client, &code.authorization_code, &code.code_verifier, None).await
 }
@@ -107,6 +126,7 @@ pub async fn refresh_openai_tokens_with_client(
     }
 
     let payload: OAuthTokenResponse = response.json().await?;
+    // Validate required fields before persisting refreshed credentials.
     let access_token = payload.access_token.unwrap_or_default().trim().to_string();
     if access_token.is_empty() {
         return Err(AuthError::Invalid(
@@ -132,6 +152,7 @@ pub async fn refresh_openai_tokens_with_client(
     })
 }
 
+/// Poll OpenAI device login endpoint until authorization code is issued.
 async fn poll_openai_device_code(
     client: &reqwest::Client,
     login: &OpenAiDeviceLogin,
@@ -157,6 +178,7 @@ async fn poll_openai_device_code(
 
         let status = response.status().as_u16();
         if status == 403 || status == 404 {
+            // 403/404 indicate pending authorization during device flow.
             if started.elapsed() >= LOGIN_TIMEOUT {
                 return Err(AuthError::Invalid(
                     "device login timed out after 15 minutes".to_string(),
@@ -171,6 +193,7 @@ async fn poll_openai_device_code(
     }
 }
 
+/// Exchange an authorization code for OAuth access/refresh tokens.
 async fn exchange_openai_code(
     client: &reqwest::Client,
     authorization_code: &str,
@@ -200,6 +223,7 @@ async fn exchange_openai_code(
     }
 
     let payload: OAuthTokenResponse = response.json().await?;
+    // `refresh_fallback` keeps existing refresh token on partial responses.
     let access_token = payload.access_token.unwrap_or_default().trim().to_string();
     if access_token.is_empty() {
         return Err(AuthError::Invalid(
@@ -227,6 +251,7 @@ async fn exchange_openai_code(
     })
 }
 
+/// Lazily initialized shared HTTP client for auth requests.
 fn shared_auth_http_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
@@ -238,6 +263,7 @@ fn shared_auth_http_client() -> &'static reqwest::Client {
     })
 }
 
+/// Deserialize polling interval values provided as string/number/null.
 fn deserialize_interval<'de, D>(deserializer: D) -> Result<u64, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -258,6 +284,7 @@ where
     }
 }
 
+/// Deserialize optional integer durations encoded as string/number/null.
 fn deserialize_i64_option<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
 where
     D: serde::Deserializer<'de>,

@@ -1,6 +1,8 @@
 //! Provider detection and compatibility helpers.
 
+/// Stable provider key used for OpenAI login token records.
 pub(crate) const OPENAI_PROVIDER_KEY: &str = "openai";
+/// Runtime base URL required for OpenAI login-backed API requests.
 pub(crate) const OPENAI_CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 
 /// Returns true when the model base URL appears to target OpenAI.

@@ -13,8 +13,10 @@ use super::types::{OAuthTokens, ProviderLoginHealth};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct AuthStore {
+    /// Schema version for on-disk auth records.
     #[serde(default)]
     pub(crate) version: u32,
+    /// Provider-scoped token map (`providers.<name>`).
     #[serde(default)]
     pub(crate) providers: BTreeMap<String, OAuthTokens>,
     // Legacy profile-scoped token storage from older buddy builds.
@@ -118,6 +120,7 @@ pub fn save_profile_tokens(_profile: &str, tokens: OAuthTokens) -> Result<(), Au
     save_provider_tokens(OPENAI_PROVIDER_KEY, tokens)
 }
 
+/// Resolve provider tokens with compatibility fallback to legacy profile records.
 pub(crate) fn resolve_provider_tokens(store: &AuthStore, provider: &str) -> Option<OAuthTokens> {
     if let Some(tokens) = store.providers.get(provider) {
         return Some(tokens.clone());
@@ -125,6 +128,7 @@ pub(crate) fn resolve_provider_tokens(store: &AuthStore, provider: &str) -> Opti
     resolve_legacy_profile_tokens(store, provider)
 }
 
+/// Resolve legacy profile-scoped tokens for providers that predate provider keys.
 fn resolve_legacy_profile_tokens(store: &AuthStore, provider: &str) -> Option<OAuthTokens> {
     if store.profiles.is_empty() {
         return None;
@@ -144,6 +148,7 @@ fn resolve_legacy_profile_tokens(store: &AuthStore, provider: &str) -> Option<OA
     store.profiles.values().next().cloned()
 }
 
+/// Load and decode the auth store from disk, including plaintext migration.
 pub(crate) fn load_store(path: &Path) -> Result<AuthStore, AuthError> {
     match std::fs::read_to_string(path) {
         Ok(text) => {
@@ -183,8 +188,10 @@ pub(crate) fn load_store(path: &Path) -> Result<AuthStore, AuthError> {
     }
 }
 
+/// Encrypt and persist the auth store to disk with restrictive permissions.
 pub(crate) fn write_store(path: &Path, store: &AuthStore) -> Result<(), AuthError> {
     if let Some(parent) = path.parent() {
+        // Ensure config directory exists and is private.
         std::fs::create_dir_all(parent)?;
         #[cfg(unix)]
         {
@@ -193,6 +200,7 @@ pub(crate) fn write_store(path: &Path, store: &AuthStore) -> Result<(), AuthErro
         }
     }
 
+    // Always write encrypted credentials, even when loaded from legacy plaintext.
     let encrypted = encrypt_store(store)?;
     let text = serde_json::to_string_pretty(&encrypted).map_err(|err| {
         AuthError::Invalid(format!("failed to serialize encrypted auth store: {err}"))
@@ -209,6 +217,7 @@ pub(crate) fn write_store(path: &Path, store: &AuthStore) -> Result<(), AuthErro
     file.flush()?;
     #[cfg(unix)]
     {
+        // Re-assert secure file permissions after write.
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
     }

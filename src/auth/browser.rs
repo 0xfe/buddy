@@ -4,6 +4,7 @@
 pub fn try_open_browser(url: &str) -> bool {
     #[cfg(target_os = "macos")]
     {
+        // macOS standard browser launcher.
         return std::process::Command::new("open")
             .arg(url)
             .status()
@@ -11,6 +12,7 @@ pub fn try_open_browser(url: &str) -> bool {
     }
     #[cfg(target_os = "windows")]
     {
+        // Windows shell launcher.
         return std::process::Command::new("cmd")
             .args(["/C", "start", "", url])
             .status()
@@ -18,6 +20,7 @@ pub fn try_open_browser(url: &str) -> bool {
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
+        // Linux/BSD desktop launcher.
         return std::process::Command::new("xdg-open")
             .arg(url)
             .status()

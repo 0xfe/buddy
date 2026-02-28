@@ -25,6 +25,7 @@ pub use client::ApiClient;
 /// calls while the production path uses [`ApiClient`].
 #[async_trait]
 pub trait ModelClient: Send + Sync {
+    /// Execute one chat request and return a normalized chat response.
     async fn chat(&self, request: &ChatRequest) -> Result<ChatResponse, ApiError>;
 }
 
@@ -51,6 +52,7 @@ mod tests {
     use reqwest::header::HeaderValue;
     use serde_json::{json, Value};
 
+    // Validates that integer `Retry-After` values are parsed directly.
     #[test]
     fn parse_retry_after_supports_delta_seconds() {
         let mut headers = HeaderMap::new();
@@ -58,6 +60,7 @@ mod tests {
         assert_eq!(parse_retry_after_secs(&headers), Some(12));
     }
 
+    // Validates that HTTP-date `Retry-After` values are converted to a delay.
     #[test]
     fn parse_retry_after_supports_http_date() {
         use std::time::UNIX_EPOCH;
@@ -71,6 +74,7 @@ mod tests {
         assert!(parse_retry_after_secs(&headers).is_some());
     }
 
+    // Ensures malformed `Retry-After` headers are ignored safely.
     #[test]
     fn parse_retry_after_ignores_invalid_values() {
         let mut headers = HeaderMap::new();
@@ -80,11 +84,15 @@ mod tests {
 
     #[derive(Debug, PartialEq, Eq)]
     struct SemanticShape {
+        /// Assistant text content extracted from the normalized response.
         content: Option<String>,
+        /// Flattened function-call tuple: (id, function_name, arguments_json).
         tool_calls: Vec<(String, String, String)>,
+        /// Usage tuple: (prompt_tokens, completion_tokens, total_tokens).
         usage: Option<(u64, u64, u64)>,
     }
 
+    /// Reduce a full response to semantic fields shared across protocols.
     fn semantic_shape(response: &ChatResponse) -> SemanticShape {
         let message = &response.choices[0].message;
         let tool_calls = message
@@ -114,10 +122,12 @@ mod tests {
         }
     }
 
+    /// Parse a canonical `/chat/completions` fixture.
     fn parse_completions_fixture(raw: Value) -> ChatResponse {
         serde_json::from_value(raw).expect("valid completions fixture")
     }
 
+    // Confirms a plain text response normalizes equivalently across protocols.
     #[test]
     fn protocol_fixture_text_response_normalizes_like_completions() {
         let completions = parse_completions_fixture(json!({
@@ -144,6 +154,7 @@ mod tests {
         assert_eq!(semantic_shape(&responses), semantic_shape(&completions));
     }
 
+    // Confirms function-call responses normalize equivalently across protocols.
     #[test]
     fn protocol_fixture_tool_call_normalizes_like_completions() {
         let completions = parse_completions_fixture(json!({

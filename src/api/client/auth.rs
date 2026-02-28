@@ -25,6 +25,7 @@ pub(super) async fn resolve_bearer_token(
     profile: &str,
     force_refresh: bool,
 ) -> Result<Option<String>, ApiError> {
+    // Explicit keys always win over login token resolution.
     if !api_key.is_empty() {
         return Ok(Some(api_key.to_string()));
     }
@@ -48,6 +49,7 @@ pub(super) async fn resolve_bearer_token(
         ))
     })?;
 
+    // Missing provider tokens means the user has not completed login yet.
     if tokens.is_none() {
         return Err(ApiError::LoginRequired(format!(
             "Provider `{provider}` requires login auth, but no saved login was found. Run `buddy login`."
@@ -55,6 +57,7 @@ pub(super) async fn resolve_bearer_token(
     }
 
     if let Some(existing) = tokens.as_ref() {
+        // Refresh eagerly so requests are not sent with near-expiry credentials.
         if force_refresh || existing.is_expiring_soon() {
             let refreshed = refresh_openai_tokens_with_client(http, existing)
                 .await

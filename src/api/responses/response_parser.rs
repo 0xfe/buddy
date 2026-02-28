@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 
 /// Parse one non-streaming `/responses` payload into `ChatResponse`.
 pub(crate) fn parse_responses_payload(payload: &Value) -> Result<ChatResponse, ApiError> {
+    // Preserve a stable fallback id when providers omit it.
     let id = payload
         .get("id")
         .and_then(Value::as_str)
@@ -22,6 +23,7 @@ pub(crate) fn parse_responses_payload(payload: &Value) -> Result<ChatResponse, A
             let Some(kind) = item.get("type").and_then(Value::as_str) else {
                 continue;
             };
+            // Normalize only assistant-visible text, tool calls, and reasoning.
             match kind {
                 "message" => {
                     parse_output_message_text(item, &mut assistant_text);
@@ -82,6 +84,7 @@ pub(crate) fn parse_responses_payload(payload: &Value) -> Result<ChatResponse, A
     })
 }
 
+/// Extract assistant text segments from a `/responses` message item.
 fn parse_output_message_text(item: &Value, out: &mut Vec<String>) {
     let Some(content) = item.get("content").and_then(Value::as_array) else {
         return;
@@ -97,12 +100,14 @@ fn parse_output_message_text(item: &Value, out: &mut Vec<String>) {
             continue;
         };
         match part_type {
+            // Some providers use `text` or `input_text` interchangeably.
             "output_text" | "input_text" | "text" => out.push(text.to_string()),
             _ => {}
         }
     }
 }
 
+/// Parse one `function_call` output item into the normalized tool-call shape.
 fn parse_output_function_call(item: &Value, index: usize) -> Option<ToolCall> {
     let name = item.get("name")?.as_str()?.trim();
     if name.is_empty() {
@@ -131,6 +136,7 @@ fn parse_output_function_call(item: &Value, index: usize) -> Option<ToolCall> {
     })
 }
 
+/// Parse usage totals from either completions-style or responses-style keys.
 fn parse_usage(usage: &Value) -> Option<Usage> {
     let prompt_tokens = read_u64(usage, &["prompt_tokens", "input_tokens"])?;
     let completion_tokens = read_u64(usage, &["completion_tokens", "output_tokens"])?;
@@ -143,6 +149,7 @@ fn parse_usage(usage: &Value) -> Option<Usage> {
     })
 }
 
+/// Read the first valid unsigned integer from a set of candidate keys.
 fn read_u64(value: &Value, keys: &[&str]) -> Option<u64> {
     keys.iter().find_map(|key| {
         value.get(*key).and_then(|v| match v {
@@ -158,6 +165,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    // Ensures parser extracts text, tool calls, reasoning blobs, and usage totals.
     #[test]
     fn parse_responses_payload_extracts_text_tool_calls_and_usage() {
         let raw = json!({

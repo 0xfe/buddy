@@ -6,12 +6,16 @@ use std::time::Duration;
 /// Bounded retry policy used by `ApiClient`.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct RetryPolicy {
+    /// Upper bound on total attempts, including the initial request.
     pub(super) max_attempts: u32,
+    /// Base delay used for exponential backoff.
     pub(super) initial_backoff: Duration,
+    /// Maximum allowed delay between retry attempts.
     pub(super) max_backoff: Duration,
 }
 
 impl Default for RetryPolicy {
+    /// Conservative retry defaults that recover transient errors quickly.
     fn default() -> Self {
         Self {
             max_attempts: 3,

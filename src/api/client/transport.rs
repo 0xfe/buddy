@@ -10,6 +10,7 @@ use std::time::Duration;
 
 /// Build an HTTP client with timeout applied.
 pub(super) fn build_http_client(timeout: Duration) -> reqwest::Client {
+    // Fall back to reqwest defaults if builder creation fails for any reason.
     reqwest::Client::builder()
         .timeout(timeout)
         .build()
@@ -26,6 +27,7 @@ pub(super) async fn dispatch_request(
     request: &ChatRequest,
     bearer: Option<&str>,
 ) -> Result<ChatResponse, ApiError> {
+    // Dispatch by wire protocol while keeping a single normalized return type.
     match protocol {
         ApiProtocol::Completions => completions::request(http, base_url, request, bearer).await,
         ApiProtocol::Responses => {
@@ -50,6 +52,7 @@ pub(super) fn with_diagnostic_hints(protocol: ApiProtocol, err: ApiError) -> Api
         return err;
     };
 
+    // 404 often means the endpoint supports a different API protocol path.
     if code == 404 && protocol == ApiProtocol::Responses {
         body.push_str(
             "\nHint: this endpoint may not support `/responses`; set `api = \"completions\"` for this model profile.",

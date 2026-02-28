@@ -32,6 +32,7 @@ pub(super) fn parse_streaming_responses_payload(body: &str) -> Result<ChatRespon
         if event_payload.is_empty() || event_payload == "[DONE]" {
             continue;
         }
+        // Each SSE `data:` block is expected to contain a JSON event object.
         let event: Value = serde_json::from_str(&event_payload).map_err(|err| {
             ApiError::InvalidResponse(format!("invalid streaming event payload: {err}"))
         })?;
@@ -107,6 +108,7 @@ pub(super) fn parse_streaming_responses_payload(body: &str) -> Result<ChatRespon
     if let Some(response) = completed_response {
         let mut parsed = parse_responses_payload(&response)?;
         if let Some(choice) = parsed.choices.get_mut(0) {
+            // Fill in text from deltas when the completed payload omits final text.
             if choice
                 .message
                 .content
@@ -145,6 +147,7 @@ pub(super) fn parse_streaming_responses_payload(body: &str) -> Result<ChatRespon
                 );
             }
 
+            // Preserve fully-structured reasoning items when present in stream events.
             if !reasoning_items.is_empty() && !choice.message.extra.contains_key("reasoning") {
                 choice
                     .message
@@ -223,6 +226,7 @@ mod tests {
     use super::*;
     use crate::testsupport::{sse_done_block, sse_event_block};
 
+    // Ensures completed SSE responses are converted into normalized chat output.
     #[test]
     fn parse_streaming_responses_payload_extracts_completed_response() {
         let sse = format!(
@@ -243,6 +247,7 @@ mod tests {
         assert_eq!(parsed.usage.as_ref().map(|u| u.total_tokens), Some(3));
     }
 
+    // Ensures streamed reasoning summary/detail deltas are preserved in `extra`.
     #[test]
     fn parse_streaming_responses_payload_captures_reasoning_deltas() {
         let sse = format!(
@@ -273,6 +278,7 @@ mod tests {
         assert!(reasoning.contains("step-1"));
     }
 
+    // Ensures structured reasoning output items are preserved in `extra.reasoning`.
     #[test]
     fn parse_streaming_responses_payload_captures_reasoning_items() {
         let sse = format!(
@@ -292,6 +298,7 @@ mod tests {
         assert!(msg.extra.contains_key("reasoning"));
     }
 
+    // Ensures multiline `data:` events are joined according to SSE semantics.
     #[test]
     fn parse_streaming_responses_payload_supports_multiline_sse_events() {
         let sse = concat!(
@@ -308,6 +315,7 @@ mod tests {
         assert_eq!(parsed.choices[0].message.content.as_deref(), Some("hello"));
     }
 
+    // Ensures helper parser combines multi-line payloads and skips comment lines.
     #[test]
     fn parse_sse_event_payloads_joins_data_lines_and_skips_comments() {
         let payloads = parse_sse_event_payloads(
@@ -329,6 +337,7 @@ mod tests {
         use proptest::prelude::*;
 
         proptest! {
+            // Property test: serializing arbitrary `data:` blocks round-trips through parser.
             #[test]
             fn parse_sse_event_payloads_round_trips_data_blocks(
                 payloads in proptest::collection::vec(

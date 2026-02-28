@@ -21,12 +21,19 @@ use tokio::time::sleep;
 
 /// Client for OpenAI-compatible model APIs.
 pub struct ApiClient {
+    /// Shared HTTP client used for outbound requests.
     http: reqwest::Client,
+    /// Normalized request base URL (without trailing slash).
     base_url: String,
+    /// Configured API key value (empty when login auth is used).
     api_key: String,
+    /// Selected wire protocol.
     protocol: ApiProtocol,
+    /// Selected auth mode for this profile.
     auth: crate::config::AuthMode,
+    /// Profile name used for diagnostics and login messaging.
     profile: String,
+    /// Retry/backoff policy for transient failures.
     retry_policy: RetryPolicy,
 }
 
@@ -36,6 +43,7 @@ impl ApiClient {
         Self::new_with_retry_policy(config, timeout, RetryPolicy::default())
     }
 
+    /// Build a client with an explicit retry policy (used by tests).
     fn new_with_retry_policy(
         config: &ApiConfig,
         timeout: Duration,
@@ -55,6 +63,8 @@ impl ApiClient {
 
     /// Send a model request and return a normalized chat-style response.
     pub async fn chat(&self, request: &ChatRequest) -> Result<ChatResponse, ApiError> {
+        // Some login flows require a different runtime base URL than the
+        // configured profile URL.
         let base_url = policy::runtime_base_url(&self.base_url, self.auth, &self.api_key);
         let mut bearer = auth::resolve_bearer_token(
             &self.http,
@@ -104,6 +114,7 @@ impl ApiClient {
         response
     }
 
+    /// Dispatch a single request without retries.
     async fn dispatch_request(
         &self,
         base_url: &str,
@@ -122,6 +133,7 @@ impl ApiClient {
         .await
     }
 
+    /// Retry wrapper around single-dispatch request handling.
     async fn dispatch_request_with_retries(
         &self,
         base_url: &str,
@@ -134,9 +146,11 @@ impl ApiClient {
             match result {
                 Ok(response) => return Ok(response),
                 Err(err) => {
+                    // Return the original terminal error once retries are exhausted.
                     if !self.retry_policy.should_retry(&err, attempt) {
                         return Err(transport::with_diagnostic_hints(self.protocol, err));
                     }
+                    // Use bounded exponential backoff (or Retry-After) between attempts.
                     let delay = self.retry_policy.retry_delay_for(attempt, &err);
                     attempt = attempt.saturating_add(1);
                     sleep(delay).await;
@@ -148,6 +162,7 @@ impl ApiClient {
 
 #[async_trait]
 impl ModelClient for ApiClient {
+    /// Trait adapter used by the agent loop and mockable interfaces.
     async fn chat(&self, request: &ChatRequest) -> Result<ChatResponse, ApiError> {
         ApiClient::chat(self, request).await
     }
@@ -161,6 +176,7 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
+    // Verifies the configured client timeout aborts stalled HTTP requests.
     #[tokio::test]
     async fn api_client_respects_timeout_policy() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -198,6 +214,7 @@ mod tests {
         }
     }
 
+    // Verifies transient 429 responses are retried and eventually succeed.
     #[tokio::test]
     async fn api_client_retries_transient_429_with_retry_after() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -260,6 +277,7 @@ mod tests {
         );
     }
 
+    // Verifies transport hints help diagnose 404 protocol mismatches.
     #[test]
     fn api_client_adds_protocol_mismatch_hint_to_404() {
         let api = ApiConfig {

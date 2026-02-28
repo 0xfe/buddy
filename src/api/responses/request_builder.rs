@@ -12,6 +12,7 @@ pub(super) fn build_responses_payload(
     let mut instructions = Vec::<String>::new();
     let mut input = Vec::<Value>::new();
     for message in &request.messages {
+        // `/responses` expects all system content in `instructions`.
         if message.role == Role::System {
             if let Some(content) = message
                 .content
@@ -23,9 +24,11 @@ pub(super) fn build_responses_payload(
             }
             continue;
         }
+        // Non-system turns are translated to `input` items.
         input.extend(message_to_responses_items(message));
     }
 
+    // Convert tool definitions to the function-tool shape expected by `/responses`.
     let tools = request.tools.as_ref().map(|defs| {
         defs.iter()
             .map(|tool| {
@@ -66,6 +69,7 @@ pub(super) fn build_responses_payload(
     Value::Object(payload)
 }
 
+/// Convert one chat message into zero or more `/responses` input items.
 fn message_to_responses_items(message: &Message) -> Vec<Value> {
     let mut out = Vec::new();
 
@@ -92,6 +96,7 @@ fn message_to_responses_items(message: &Message) -> Vec<Value> {
 
             if let Some(tool_calls) = message.tool_calls.as_ref() {
                 for tc in tool_calls {
+                    // Assistant tool calls become top-level function_call entries.
                     out.push(json!({
                         "type": "function_call",
                         "call_id": tc.id,
@@ -110,6 +115,7 @@ fn message_to_responses_items(message: &Message) -> Vec<Value> {
             else {
                 return out;
             };
+            // Tool result turns map to function_call_output entries keyed by call id.
             let output = message.content.as_deref().unwrap_or_default();
             out.push(json!({
                 "type": "function_call_output",
@@ -122,6 +128,7 @@ fn message_to_responses_items(message: &Message) -> Vec<Value> {
     out
 }
 
+/// Map internal role enums to `/responses` role strings.
 fn role_to_wire(role: &Role) -> &'static str {
     match role {
         Role::System => "system",
@@ -137,6 +144,7 @@ mod tests {
     use crate::types::{FunctionDefinition, Message, ToolDefinition};
     use std::collections::BTreeMap;
 
+    // Ensures tool-result turns are emitted as function_call_output items.
     #[test]
     fn responses_payload_maps_tool_result_messages() {
         let request = ChatRequest {
@@ -154,6 +162,7 @@ mod tests {
         assert_eq!(input[1]["output"], "ok");
     }
 
+    // Ensures function tool definitions are emitted with the expected shape.
     #[test]
     fn responses_payload_maps_function_tools_shape() {
         let request = ChatRequest {
@@ -176,6 +185,7 @@ mod tests {
         assert!(payload["tools"][0].get("description").is_some());
     }
 
+    // Ensures system messages are moved into `instructions` and excluded from `input`.
     #[test]
     fn responses_payload_maps_system_messages_to_instructions() {
         let request = ChatRequest {
@@ -192,6 +202,7 @@ mod tests {
         assert_eq!(input[0]["role"], "user");
     }
 
+    // Ensures assistant content uses `output_text` while user content uses `input_text`.
     #[test]
     fn responses_payload_maps_assistant_messages_to_output_text() {
         let request = ChatRequest {
@@ -218,6 +229,7 @@ mod tests {
         assert_eq!(input[1]["content"][0]["type"], "output_text");
     }
 
+    // Ensures auth policy can force non-persistent responses storage mode.
     #[test]
     fn responses_payload_sets_store_false_when_requested() {
         let request = ChatRequest {
@@ -231,6 +243,7 @@ mod tests {
         assert_eq!(payload["store"], Value::Bool(false));
     }
 
+    // Ensures streaming mode is explicitly requested in payloads when enabled.
     #[test]
     fn responses_payload_sets_stream_when_requested() {
         let request = ChatRequest {
