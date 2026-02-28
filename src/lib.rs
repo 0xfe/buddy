@@ -28,13 +28,13 @@ pub mod error;
 pub mod preflight;
 pub mod prompt;
 pub mod repl;
-pub mod render;
 pub mod ui;
 pub mod runtime;
 pub mod session;
 #[cfg(test)]
 pub mod testsupport;
 pub mod textutil;
+pub mod tmux;
 pub mod tokens;
 pub mod tools;
 pub mod tui;

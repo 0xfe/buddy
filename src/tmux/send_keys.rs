@@ -8,7 +8,7 @@ use crate::tools::execution::process::{
 use crate::tools::execution::types::{ContainerTmuxContext, SendKeysOptions};
 
 /// Send a full command line (text + Enter) over ssh tmux.
-pub(in crate::tools::execution) async fn send_tmux_line(
+pub(crate) async fn send_tmux_line(
     target: &str,
     control_path: &std::path::Path,
     pane_id: &str,
@@ -39,7 +39,7 @@ pub(in crate::tools::execution) async fn send_tmux_line(
 }
 
 /// Send a full command line (text + Enter) to local tmux.
-pub(in crate::tools::execution) async fn send_local_tmux_line(
+pub(crate) async fn send_local_tmux_line(
     pane_id: &str,
     text: &str,
 ) -> Result<(), ToolError> {
@@ -60,7 +60,7 @@ pub(in crate::tools::execution) async fn send_local_tmux_line(
 }
 
 /// Send a full command line (text + Enter) to container tmux.
-pub(in crate::tools::execution) async fn send_container_tmux_line(
+pub(crate) async fn send_container_tmux_line(
     ctx: &ContainerTmuxContext,
     pane_id: &str,
     text: &str,
@@ -83,7 +83,7 @@ pub(in crate::tools::execution) async fn send_container_tmux_line(
 }
 
 /// Send key/literal/enter sequence to local tmux.
-pub(in crate::tools::execution) async fn send_local_tmux_keys(
+pub(crate) async fn send_local_tmux_keys(
     target: &str,
     options: &SendKeysOptions,
 ) -> Result<(), ToolError> {
@@ -108,7 +108,7 @@ pub(in crate::tools::execution) async fn send_local_tmux_keys(
 }
 
 /// Send key/literal/enter sequence to ssh tmux.
-pub(in crate::tools::execution) async fn send_remote_tmux_keys(
+pub(crate) async fn send_remote_tmux_keys(
     target: &str,
     control_path: &std::path::Path,
     pane_id: &str,
@@ -135,7 +135,7 @@ pub(in crate::tools::execution) async fn send_remote_tmux_keys(
 }
 
 /// Send key/literal/enter sequence to container tmux.
-pub(in crate::tools::execution) async fn send_container_tmux_keys(
+pub(crate) async fn send_container_tmux_keys(
     ctx: &ContainerTmuxContext,
     pane_id: &str,
     options: &SendKeysOptions,
@@ -161,7 +161,7 @@ pub(in crate::tools::execution) async fn send_container_tmux_keys(
 }
 
 /// Build literal tmux send-keys shell command.
-pub(in crate::tools::execution) fn build_tmux_send_literal_command(
+pub(crate) fn build_tmux_send_literal_command(
     target: &str,
     text: &str,
 ) -> String {
@@ -171,7 +171,7 @@ pub(in crate::tools::execution) fn build_tmux_send_literal_command(
 }
 
 /// Build tmux send-keys command for key sequence arguments.
-pub(in crate::tools::execution) fn build_tmux_send_keys_command(
+pub(crate) fn build_tmux_send_keys_command(
     target: &str,
     keys: &[String],
 ) -> String {
@@ -185,7 +185,7 @@ pub(in crate::tools::execution) fn build_tmux_send_keys_command(
 }
 
 /// Build tmux Enter key command.
-pub(in crate::tools::execution) fn build_tmux_send_enter_command(target: &str) -> String {
+pub(crate) fn build_tmux_send_enter_command(target: &str) -> String {
     let target_q = shell_quote(target);
     format!("tmux send-keys -t {target_q} Enter")
 }

@@ -15,11 +15,11 @@ use crate::tools::execution::file_io::{
     read_file_via_command_backend, write_file_via_command_backend,
 };
 use crate::tools::execution::process::{run_ssh_raw_process, run_with_wait};
-use crate::tools::execution::tmux::capture::run_remote_capture_pane;
-use crate::tools::execution::tmux::pane::ensure_tmux_pane;
-use crate::tools::execution::tmux::prompt::ensure_tmux_prompt_setup;
-use crate::tools::execution::tmux::run::run_ssh_tmux_process;
-use crate::tools::execution::tmux::send_keys::send_remote_tmux_keys;
+use crate::tmux::capture::run_remote_capture_pane;
+use crate::tmux::pane::ensure_tmux_pane;
+use crate::tmux::prompt::ensure_tmux_prompt_setup;
+use crate::tmux::run::run_ssh_tmux_process;
+use crate::tmux::send_keys::send_remote_tmux_keys;
 use crate::tools::execution::types::{
     CapturePaneOptions, ExecOutput, SendKeysOptions, ShellWait, SshContext, TmuxAttachInfo,
     TmuxAttachTarget, TMUX_WINDOW_NAME,

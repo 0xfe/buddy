@@ -8,11 +8,11 @@ use crate::tools::execution::file_io::{
     read_file_via_command_backend, write_file_via_command_backend,
 };
 use crate::tools::execution::process::{run_sh_process, run_with_wait, shell_quote};
-use crate::tools::execution::tmux::capture::run_local_capture_pane;
-use crate::tools::execution::tmux::pane::ensure_local_tmux_pane;
-use crate::tools::execution::tmux::prompt::ensure_local_tmux_prompt_setup;
-use crate::tools::execution::tmux::run::run_local_tmux_process;
-use crate::tools::execution::tmux::send_keys::{send_local_tmux_keys, send_local_tmux_line};
+use crate::tmux::capture::run_local_capture_pane;
+use crate::tmux::pane::ensure_local_tmux_pane;
+use crate::tmux::prompt::ensure_local_tmux_prompt_setup;
+use crate::tmux::run::run_local_tmux_process;
+use crate::tmux::send_keys::{send_local_tmux_keys, send_local_tmux_line};
 use crate::tools::execution::types::{
     CapturePaneOptions, ExecOutput, LocalBackend, LocalTmuxContext, SendKeysOptions, ShellWait,
     TmuxAttachInfo, TmuxAttachTarget, LEGACY_TMUX_WINDOW_NAME, TMUX_PANE_TITLE, TMUX_WINDOW_NAME,

@@ -93,52 +93,52 @@ pub enum TmuxAttachTarget {
     Container { engine: String, container: String },
 }
 
-pub(super) struct ContainerContext {
-    pub(super) engine: ContainerEngine,
-    pub(super) container: String,
+pub(crate) struct ContainerContext {
+    pub(crate) engine: ContainerEngine,
+    pub(crate) container: String,
 }
 
-pub(super) struct LocalBackend;
+pub(crate) struct LocalBackend;
 
-pub(super) struct ContainerTmuxContext {
-    pub(super) engine: ContainerEngine,
-    pub(super) container: String,
-    pub(super) tmux_session: String,
-    pub(super) configured_tmux_pane: Mutex<Option<String>>,
-    pub(super) startup_existing_tmux_pane: Option<String>,
+pub(crate) struct ContainerTmuxContext {
+    pub(crate) engine: ContainerEngine,
+    pub(crate) container: String,
+    pub(crate) tmux_session: String,
+    pub(crate) configured_tmux_pane: Mutex<Option<String>>,
+    pub(crate) startup_existing_tmux_pane: Option<String>,
 }
 
-pub(super) struct ContainerEngine {
-    pub(super) command: &'static str,
-    pub(super) kind: ContainerEngineKind,
+pub(crate) struct ContainerEngine {
+    pub(crate) command: &'static str,
+    pub(crate) kind: ContainerEngineKind,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum ContainerEngineKind {
+pub(crate) enum ContainerEngineKind {
     Docker,
     Podman,
 }
 
-pub(super) const TMUX_WINDOW_NAME: &str = "shared";
-pub(super) const LEGACY_TMUX_WINDOW_NAME: &str = "buddy-shared";
-pub(super) const TMUX_PANE_TITLE: &str = "shared";
+pub(crate) const TMUX_WINDOW_NAME: &str = "shared";
+pub(crate) const LEGACY_TMUX_WINDOW_NAME: &str = "buddy-shared";
+pub(crate) const TMUX_PANE_TITLE: &str = "shared";
 
-pub(super) struct LocalTmuxContext {
-    pub(super) tmux_session: String,
-    pub(super) configured_tmux_pane: Mutex<Option<String>>,
-    pub(super) startup_existing_tmux_pane: Option<String>,
+pub(crate) struct LocalTmuxContext {
+    pub(crate) tmux_session: String,
+    pub(crate) configured_tmux_pane: Mutex<Option<String>>,
+    pub(crate) startup_existing_tmux_pane: Option<String>,
 }
 
-pub(super) struct SshContext {
-    pub(super) target: String,
-    pub(super) control_path: PathBuf,
-    pub(super) tmux_session: Option<String>,
-    pub(super) configured_tmux_pane: Mutex<Option<String>>,
-    pub(super) startup_existing_tmux_pane: Option<String>,
+pub(crate) struct SshContext {
+    pub(crate) target: String,
+    pub(crate) control_path: PathBuf,
+    pub(crate) tmux_session: Option<String>,
+    pub(crate) configured_tmux_pane: Mutex<Option<String>>,
+    pub(crate) startup_existing_tmux_pane: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct EnsuredTmuxPane {
-    pub(super) pane_id: String,
-    pub(super) created: bool,
+pub(crate) struct EnsuredTmuxPane {
+    pub(crate) pane_id: String,
+    pub(crate) created: bool,
 }

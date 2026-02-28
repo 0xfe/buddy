@@ -10,7 +10,7 @@ use crate::tools::execution::types::{
 };
 
 /// Script that ensures a shared pane exists and returns `<pane_id>\n<created_flag>`.
-pub(in crate::tools::execution) fn ensure_tmux_pane_script(tmux_session: &str) -> String {
+pub(crate) fn ensure_tmux_pane_script(tmux_session: &str) -> String {
     let session_q = shell_quote(tmux_session);
     let window_q = shell_quote(TMUX_WINDOW_NAME);
     let pane_title_q = shell_quote(TMUX_PANE_TITLE);
@@ -56,7 +56,7 @@ printf '%s\n%s' \"$PANE\" \"$CREATED\"\n"
 }
 
 /// Ensure shared pane exists on ssh target.
-pub(in crate::tools::execution) async fn ensure_tmux_pane(
+pub(crate) async fn ensure_tmux_pane(
     target: &str,
     control_path: &std::path::Path,
     tmux_session: &str,
@@ -69,7 +69,7 @@ pub(in crate::tools::execution) async fn ensure_tmux_pane(
 }
 
 /// Ensure shared pane exists on local target.
-pub(in crate::tools::execution) async fn ensure_local_tmux_pane(
+pub(crate) async fn ensure_local_tmux_pane(
     tmux_session: &str,
 ) -> Result<EnsuredTmuxPane, ToolError> {
     let script = ensure_tmux_pane_script(tmux_session);
@@ -80,7 +80,7 @@ pub(in crate::tools::execution) async fn ensure_local_tmux_pane(
 }
 
 /// Ensure shared pane exists inside container target.
-pub(in crate::tools::execution) async fn ensure_container_tmux_pane(
+pub(crate) async fn ensure_container_tmux_pane(
     ctx: &ContainerTmuxContext,
     tmux_session: &str,
 ) -> Result<EnsuredTmuxPane, ToolError> {
@@ -95,7 +95,7 @@ pub(in crate::tools::execution) async fn ensure_container_tmux_pane(
 }
 
 /// Parse pane ID and created flag returned by `ensure_tmux_pane_script`.
-pub(in crate::tools::execution) fn parse_ensured_tmux_pane(
+pub(crate) fn parse_ensured_tmux_pane(
     output: &str,
 ) -> Option<EnsuredTmuxPane> {
     let mut lines = output.lines();

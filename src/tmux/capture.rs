@@ -11,7 +11,7 @@ use crate::tools::execution::types::{CapturePaneOptions, ContainerTmuxContext};
 use super::run::latest_prompt_marker;
 
 /// Build `tmux capture-pane` shell command from capture options.
-pub(in crate::tools::execution) fn build_capture_pane_command(
+pub(crate) fn build_capture_pane_command(
     target: &str,
     options: &CapturePaneOptions,
 ) -> String {
@@ -45,7 +45,7 @@ pub(in crate::tools::execution) fn build_capture_pane_command(
 }
 
 /// Capture options used for full tmux history parsing.
-pub(in crate::tools::execution) fn full_history_capture_options() -> CapturePaneOptions {
+pub(crate) fn full_history_capture_options() -> CapturePaneOptions {
     CapturePaneOptions {
         start: Some("-".to_string()),
         end: Some("-".to_string()),
@@ -54,7 +54,7 @@ pub(in crate::tools::execution) fn full_history_capture_options() -> CapturePane
 }
 
 /// Capture from local tmux target.
-pub(in crate::tools::execution) async fn run_local_capture_pane(
+pub(crate) async fn run_local_capture_pane(
     pane_target: &str,
     options: &CapturePaneOptions,
 ) -> Result<String, ToolError> {
@@ -81,7 +81,7 @@ pub(in crate::tools::execution) async fn run_local_capture_pane(
 }
 
 /// Capture from remote ssh-backed tmux target.
-pub(in crate::tools::execution) async fn run_remote_capture_pane(
+pub(crate) async fn run_remote_capture_pane(
     target: &str,
     control_path: &std::path::Path,
     pane_target: &str,
@@ -111,7 +111,7 @@ pub(in crate::tools::execution) async fn run_remote_capture_pane(
 }
 
 /// Capture from container tmux target.
-pub(in crate::tools::execution) async fn run_container_capture_pane(
+pub(crate) async fn run_container_capture_pane(
     ctx: &ContainerTmuxContext,
     pane_target: &str,
     options: &CapturePaneOptions,
@@ -139,7 +139,7 @@ pub(in crate::tools::execution) async fn run_container_capture_pane(
 }
 
 /// Whether alternate-screen fallback should be attempted.
-pub(in crate::tools::execution) fn should_fallback_from_alternate_screen(
+pub(crate) fn should_fallback_from_alternate_screen(
     options: &CapturePaneOptions,
     err: &ToolError,
 ) -> bool {
@@ -151,7 +151,7 @@ pub(in crate::tools::execution) fn should_fallback_from_alternate_screen(
 }
 
 /// Capture full history for ssh tmux pane parsing.
-pub(in crate::tools::execution) async fn capture_tmux_pane(
+pub(crate) async fn capture_tmux_pane(
     target: &str,
     control_path: &std::path::Path,
     pane_id: &str,
@@ -162,7 +162,7 @@ pub(in crate::tools::execution) async fn capture_tmux_pane(
 }
 
 /// Capture full history for local tmux pane parsing.
-pub(in crate::tools::execution) async fn capture_local_tmux_pane(
+pub(crate) async fn capture_local_tmux_pane(
     pane_id: &str,
 ) -> Result<String, ToolError> {
     let capture_cmd = build_capture_pane_command(pane_id, &full_history_capture_options());
@@ -171,7 +171,7 @@ pub(in crate::tools::execution) async fn capture_local_tmux_pane(
 }
 
 /// Capture full history for container tmux pane parsing.
-pub(in crate::tools::execution) async fn capture_container_tmux_pane(
+pub(crate) async fn capture_container_tmux_pane(
     ctx: &ContainerTmuxContext,
     pane_id: &str,
 ) -> Result<String, ToolError> {
@@ -181,7 +181,7 @@ pub(in crate::tools::execution) async fn capture_container_tmux_pane(
 }
 
 /// Wait until any prompt marker is visible in ssh tmux pane.
-pub(in crate::tools::execution) async fn wait_for_tmux_any_prompt(
+pub(crate) async fn wait_for_tmux_any_prompt(
     target: &str,
     control_path: &std::path::Path,
     pane_id: &str,
@@ -201,7 +201,7 @@ pub(in crate::tools::execution) async fn wait_for_tmux_any_prompt(
 }
 
 /// Wait until any prompt marker is visible in local tmux pane.
-pub(in crate::tools::execution) async fn wait_for_local_tmux_any_prompt(
+pub(crate) async fn wait_for_local_tmux_any_prompt(
     pane_id: &str,
 ) -> Result<(), ToolError> {
     const MAX_POLLS: usize = 72000;
@@ -219,7 +219,7 @@ pub(in crate::tools::execution) async fn wait_for_local_tmux_any_prompt(
 }
 
 /// Wait until any prompt marker is visible in container tmux pane.
-pub(in crate::tools::execution) async fn wait_for_container_tmux_any_prompt(
+pub(crate) async fn wait_for_container_tmux_any_prompt(
     ctx: &ContainerTmuxContext,
     pane_id: &str,
 ) -> Result<(), ToolError> {

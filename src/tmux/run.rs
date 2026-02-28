@@ -16,7 +16,7 @@ use super::capture::{capture_container_tmux_pane, capture_local_tmux_pane, captu
 use super::send_keys::{send_container_tmux_line, send_local_tmux_line, send_tmux_line};
 
 /// Execute a command in ssh tmux pane and parse result from prompt markers.
-pub(in crate::tools::execution) async fn run_ssh_tmux_process(
+pub(crate) async fn run_ssh_tmux_process(
     target: &str,
     control_path: &std::path::Path,
     pane_id: &str,
@@ -90,7 +90,7 @@ pub(in crate::tools::execution) async fn run_ssh_tmux_process(
 }
 
 /// Execute a command in local tmux pane and parse result from prompt markers.
-pub(in crate::tools::execution) async fn run_local_tmux_process(
+pub(crate) async fn run_local_tmux_process(
     pane_id: &str,
     command: &str,
     stdin: Option<&[u8]>,
@@ -155,7 +155,7 @@ pub(in crate::tools::execution) async fn run_local_tmux_process(
 }
 
 /// Execute a command in container tmux pane and parse result from prompt markers.
-pub(in crate::tools::execution) async fn run_container_tmux_process(
+pub(crate) async fn run_container_tmux_process(
     ctx: &ContainerTmuxContext,
     pane_id: &str,
     command: &str,
@@ -297,7 +297,7 @@ async fn wait_for_container_tmux_result(
 }
 
 /// Parse tmux pane capture between start and next prompt markers.
-pub(in crate::tools::execution) fn parse_tmux_capture_output(
+pub(crate) fn parse_tmux_capture_output(
     capture: &str,
     start_command_id: u64,
     command: &str,
@@ -359,12 +359,12 @@ pub(in crate::tools::execution) fn parse_tmux_capture_output(
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::tools::execution) struct PromptMarker {
-    pub(in crate::tools::execution) command_id: u64,
-    pub(in crate::tools::execution) exit_code: i32,
+pub(crate) struct PromptMarker {
+    pub(crate) command_id: u64,
+    pub(crate) exit_code: i32,
 }
 
-pub(in crate::tools::execution) fn parse_prompt_marker(line: &str) -> Option<PromptMarker> {
+pub(crate) fn parse_prompt_marker(line: &str) -> Option<PromptMarker> {
     parse_prompt_marker_with_prefix(line, "[buddy ")
         // Compatibility with older tmux panes configured before rename.
         .or_else(|| parse_prompt_marker_with_prefix(line, "[agent "))
@@ -385,7 +385,7 @@ fn parse_prompt_marker_with_prefix(line: &str, prefix: &str) -> Option<PromptMar
 }
 
 /// Return the most recent prompt marker visible in capture output.
-pub(in crate::tools::execution) fn latest_prompt_marker(capture: &str) -> Option<PromptMarker> {
+pub(crate) fn latest_prompt_marker(capture: &str) -> Option<PromptMarker> {
     capture.lines().rev().find_map(parse_prompt_marker)
 }
 

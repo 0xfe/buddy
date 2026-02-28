@@ -12,7 +12,7 @@ use super::types::{
 };
 
 /// Run a container shell command for non-tmux backends.
-pub(super) async fn run_container_sh_process(
+pub(crate) async fn run_container_sh_process(
     ctx: &ContainerContext,
     command: &str,
     stdin: Option<&[u8]>,
@@ -21,7 +21,7 @@ pub(super) async fn run_container_sh_process(
 }
 
 /// Run a container shell command for tmux-backed container backends.
-pub(super) async fn run_container_tmux_sh_process(
+pub(crate) async fn run_container_tmux_sh_process(
     ctx: &ContainerTmuxContext,
     command: &str,
     stdin: Option<&[u8]>,
@@ -54,7 +54,7 @@ async fn run_container_sh_process_with(
 }
 
 /// Run a local shell command.
-pub(super) async fn run_sh_process(
+pub(crate) async fn run_sh_process(
     shell: &str,
     command: &str,
     stdin: Option<&[u8]>,
@@ -63,7 +63,7 @@ pub(super) async fn run_sh_process(
 }
 
 /// Run a raw ssh command using the shared control socket.
-pub(super) async fn run_ssh_raw_process(
+pub(crate) async fn run_ssh_raw_process(
     target: &str,
     control_path: &std::path::Path,
     remote_command: &str,
@@ -86,7 +86,7 @@ pub(super) async fn run_ssh_raw_process(
 }
 
 /// Wrap command futures with caller-selected wait semantics.
-pub(super) async fn run_with_wait(
+pub(crate) async fn run_with_wait(
     fut: impl std::future::Future<Output = Result<ExecOutput, ToolError>>,
     wait: ShellWait,
     timeout_context: &str,
@@ -107,7 +107,7 @@ pub(super) async fn run_with_wait(
 }
 
 /// Human-oriented timeout formatting used in error messages.
-pub(super) fn format_duration(duration: Duration) -> String {
+pub(crate) fn format_duration(duration: Duration) -> String {
     let secs = duration.as_secs();
     let millis = duration.subsec_millis();
     if secs == 0 {
@@ -126,7 +126,7 @@ pub(super) fn format_duration(duration: Duration) -> String {
 }
 
 /// Spawn and wait for a process, optionally piping stdin.
-pub(super) async fn run_process(
+pub(crate) async fn run_process(
     program: &str,
     args: &[String],
     stdin: Option<&[u8]>,
@@ -166,7 +166,7 @@ pub(super) async fn run_process(
 }
 
 /// Convert non-zero command status into contextual execution errors.
-pub(super) fn ensure_success(output: ExecOutput, context: String) -> Result<ExecOutput, ToolError> {
+pub(crate) fn ensure_success(output: ExecOutput, context: String) -> Result<ExecOutput, ToolError> {
     if output.exit_code == 0 {
         return Ok(output);
     }
@@ -184,7 +184,7 @@ pub(super) fn ensure_success(output: ExecOutput, context: String) -> Result<Exec
 }
 
 /// Detect docker/podman frontend availability and compatibility mode.
-pub(super) async fn detect_container_engine() -> Result<ContainerEngine, ToolError> {
+pub(crate) async fn detect_container_engine() -> Result<ContainerEngine, ToolError> {
     if let Some(version) = probe_version("docker").await? {
         let kind = docker_frontend_kind(&version);
         return Ok(ContainerEngine {
@@ -222,7 +222,7 @@ async fn probe_version(command: &str) -> Result<Option<String>, ToolError> {
 }
 
 /// Infer container frontend compatibility when docker binary is present.
-pub(super) fn docker_frontend_kind(version_output: &str) -> ContainerEngineKind {
+pub(crate) fn docker_frontend_kind(version_output: &str) -> ContainerEngineKind {
     let text = version_output.to_ascii_lowercase();
     if text.contains("podman") {
         ContainerEngineKind::Podman
@@ -232,7 +232,7 @@ pub(super) fn docker_frontend_kind(version_output: &str) -> ContainerEngineKind 
 }
 
 /// Shell-safe single-quote escaping.
-pub(super) fn shell_quote(s: &str) -> String {
+pub(crate) fn shell_quote(s: &str) -> String {
     if s.is_empty() {
         "''".into()
     } else {

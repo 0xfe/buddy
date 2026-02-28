@@ -9,9 +9,8 @@
 mod backend;
 mod contracts;
 mod file_io;
-mod process;
-mod tmux;
-mod types;
+pub(crate) mod process;
+pub(crate) mod types;
 
 use crate::error::ToolError;
 use backend::local::ensure_not_in_managed_local_tmux_pane;
@@ -26,8 +25,8 @@ use process::{
 #[cfg(test)]
 use std::path::PathBuf;
 use std::sync::Arc;
-use tmux::pane::{ensure_container_tmux_pane, ensure_local_tmux_pane, ensure_tmux_pane};
-use tmux::prompt::{
+use crate::tmux::pane::{ensure_container_tmux_pane, ensure_local_tmux_pane, ensure_tmux_pane};
+use crate::tmux::prompt::{
     ensure_container_tmux_prompt_setup, ensure_local_tmux_prompt_setup, ensure_tmux_prompt_setup,
 };
 use tokio::sync::Mutex;

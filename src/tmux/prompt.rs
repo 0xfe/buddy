@@ -9,7 +9,7 @@ use super::capture::{
 use super::send_keys::{send_container_tmux_line, send_local_tmux_line, send_tmux_line};
 
 /// Prompt setup script injected into managed tmux panes.
-pub(in crate::tools::execution) fn tmux_prompt_setup_script() -> &'static str {
+pub(crate) fn tmux_prompt_setup_script() -> &'static str {
     "if [ \"${BUDDY_PROMPT_LAYOUT:-}\" != \"v3\" ]; then \
 BUDDY_PROMPT_LAYOUT=v3; \
 BUDDY_CMD_SEQ=${BUDDY_CMD_SEQ:-0}; \
@@ -39,7 +39,7 @@ fi"
 }
 
 /// Ensure prompt bootstrap is installed in ssh tmux pane.
-pub(in crate::tools::execution) async fn ensure_tmux_prompt_setup(
+pub(crate) async fn ensure_tmux_prompt_setup(
     target: &str,
     control_path: &std::path::Path,
     pane_id: &str,
@@ -53,7 +53,7 @@ pub(in crate::tools::execution) async fn ensure_tmux_prompt_setup(
 }
 
 /// Ensure prompt bootstrap is installed in local tmux pane.
-pub(in crate::tools::execution) async fn ensure_local_tmux_prompt_setup(
+pub(crate) async fn ensure_local_tmux_prompt_setup(
     pane_id: &str,
 ) -> Result<(), ToolError> {
     let configure_prompt = tmux_prompt_setup_script();
@@ -64,7 +64,7 @@ pub(in crate::tools::execution) async fn ensure_local_tmux_prompt_setup(
 }
 
 /// Ensure prompt bootstrap is installed in container tmux pane.
-pub(in crate::tools::execution) async fn ensure_container_tmux_prompt_setup(
+pub(crate) async fn ensure_container_tmux_prompt_setup(
     ctx: &ContainerTmuxContext,
     pane_id: &str,
 ) -> Result<(), ToolError> {
