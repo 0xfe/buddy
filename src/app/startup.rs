@@ -99,3 +99,31 @@ pub(crate) fn render_session_startup_line(
     }
     eprintln!();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use buddy::tools::execution::{TmuxAttachInfo, TmuxAttachTarget};
+
+    #[test]
+    fn session_startup_message_is_clear() {
+        assert_eq!(
+            session_startup_message(SessionStartupState::ResumedExisting, "abcd-1234", 4),
+            "using existing session \"abcd-1234\" (4% context used)"
+        );
+        assert_eq!(
+            session_startup_message(SessionStartupState::StartedNew, "abcd-1234", 0),
+            "using new session \"abcd-1234\" (0% context used)"
+        );
+    }
+
+    #[test]
+    fn execution_tmux_attach_command_formats_local_target() {
+        let cmd = execution_tmux_attach_command(&TmuxAttachInfo {
+            session: "buddy-ef1d".to_string(),
+            window: "shared",
+            target: TmuxAttachTarget::Local,
+        });
+        assert_eq!(cmd, "tmux attach -t buddy-ef1d");
+    }
+}

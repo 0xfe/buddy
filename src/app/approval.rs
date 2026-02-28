@@ -124,3 +124,41 @@ pub(crate) async fn deny_pending_approval(
     mark_task_running(tasks, approval.task_id);
     let _ = send_approval_decision(runtime, &approval, ApprovalDecision::Deny).await;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use buddy::tools::execution::{TmuxAttachInfo, TmuxAttachTarget};
+
+    #[test]
+    fn approval_prompt_actor_prefers_ssh_then_container_then_local() {
+        assert_eq!(
+            approval_prompt_actor(Some("dev@host"), Some("box"), None),
+            "ssh:dev@host"
+        );
+        assert_eq!(
+            approval_prompt_actor(None, Some("box"), None),
+            "container:box"
+        );
+        assert_eq!(approval_prompt_actor(None, None, None), "local");
+    }
+
+    #[test]
+    fn approval_prompt_actor_includes_tmux_session_when_available() {
+        let info = TmuxAttachInfo {
+            session: "buddy-a1b2".to_string(),
+            window: "shared",
+            target: TmuxAttachTarget::Local,
+        };
+        assert_eq!(
+            approval_prompt_actor(None, None, Some(&info)),
+            "local (tmux:buddy-a1b2)"
+        );
+    }
+
+    #[test]
+    fn approval_command_block_formats_multiline_commands() {
+        let block = format_approval_command_block("echo 1\necho 2");
+        assert_eq!(block, "$ echo 1\n  echo 2");
+    }
+}

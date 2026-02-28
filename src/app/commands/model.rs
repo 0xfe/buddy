@@ -185,3 +185,56 @@ pub(crate) fn normalize_model_selector(selector: &str) -> &str {
     }
     trimmed
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_model_profile_selector_accepts_index_and_name() {
+        let mut cfg = Config::default();
+        cfg.models.insert(
+            "kimi".to_string(),
+            ModelConfig {
+                api_base_url: "https://api.moonshot.ai/v1".to_string(),
+                model: Some("moonshot-v1".to_string()),
+                ..ModelConfig::default()
+            },
+        );
+        let names = configured_model_profile_names(&cfg);
+
+        let by_name = resolve_model_profile_selector(&cfg, &names, "kimi").unwrap();
+        assert_eq!(by_name, "kimi");
+
+        let by_index = resolve_model_profile_selector(&cfg, &names, "2").unwrap();
+        assert_eq!(by_index, names[1]);
+    }
+
+    #[test]
+    fn resolve_model_profile_selector_accepts_slash_prefixed_input() {
+        let mut cfg = Config::default();
+        cfg.models.insert(
+            "kimi".to_string(),
+            ModelConfig {
+                api_base_url: "https://api.moonshot.ai/v1".to_string(),
+                model: Some("moonshot-v1".to_string()),
+                ..ModelConfig::default()
+            },
+        );
+        let names = configured_model_profile_names(&cfg);
+
+        let by_prefixed_name = resolve_model_profile_selector(&cfg, &names, "/model kimi").unwrap();
+        assert_eq!(by_prefixed_name, "kimi");
+
+        let by_prefixed_index = resolve_model_profile_selector(&cfg, &names, "/model 2").unwrap();
+        assert_eq!(by_prefixed_index, names[1]);
+    }
+
+    #[test]
+    fn resolve_model_profile_selector_rejects_unknown() {
+        let cfg = Config::default();
+        let names = configured_model_profile_names(&cfg);
+        let err = resolve_model_profile_selector(&cfg, &names, "missing").unwrap_err();
+        assert!(err.contains("Unknown model profile"));
+    }
+}

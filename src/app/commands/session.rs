@@ -206,3 +206,18 @@ pub(crate) fn initialize_active_session(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resume_request_validation_rejects_ambiguous_forms() {
+        let err = resume_request_from_command(Some(&cli::Command::Resume {
+            session_id: Some("abc".to_string()),
+            last: true,
+        }))
+        .expect_err("must reject");
+        assert!(err.contains("either"));
+    }
+}

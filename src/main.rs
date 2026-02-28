@@ -5,8 +5,6 @@ mod cli;
 mod cli_event_renderer;
 mod repl_support;
 
-#[cfg(test)]
-use app::approval::format_approval_command_block;
 use app::approval::{
     approval_prompt_actor, deny_pending_approval, render_shell_approval_request,
     send_approval_decision,
@@ -17,12 +15,13 @@ use app::commands::model::{
 use app::commands::session::{
     handle_session_command, initialize_active_session, resume_request_from_command,
 };
-#[cfg(test)]
-use app::startup::{execution_tmux_attach_command, session_startup_message};
+use app::repl_loop::{
+    dispatch_shared_slash_action, SharedSlashDispatchMode, SharedSlashDispatchOutcome,
+};
 use app::startup::{render_session_startup_line, render_startup_banner};
 use app::tasks::{
     background_liveness_line, collect_runtime_events, drain_completed_tasks, enforce_task_timeouts,
-    kill_background_task, process_runtime_events, render_background_tasks,
+    process_runtime_events,
 };
 use buddy::agent::Agent;
 use buddy::auth::{
@@ -49,10 +48,6 @@ use buddy::session::{default_uses_legacy_root, SessionStore};
 use buddy::tokens::TokenTracker;
 use buddy::tools::capture_pane::CapturePaneTool;
 use buddy::tools::execution::ExecutionContext;
-#[cfg(test)]
-use buddy::tools::execution::TmuxAttachInfo;
-#[cfg(test)]
-use buddy::tools::execution::TmuxAttachTarget;
 use buddy::tools::fetch::FetchTool;
 use buddy::tools::files::{ReadFileTool, WriteFileTool};
 use buddy::tools::search::WebSearchTool;
@@ -65,17 +60,14 @@ use clap::Parser;
 #[cfg(test)]
 use repl_support::BackgroundTaskState;
 #[cfg(test)]
-use repl_support::SessionStartupState;
 use repl_support::{
-    active_approval_decision, apply_task_timeout_command, approval_policy_label,
-    has_elapsed_timeouts, mark_task_running, parse_approval_decision, task_is_waiting_for_approval,
-    to_runtime_approval_policy, update_approval_policy, ApprovalPolicy, BackgroundTask,
-    CompletedBackgroundTask, PendingApproval, RuntimeContextState,
+    apply_task_timeout_command, mark_task_waiting_for_approval, parse_duration_arg,
+    parse_shell_tool_result, tool_result_display_text, update_approval_policy, ApprovalDecision,
 };
-#[cfg(test)]
 use repl_support::{
-    mark_task_waiting_for_approval, parse_duration_arg, parse_shell_tool_result,
-    tool_result_display_text, ApprovalDecision,
+    approval_policy_label, has_elapsed_timeouts, mark_task_running, parse_approval_decision,
+    task_is_waiting_for_approval, ApprovalPolicy, BackgroundTask, CompletedBackgroundTask,
+    PendingApproval, RuntimeContextState,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -552,7 +544,7 @@ async fn main() {
                 }
 
                 if let Some(action) = repl::parse_slash_command(approval_input) {
-                    match action {
+                    match &action {
                         repl::SlashCommandAction::Status => {
                             let guard = agent.try_lock().ok();
                             render_status(
@@ -564,6 +556,8 @@ async fn main() {
                                 approval_policy,
                                 capture_pane_enabled,
                             );
+                            pending_approval = Some(approval);
+                            continue;
                         }
                         repl::SlashCommandAction::Context => {
                             let guard = agent.try_lock().ok();
@@ -573,91 +567,36 @@ async fn main() {
                                 runtime_context,
                                 &background_tasks,
                             );
+                            pending_approval = Some(approval);
+                            continue;
                         }
-                        repl::SlashCommandAction::Ps => {
-                            render_background_tasks(&renderer, &background_tasks);
-                        }
-                        repl::SlashCommandAction::Kill(id_arg) => {
-                            let Some(id_arg) = id_arg.as_deref() else {
-                                renderer.warn("Usage: /kill <task-id>");
-                                pending_approval = Some(approval);
-                                continue;
-                            };
-                            let Ok(task_id) = id_arg.parse::<u64>() else {
-                                renderer.warn("Task id must be a number. Usage: /kill <task-id>");
-                                pending_approval = Some(approval);
-                                continue;
-                            };
-                            kill_background_task(
-                                &renderer,
-                                &runtime,
-                                &mut background_tasks,
-                                &mut pending_approval,
-                                task_id,
-                            )
-                            .await;
-                        }
-                        repl::SlashCommandAction::Timeout { duration, task_id } => {
-                            match apply_task_timeout_command(
-                                &mut background_tasks,
-                                duration.as_deref(),
-                                task_id.as_deref(),
-                            ) {
-                                Ok(msg) => {
-                                    renderer.section(&msg);
-                                    eprintln!();
-                                }
-                                Err(msg) => {
-                                    renderer.warn(&msg);
-                                    pending_approval = Some(approval);
-                                    continue;
-                                }
-                            }
-                        }
-                        repl::SlashCommandAction::Approve(mode_arg) => {
-                            let mode_arg = mode_arg.as_deref().unwrap_or("");
-                            match update_approval_policy(mode_arg, &mut approval_policy) {
-                                Ok(msg) => {
-                                    renderer.section(&msg);
-                                    eprintln!();
-                                    if let Err(err) = runtime
-                                        .send(RuntimeCommand::SetApprovalPolicy {
-                                            policy: to_runtime_approval_policy(approval_policy),
-                                        })
-                                        .await
-                                    {
-                                        renderer.warn(&format!(
-                                            "failed to update runtime approval policy: {err}"
-                                        ));
-                                    }
-                                    if let Some(decision) =
-                                        active_approval_decision(&mut approval_policy)
-                                    {
-                                        if let Err(err) =
-                                            send_approval_decision(&runtime, &approval, decision)
-                                                .await
-                                        {
-                                            renderer.warn(&err);
-                                        } else {
-                                            mark_task_running(
-                                                &mut background_tasks,
-                                                approval.task_id,
-                                            );
-                                        }
-                                        continue;
-                                    }
-                                }
-                                Err(msg) => {
-                                    renderer.warn(&msg);
-                                    pending_approval = Some(approval);
-                                    continue;
-                                }
-                            }
-                        }
-                        _ => renderer.warn(BACKGROUND_TASK_WARNING),
+                        _ => {}
                     }
-                    if task_is_waiting_for_approval(&background_tasks, approval.task_id) {
-                        pending_approval = Some(approval);
+                    let dispatch_outcome = dispatch_shared_slash_action(
+                        &renderer,
+                        &action,
+                        &runtime,
+                        &mut background_tasks,
+                        &mut pending_approval,
+                        Some(&approval),
+                        &mut approval_policy,
+                        SharedSlashDispatchMode::Approval {
+                            task_id: approval.task_id,
+                        },
+                    )
+                    .await;
+                    match dispatch_outcome {
+                        SharedSlashDispatchOutcome::Unhandled => {
+                            renderer.warn(BACKGROUND_TASK_WARNING);
+                            if task_is_waiting_for_approval(&background_tasks, approval.task_id) {
+                                pending_approval = Some(approval);
+                            }
+                        }
+                        SharedSlashDispatchOutcome::RequeueApproval => {
+                            pending_approval = Some(approval);
+                        }
+                        SharedSlashDispatchOutcome::Handled
+                        | SharedSlashDispatchOutcome::ApprovalResolved => {}
                     }
                     continue;
                 }
@@ -731,14 +670,7 @@ async fn main() {
             let has_background_tasks = !background_tasks.is_empty();
 
             if let Some(action) = repl::parse_slash_command(input) {
-                match action {
-                    repl::SlashCommandAction::Quit => {
-                        if has_background_tasks {
-                            renderer.warn(BACKGROUND_TASK_WARNING);
-                        } else {
-                            break;
-                        }
-                    }
+                match &action {
                     repl::SlashCommandAction::Status => {
                         let guard = agent.try_lock().ok();
                         render_status(
@@ -750,6 +682,7 @@ async fn main() {
                             approval_policy,
                             capture_pane_enabled,
                         );
+                        continue;
                     }
                     repl::SlashCommandAction::Context => {
                         let guard = agent.try_lock().ok();
@@ -759,59 +692,32 @@ async fn main() {
                             runtime_context,
                             &background_tasks,
                         );
+                        continue;
                     }
-                    repl::SlashCommandAction::Ps => {
-                        render_background_tasks(&renderer, &background_tasks);
-                    }
-                    repl::SlashCommandAction::Kill(id_arg) => {
-                        let Some(id_arg) = id_arg.as_deref() else {
-                            renderer.warn("Usage: /kill <task-id>");
-                            continue;
-                        };
-                        let Ok(task_id) = id_arg.parse::<u64>() else {
-                            renderer.warn("Task id must be a number. Usage: /kill <task-id>");
-                            continue;
-                        };
-                        kill_background_task(
-                            &renderer,
-                            &runtime,
-                            &mut background_tasks,
-                            &mut pending_approval,
-                            task_id,
-                        )
-                        .await;
-                    }
-                    repl::SlashCommandAction::Timeout { duration, task_id } => {
-                        match apply_task_timeout_command(
-                            &mut background_tasks,
-                            duration.as_deref(),
-                            task_id.as_deref(),
-                        ) {
-                            Ok(msg) => {
-                                renderer.section(&msg);
-                                eprintln!();
-                            }
-                            Err(msg) => renderer.warn(&msg),
-                        }
-                    }
-                    repl::SlashCommandAction::Approve(mode_arg) => {
-                        let mode_arg = mode_arg.as_deref().unwrap_or("");
-                        match update_approval_policy(mode_arg, &mut approval_policy) {
-                            Ok(msg) => {
-                                renderer.section(&msg);
-                                eprintln!();
-                                if let Err(err) = runtime
-                                    .send(RuntimeCommand::SetApprovalPolicy {
-                                        policy: to_runtime_approval_policy(approval_policy),
-                                    })
-                                    .await
-                                {
-                                    renderer.warn(&format!(
-                                        "failed to update runtime approval policy: {err}"
-                                    ));
-                                }
-                            }
-                            Err(msg) => renderer.warn(&msg),
+                    _ => {}
+                }
+
+                let dispatch_outcome = dispatch_shared_slash_action(
+                    &renderer,
+                    &action,
+                    &runtime,
+                    &mut background_tasks,
+                    &mut pending_approval,
+                    None,
+                    &mut approval_policy,
+                    SharedSlashDispatchMode::Repl,
+                )
+                .await;
+                if !matches!(dispatch_outcome, SharedSlashDispatchOutcome::Unhandled) {
+                    continue;
+                }
+
+                match action {
+                    repl::SlashCommandAction::Quit => {
+                        if has_background_tasks {
+                            renderer.warn(BACKGROUND_TASK_WARNING);
+                        } else {
+                            break;
                         }
                     }
                     repl::SlashCommandAction::Session { verb, name } => {
@@ -874,6 +780,11 @@ async fn main() {
                             renderer.warn(&format!("Unknown slash command: {cmd}. Try /help."));
                         }
                     }
+                    repl::SlashCommandAction::Ps
+                    | repl::SlashCommandAction::Kill(_)
+                    | repl::SlashCommandAction::Timeout { .. }
+                    | repl::SlashCommandAction::Approve(_) => {}
+                    repl::SlashCommandAction::Status | repl::SlashCommandAction::Context => {}
                 }
                 continue;
             }
@@ -1369,60 +1280,6 @@ mod tests {
     }
 
     #[test]
-    fn approval_prompt_actor_prefers_ssh_then_container_then_local() {
-        assert_eq!(
-            approval_prompt_actor(Some("dev@host"), Some("box"), None),
-            "ssh:dev@host"
-        );
-        assert_eq!(
-            approval_prompt_actor(None, Some("box"), None),
-            "container:box"
-        );
-        assert_eq!(approval_prompt_actor(None, None, None), "local");
-    }
-
-    #[test]
-    fn approval_prompt_actor_includes_tmux_session_when_available() {
-        let info = TmuxAttachInfo {
-            session: "buddy-a1b2".to_string(),
-            window: "shared",
-            target: TmuxAttachTarget::Local,
-        };
-        assert_eq!(
-            approval_prompt_actor(None, None, Some(&info)),
-            "local (tmux:buddy-a1b2)"
-        );
-    }
-
-    #[test]
-    fn approval_command_block_formats_multiline_commands() {
-        let block = format_approval_command_block("echo 1\necho 2");
-        assert_eq!(block, "$ echo 1\n  echo 2");
-    }
-
-    #[test]
-    fn session_startup_message_is_clear() {
-        assert_eq!(
-            session_startup_message(SessionStartupState::ResumedExisting, "abcd-1234", 4),
-            "using existing session \"abcd-1234\" (4% context used)"
-        );
-        assert_eq!(
-            session_startup_message(SessionStartupState::StartedNew, "abcd-1234", 0),
-            "using new session \"abcd-1234\" (0% context used)"
-        );
-    }
-
-    #[test]
-    fn resume_request_validation_rejects_ambiguous_forms() {
-        let err = resume_request_from_command(Some(&cli::Command::Resume {
-            session_id: Some("abc".to_string()),
-            last: true,
-        }))
-        .expect_err("must reject");
-        assert!(err.contains("either"));
-    }
-
-    #[test]
     fn context_used_percent_rounds_and_handles_zero_limit() {
         let mut cfg = Config::default();
         cfg.api.context_limit = Some(100);
@@ -1481,64 +1338,6 @@ mod tests {
         })
         .to_string();
         assert_eq!(tool_result_display_text(&result), "hello");
-    }
-
-    #[test]
-    fn execution_tmux_attach_command_formats_local_target() {
-        let cmd = execution_tmux_attach_command(&TmuxAttachInfo {
-            session: "buddy-ef1d".to_string(),
-            window: "shared",
-            target: TmuxAttachTarget::Local,
-        });
-        assert_eq!(cmd, "tmux attach -t buddy-ef1d");
-    }
-
-    #[test]
-    fn resolve_model_profile_selector_accepts_index_and_name() {
-        let mut cfg = Config::default();
-        cfg.models.insert(
-            "kimi".to_string(),
-            buddy::config::ModelConfig {
-                api_base_url: "https://api.moonshot.ai/v1".to_string(),
-                model: Some("moonshot-v1".to_string()),
-                ..buddy::config::ModelConfig::default()
-            },
-        );
-        let names = configured_model_profile_names(&cfg);
-
-        let by_name = resolve_model_profile_selector(&cfg, &names, "kimi").unwrap();
-        assert_eq!(by_name, "kimi");
-
-        let by_index = resolve_model_profile_selector(&cfg, &names, "2").unwrap();
-        assert_eq!(by_index, names[1]);
-    }
-
-    #[test]
-    fn resolve_model_profile_selector_accepts_slash_prefixed_input() {
-        let mut cfg = Config::default();
-        cfg.models.insert(
-            "kimi".to_string(),
-            buddy::config::ModelConfig {
-                api_base_url: "https://api.moonshot.ai/v1".to_string(),
-                model: Some("moonshot-v1".to_string()),
-                ..buddy::config::ModelConfig::default()
-            },
-        );
-        let names = configured_model_profile_names(&cfg);
-
-        let by_prefixed_name = resolve_model_profile_selector(&cfg, &names, "/model kimi").unwrap();
-        assert_eq!(by_prefixed_name, "kimi");
-
-        let by_prefixed_index = resolve_model_profile_selector(&cfg, &names, "/model 2").unwrap();
-        assert_eq!(by_prefixed_index, names[1]);
-    }
-
-    #[test]
-    fn resolve_model_profile_selector_rejects_unknown() {
-        let cfg = Config::default();
-        let names = configured_model_profile_names(&cfg);
-        let err = resolve_model_profile_selector(&cfg, &names, "missing").unwrap_err();
-        assert!(err.contains("Unknown model profile"));
     }
 
     #[test]
