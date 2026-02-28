@@ -31,12 +31,12 @@ The modularization split those files into cohesive submodules:
 - Place long-running task/approval orchestration in `src/app/{tasks,approval}.rs`.
 - Do not embed tool-implementation or provider-protocol logic in `app` modules.
 
-### 2) Runtime/event surface (`src/runtime/*`, `src/cli_event_renderer/*`, `src/repl_support/*`)
+### 2) Runtime/event surface (`src/runtime/*`, `src/ui/runtime/*`, `src/repl/*`)
 
 - Add new runtime semantics via `src/runtime/schema.rs` first.
 - Keep actor flow in `src/runtime/mod.rs`; helper logic belongs in focused submodules (`approvals`, `sessions`, `tasks`).
-- Convert runtime events to terminal output in `src/cli_event_renderer/*` only.
-- Keep task-state/policy parsing helpers in `src/repl_support/*` so they are reusable from REPL and renderer layers.
+- Convert runtime events to terminal output in `src/ui/runtime/*` only.
+- Keep task-state/policy parsing helpers in `src/repl/*` so they are reusable from REPL and renderer layers.
 
 ### 3) Agent and model transport (`src/agent/*`, `src/api/*`)
 
@@ -78,4 +78,4 @@ The modularization split those files into cohesive submodules:
 
 ## Known follow-up work
 
-- UI/REPL/tmux consolidation remains in the next phase (`M8`) to unify `render`/`tui`/`cli_event_renderer` and centralize shared tmux domain APIs.
+- Continue tightening the `ui::terminal` facade so more `tui/*` internals become implementation-only details.

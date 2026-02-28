@@ -4,13 +4,13 @@
 - Architecture index:
   - module map + extension points: `docs/architecture.md`
   - behavior/feature inventory: `DESIGN.md`
-- Current post-M6 module topology snapshot:
+- Current post-M8 module topology snapshot:
   - `src/main.rs`, `src/cli.rs`, `src/app/*` => CLI wiring + orchestration.
   - `src/runtime/{schema,mod,approvals,sessions,tasks}.rs` => runtime command/event actor.
-  - `src/cli_event_renderer/*` + `src/repl_support/*` + `src/tui/*` => runtime-to-terminal presentation.
+  - `src/ui/runtime/*` + `src/repl/*` + `src/ui/terminal.rs` + `src/tui/*` => runtime-to-terminal presentation.
   - `src/agent/*` => agent loop + history/normalization/prompt augmentation.
   - `src/api/*` + `src/auth/*` + `src/config/*` => model transport/auth/config resolution.
-  - `src/tools/*` + `src/tools/execution/*` => tool registry + local/container/ssh/tmux execution.
+  - `src/tools/*` + `src/tools/execution/*` + `src/tmux/*` => tool registry + local/container/ssh execution + shared tmux domain.
 - Current broad remediation roadmap for Claude review findings:
   - `docs/plans/2026-02-27-claude-feedback-remediation-plan.md`
   - Source review document: `docs/plans/claude-feedback-0.md`
@@ -84,9 +84,24 @@
   2. call API with full history + tool defs
   3. if assistant emits `tool_calls`, execute each via `ToolRegistry`, push tool result messages
   4. repeat until assistant returns final text
-- Status/chrome output -> stderr; assistant final answer -> stdout (`src/tui/renderer.rs`, re-exported via `src/render.rs`).
+- Status/chrome output -> stderr; assistant final answer -> stdout (`src/tui/renderer.rs`, surfaced via `src/ui/render.rs`).
 
 ## Important recent changes
+
+- Milestone 8 (UI/REPL/tmux consolidation):
+  - Introduced `src/ui/*` facade:
+    - `src/ui/render.rs` now owns `RenderSink` + renderer/progress contracts.
+    - `src/ui/terminal.rs` is the public terminal input/output facade over `tui/*`.
+    - `src/ui/runtime/*` now owns runtime event reducer + handler mapping logic.
+  - Introduced `src/repl/*` facade:
+    - Moved shared REPL/task/policy/tool-payload helpers out of binary-local modules.
+    - `main.rs`/`app/*` now consume `buddy::repl` interfaces directly.
+  - Introduced shared `src/tmux/*` domain module:
+    - Moved pane/prompt/capture/run/send-keys helpers from `src/tools/execution/tmux/*`.
+    - `tools/execution` backends now route tmux behavior through `crate::tmux::*`.
+  - Removed legacy migration shims:
+    - deleted `src/render.rs`, `src/cli_event_renderer/*`, and `src/repl_support/*`.
+    - `main.rs` no longer imports mixed helper modules directly; it depends on `ui`/`repl` facades via `app/*`.
 
 - Tool safety/timestamp + tmux startup context updates:
   - Added `[agent].name` (default `agent-mo`) in config/template; default managed tmux session now uses `buddy-<agent.name>`.

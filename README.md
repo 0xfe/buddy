@@ -221,8 +221,9 @@ cargo run --example alternate_frontend -- "list files"
   - Implement `Tool` in `src/tools/mod.rs` and register in `main.rs`.
   - Shared execution backends are in `src/tools/execution/*`.
 - Terminal/runtime rendering:
-  - `src/render.rs` exposes the `RenderSink` contract.
-  - `src/cli_event_renderer/*` converts runtime events into render actions.
+  - `src/ui/render.rs` exposes the `RenderSink` contract.
+  - `src/ui/runtime/*` converts runtime events into render actions.
+  - `src/repl/*` contains shared REPL task/policy/helper state.
 - Config/auth:
   - `src/config/*` handles layered config loading and profile resolution.
   - `src/auth/*` handles provider login flows and encrypted credential storage.

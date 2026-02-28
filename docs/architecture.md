@@ -11,7 +11,7 @@ This document describes the current module boundaries after the 2026-02-28 modul
 2. Runtime command/event pipeline:
    - `src/runtime/schema.rs` (contracts)
    - `src/runtime/mod.rs` + `src/runtime/{approvals,sessions,tasks}.rs` (actor/execution)
-   - `src/cli_event_renderer/*` (runtime event to terminal render mapping)
+   - `src/ui/runtime/*` (runtime event to terminal render mapping)
 3. Core agent loop:
    - `src/agent/mod.rs`
    - `src/agent/{events,history,normalization,prompt_aug}.rs`
@@ -29,11 +29,13 @@ This document describes the current module boundaries after the 2026-02-28 modul
    - `src/error.rs`
 6. Tooling and execution:
    - `src/tools/mod.rs` + built-in tool modules
-   - `src/tools/execution/*` (local/container/ssh/tmux backends)
+   - `src/tools/execution/*` (local/container/ssh execution backends)
+   - `src/tmux/*` (shared tmux session/pane/capture/send/run domain)
 7. Terminal UI:
-   - `src/tui/*`
-   - `src/render.rs` (compat facade for renderer contracts)
-   - `src/repl_support/*` (shared REPL/runtime task-state helpers)
+   - `src/ui/{render,terminal}.rs`
+   - `src/ui/runtime/*`
+   - `src/tui/*` (terminal implementation details)
+   - `src/repl/*` (shared REPL/runtime task-state helpers)
 
 ## Source tree (high-level)
 
@@ -47,12 +49,13 @@ src/
   auth/
   config/
   runtime/
-  cli_event_renderer/
-  repl_support/
+  ui/
+    runtime/
+  repl/
   tools/
     execution/
+  tmux/
   tui/
-  render.rs
   session.rs
   tokens.rs
   types.rs
@@ -81,9 +84,9 @@ src/
 ### Add or change REPL/runtime UX behavior
 
 1. Prefer new runtime events in `src/runtime/schema.rs` over direct renderer calls from orchestration.
-2. Handle event-to-UI mapping in `src/cli_event_renderer/handlers/*`.
-3. Keep text styling/layout details in `src/tui/*`.
-4. Keep prompt/task helper state in `src/repl_support/*`.
+2. Handle event-to-UI mapping in `src/ui/runtime/handlers/*`.
+3. Keep text styling/layout details in `src/ui/terminal.rs` + `src/tui/*`.
+4. Keep prompt/task helper state in `src/repl/*`.
 
 ### Add config fields
 

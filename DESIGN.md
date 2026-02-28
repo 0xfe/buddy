@@ -9,14 +9,16 @@ The agent is a single Rust crate that produces both a library (`lib.rs`) and a b
 ```
 main.rs + cli.rs + app/                    CLI/subcommand wiring + REPL orchestration
       |            |
-      |            +--> runtime/ + cli_event_renderer/ + repl_support/
+      |            +--> runtime/ + ui/runtime/ + repl/
       |                      (runtime commands/events + terminal event mapping)
       |
       +--> agent/ + api/ + auth/           Agent loop + model transport + login/auth
       |
-      +--> tools/ + tools/execution/       Tool registry + execution backends
+      +--> tools/ + tools/execution/ + tmux/
+      |                      Tool registry + execution backends + shared tmux domain
       |
-      +--> tui/ + render.rs                Terminal renderer + compat shim
+      +--> ui/render.rs + ui/terminal.rs + tui/
+      |                      Rendering contracts + terminal facade + implementation
       |
       +--> config/ + session.rs + tokens.rs + types.rs + error.rs
              (config/session/token/state primitives)
@@ -44,7 +46,7 @@ Every module has a single responsibility. Dependencies flow downward — `agent/
   - Both one-shot `exec` and interactive REPL prompt execution run through runtime commands/events.
   - Explicit approval flow is runtime-commanded (`RuntimeCommand::Approve`) and surfaced as `TaskEvent::WaitingApproval`.
   - Tool runtime events now include incremental tool-stream variants (`CallStarted`, `StdoutChunk`, `StderrChunk`, `Info`, `Completed`) in addition to final `Result`.
-  - CLI runtime-event rendering is isolated in `src/cli_event_renderer/mod.rs` (+ handler modules) so terminal rendering is no longer coupled to runtime orchestration code paths.
+  - CLI runtime-event rendering is isolated in `src/ui/runtime/mod.rs` (+ handler modules) so terminal rendering is no longer coupled to runtime orchestration code paths.
   - `examples/alternate_frontend.rs` demonstrates driving Buddy entirely through runtime commands/events from a non-default frontend.
 - CLI subcommands:
   - `buddy` (REPL)
@@ -291,7 +293,7 @@ Two functions:
 
 The `is_approaching_limit()` method warns when estimated usage exceeds 80% of the context window. This is a heuristic safety net, not a hard limit.
 
-### `tui/renderer.rs` (+ `render.rs` compatibility shim) — Terminal output
+### `ui/render.rs` + `ui/terminal.rs` + `tui/renderer.rs` — Terminal output
 
 All rendering is handled by the `Renderer` struct, which takes a `color: bool` flag. When color is disabled, output is plain text.
 

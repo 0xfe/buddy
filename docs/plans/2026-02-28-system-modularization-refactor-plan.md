@@ -2,13 +2,11 @@
 
 ## Status
 
-- Program status: Active
-- Current milestone: `M8` (UI/REPL/tmux consolidation)
-- Current task: `M8.1` (introduce `src/ui` facade and migrate renderer contracts)
+- Program status: Completed
+- Current milestone: `M8` (UI/REPL/tmux consolidation) ✅
+- Current task: `None`
 - Next steps:
-  1. Start `M8.1`: introduce `src/ui` facade and migrate renderer contracts behind it.
-  2. Execute `M8.2`/`M8.3`: move runtime rendering + REPL helper boundaries under the new facades.
-  3. Execute `M8.4`/`M8.5`: consolidate tmux behavior behind one domain API and remove transition shims.
+  1. Keep docs and test coverage aligned with the new `ui`/`repl`/`tmux` boundaries as follow-up changes land.
 
 ## Maintainer Instructions
 
@@ -54,10 +52,10 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 
 ### REPL/runtime helpers
 
-1. `src/repl_support/tool_payload.rs`
-2. `src/repl_support/task_state.rs`
-3. `src/repl_support/policy.rs`
-4. `src/cli_event_renderer/handlers/*.rs` with one public reducer entrypoint.
+1. `src/repl/tool_payload.rs`
+2. `src/repl/task_state.rs`
+3. `src/repl/policy.rs`
+4. `src/ui/runtime/handlers/*.rs` with one public reducer entrypoint.
 
 ### UI and REPL boundaries (new consolidation target)
 
@@ -75,7 +73,7 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 3. `src/tools/execution/contracts.rs`
 4. `src/tools/execution/process.rs`
 5. `src/tools/execution/backend/{local,container,ssh,file_io}.rs`
-6. `src/tools/execution/tmux/{pane,prompt,capture,send_keys,run}.rs`
+6. `src/tmux/{pane,prompt,capture,send_keys,run}.rs`
 
 ### Shared tmux infrastructure (new consolidation target)
 
@@ -188,11 +186,11 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 
 ## M8: UI/REPL/Tmux Consolidation
 
-- [ ] M8.1 Introduce `src/ui` facade and migrate `RenderSink` + renderer contracts from `src/render.rs`; keep `render.rs` as compat shim during transition. — `<commit-id>`
-- [ ] M8.2 Move runtime-event rendering reducer/handlers (`cli_event_renderer`) under `src/ui/runtime/*` and isolate pure reducer tests from terminal styling tests. — `<commit-id>`
-- [ ] M8.3 Move REPL state/policy/task helpers (`repl_support`) into `src/repl/*` with explicit interfaces consumed by `app/repl_loop`. — `<commit-id>`
-- [ ] M8.4 Extract shared tmux domain module (`src/tmux/*`) and route startup/runtime/tool tmux operations through one API surface. — `<commit-id>`
-- [ ] M8.5 Remove migration shims (`src/render.rs` and legacy module aliases) once all internal call sites are on the new boundaries. — `<commit-id>`
+- [x] M8.1 Introduce `src/ui` facade and migrate `RenderSink` + renderer contracts from `src/render.rs`; keep `render.rs` as compat shim during transition. — `b7fad90`
+- [x] M8.2 Move runtime-event rendering reducer/handlers (`cli_event_renderer`) under `src/ui/runtime/*` and isolate pure reducer tests from terminal styling tests. — `a979d39`
+- [x] M8.3 Move REPL state/policy/task helpers (`repl_support`) into `src/repl/*` with explicit interfaces consumed by `app/repl_loop`. — `a979d39`
+- [x] M8.4 Extract shared tmux domain module (`src/tmux/*`) and route startup/runtime/tool tmux operations through one API surface. — `67f1998`
+- [x] M8.5 Remove migration shims (`src/render.rs` and legacy module aliases) once all internal call sites are on the new boundaries. — `67f1998`
 - Acceptance gate:
   1. `main.rs` no longer imports mixed rendering/state helper modules directly (`render` + `tui` + `cli_event_renderer` + `repl_support`); it depends on `ui` and `repl` facades only.
   2. Tmux behavior (session reuse/create, shared pane targeting, attach metadata, capture/send-keys semantics) is defined once and reused uniformly.
@@ -244,3 +242,6 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 - 2026-02-28: Completed `M7.1`: updated `DESIGN.md` architecture graph, runtime/features path references, API module references, and data-flow examples to align with post-M6 module layout. Validation: `cargo test -q` (green). Commit: `11cd2d9`.
 - 2026-02-28: Completed `M7.2`: synced docs to the new module layout by adding `docs/architecture.md`, updating `README.md` with documentation/extension-point pointers, and refreshing `ai-state.md` path references/topology snapshot. Validation: `cargo test -q` (green). Commit: `26b94cb`.
 - 2026-02-28: Completed `M7.3`: added `docs/refactor-playbook.md` documenting module-boundary rules and behavior-preserving refactor workflow; linked it from README. Validation: `cargo test -q` (green). Commit: `a2d0f53`.
+- 2026-02-28: Completed `M8.1`: introduced `src/ui/*` facade (`ui/mod.rs`, `ui/render.rs`, `ui/terminal.rs`) and migrated render contracts from `src/render.rs` into `ui::render` with compatibility path retained during transition. Validation: `cargo test -q` (green). Commit: `b7fad90`.
+- 2026-02-28: Completed `M8.2` + `M8.3`: moved runtime event reducer/handlers to `src/ui/runtime/*` and migrated REPL helper/state modules to `src/repl/*`; rewired `main.rs`/`app/*` to consume `buddy::ui` + `buddy::repl` boundaries. Validation: `cargo test -q` (green). Commit: `a979d39`.
+- 2026-02-28: Completed `M8.4` + `M8.5`: extracted shared tmux domain to `src/tmux/*`, routed execution backends through the new tmux module, and removed transition shims/legacy modules (`src/render.rs`, `src/cli_event_renderer/*`, `src/repl_support/*`, `src/tools/execution/tmux/*`). Validation: `cargo test -q` (green). Commit: `67f1998`.
