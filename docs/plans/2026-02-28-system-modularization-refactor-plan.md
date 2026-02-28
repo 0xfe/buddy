@@ -3,12 +3,12 @@
 ## Status
 
 - Program status: Active
-- Current milestone: `M6` (split API transport and protocol adapters)
-- Current task: `M6.1` (extract HTTP transport/retry/auth resolution from `api/client.rs`)
+- Current milestone: `M7` (documentation and architectural clean-up)
+- Current task: `M7.1` (update `DESIGN.md` module map + features for final structure)
 - Next steps:
-  1. Land `M6.1` with behavior-preserving extraction of transport/retry/auth concerns.
-  2. Continue `M6.2` + `M6.3` with Responses parser splits and protocol fixture coverage.
-  3. Keep `cargo test` green after each M6 task slice.
+  1. Land `M7.1` with updated architecture/module map and feature inventory in `DESIGN.md`.
+  2. Complete `M7.2` docs sync (`README.md`, `docs/architecture.md`, `ai-state.md`).
+  3. Add `docs/refactor-playbook.md` in `M7.3` and close the documentation gate.
 
 ## Maintainer Instructions
 
@@ -169,9 +169,9 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 
 ## M6: Split API transport and protocol adapters
 
-- [ ] M6.1 Extract HTTP transport + retry + auth resolution from `api/client.rs`. — `<commit-id>`
-- [ ] M6.2 Split Responses API request builder and parsers (`sse_parser`, `response_parser`). — `<commit-id>`
-- [ ] M6.3 Add protocol fixture tests ensuring completions/responses normalize to equivalent internal structures where expected. — `<commit-id>`
+- [x] M6.1 Extract HTTP transport + retry + auth resolution from `api/client.rs`. — `f0fe7e2`
+- [x] M6.2 Split Responses API request builder and parsers (`sse_parser`, `response_parser`). — `460fdb1`
+- [x] M6.3 Add protocol fixture tests ensuring completions/responses normalize to equivalent internal structures where expected. — `047fe2e`
 - Acceptance gate:
   1. Provider compatibility and retry behavior preserved.
   2. SSE parsing behavior unchanged or improved with explicit regression fixtures.
@@ -238,3 +238,6 @@ Refactor the entire codebase (not just `main.rs`) into cohesive, composable, and
 - 2026-02-28: Completed `M5.2`: extracted history/compaction logic into `src/agent/history.rs` and reasoning/message sanitization into `src/agent/normalization.rs`, keeping `src/agent/mod.rs` as orchestration facade with re-exports/imported helpers. Preserved existing behavior and test expectations by maintaining internal visibility for moved test seams (`reasoning_value_to_text`, compact summary prefix). Validation: `cargo fmt`, `cargo test -q` (green). Commit: `fb871e9`.
 - 2026-02-28: Completed `M5.3`: split runtime schema into `src/runtime/schema.rs` and isolated actor helper concerns into `src/runtime/{approvals,sessions,tasks}.rs` with `src/runtime/mod.rs` as orchestration facade + `pub use schema::*` compatibility surface. Preserved runtime behavior, event mapping, and actor command semantics while keeping existing runtime tests green. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `e89cb88`.
 - 2026-02-28: Completed `M5.4`: removed duplicate `TaskEvent::Started` emission on approval resolution and added runtime-side dedupe for `TaskEvent::Failed` when both agent-stream and task-done error paths report failures. Added explicit regression tests for single-started and single-failed event guarantees. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `ec9271e`.
+- 2026-02-28: Completed `M6.1`: extracted API client concerns into `src/api/client/{auth,retry,transport}.rs` and kept `src/api/client/mod.rs` as orchestration facade (`ApiClient`) with unchanged runtime behavior and retry/login semantics. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `f0fe7e2`.
+- 2026-02-28: Completed `M6.2`: split `/responses` protocol internals into `src/api/responses/{request_builder,response_parser,sse_parser}.rs` with `src/api/responses/mod.rs` request facade. Preserved payload shape, streaming parser behavior, and reasoning extraction semantics. Validation: `cargo fmt`, `cargo test -q` (green). Commit: `460fdb1`.
+- 2026-02-28: Completed `M6.3`: added protocol fixture coverage in `src/api/mod.rs` asserting semantic equivalence between completions and responses normalized structures for text and tool-call flows. Validation: `cargo test -q` (green). Commit: `047fe2e`.
