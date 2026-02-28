@@ -7,11 +7,21 @@
 //! - a remote host over SSH with a persistent master connection
 
 mod contracts;
+mod file_io;
+mod process;
 mod types;
 
 use crate::error::ToolError;
 use async_trait::async_trait;
 use contracts::{CommandBackend, ExecutionBackendOps};
+use file_io::{read_file_via_command_backend, write_file_via_command_backend};
+use process::{
+    detect_container_engine, ensure_success, format_duration, run_container_sh_process,
+    run_container_tmux_sh_process, run_process, run_sh_process, run_ssh_raw_process,
+    run_with_wait, shell_quote,
+};
+#[cfg(test)]
+use process::docker_frontend_kind;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -20,15 +30,15 @@ use std::sync::Arc;
 #[cfg(test)]
 use std::sync::{Mutex as StdMutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::io::AsyncWriteExt;
-use tokio::process::Command;
 use tokio::sync::Mutex;
-use tokio::time::{sleep, timeout, Duration, Instant};
+use tokio::time::{sleep, Duration, Instant};
 use types::{
-    ContainerContext, ContainerEngine, ContainerEngineKind, ContainerTmuxContext, EnsuredTmuxPane,
-    ExecOutput, LocalBackend, LocalTmuxContext, SshContext, LEGACY_TMUX_WINDOW_NAME,
-    TMUX_PANE_TITLE, TMUX_WINDOW_NAME,
+    ContainerContext, ContainerEngineKind, ContainerTmuxContext, EnsuredTmuxPane, ExecOutput,
+    LocalBackend, LocalTmuxContext, SshContext, LEGACY_TMUX_WINDOW_NAME, TMUX_PANE_TITLE,
+    TMUX_WINDOW_NAME,
 };
+#[cfg(test)]
+use types::ContainerEngine;
 
 pub use types::{CapturePaneOptions, SendKeysOptions, ShellWait, TmuxAttachInfo, TmuxAttachTarget};
 
@@ -859,27 +869,6 @@ impl ExecutionBackendOps for SshContext {
     }
 }
 
-async fn read_file_via_command_backend(
-    backend: &(impl CommandBackend + ?Sized),
-    path: &str,
-) -> Result<String, ToolError> {
-    let script = format!("cat -- {}", shell_quote(path));
-    let output = backend.run_command(&script, None, ShellWait::Wait).await?;
-    ensure_success(output, path.to_string()).map(|out| out.stdout)
-}
-
-async fn write_file_via_command_backend(
-    backend: &(impl CommandBackend + ?Sized),
-    path: &str,
-    content: &str,
-) -> Result<(), ToolError> {
-    let script = format!("cat > {}", shell_quote(path));
-    let output = backend
-        .run_command(&script, Some(content.as_bytes()), ShellWait::Wait)
-        .await?;
-    ensure_success(output, path.to_string()).map(|_| ())
-}
-
 impl Drop for SshContext {
     fn drop(&mut self) {
         // Best-effort connection cleanup; failures are non-fatal.
@@ -1160,76 +1149,6 @@ fn should_fallback_from_alternate_screen(options: &CapturePaneOptions, err: &Too
             .to_string()
             .to_ascii_lowercase()
             .contains("no alternate screen")
-}
-
-async fn run_container_sh_process(
-    ctx: &ContainerContext,
-    command: &str,
-    stdin: Option<&[u8]>,
-) -> Result<ExecOutput, ToolError> {
-    run_container_sh_process_with(&ctx.engine, &ctx.container, command, stdin).await
-}
-
-async fn run_container_tmux_sh_process(
-    ctx: &ContainerTmuxContext,
-    command: &str,
-    stdin: Option<&[u8]>,
-) -> Result<ExecOutput, ToolError> {
-    run_container_sh_process_with(&ctx.engine, &ctx.container, command, stdin).await
-}
-
-async fn run_container_sh_process_with(
-    engine: &ContainerEngine,
-    container: &str,
-    command: &str,
-    stdin: Option<&[u8]>,
-) -> Result<ExecOutput, ToolError> {
-    let mut args = vec!["exec".to_string()];
-    if stdin.is_some() {
-        // `podman` and `docker` both support stdin-interactive exec, but
-        // the long flag differs in older environments. We switch explicitly
-        // based on detected frontend kind.
-        let interactive_flag = match engine.kind {
-            ContainerEngineKind::Docker => "-i",
-            ContainerEngineKind::Podman => "--interactive",
-        };
-        args.push(interactive_flag.to_string());
-    }
-    args.push(container.to_string());
-    args.push("sh".into());
-    args.push("-lc".into());
-    args.push(command.into());
-    run_process(engine.command, &args, stdin).await
-}
-
-async fn run_sh_process(
-    shell: &str,
-    command: &str,
-    stdin: Option<&[u8]>,
-) -> Result<ExecOutput, ToolError> {
-    run_process(shell, &["-c".into(), command.into()], stdin).await
-}
-
-async fn run_ssh_raw_process(
-    target: &str,
-    control_path: &Path,
-    remote_command: &str,
-    stdin: Option<&[u8]>,
-) -> Result<ExecOutput, ToolError> {
-    run_process(
-        "ssh",
-        &[
-            "-T".into(),
-            "-S".into(),
-            control_path.display().to_string(),
-            "-o".into(),
-            "ControlMaster=no".into(),
-            target.into(),
-            remote_command.into(),
-        ],
-        stdin,
-    )
-    .await
 }
 
 async fn run_ssh_tmux_process(
@@ -2021,154 +1940,6 @@ fn unique_token(target: &str, remote_command: &str) -> String {
         .as_nanos()
         .hash(&mut hasher);
     format!("{:016x}", hasher.finish())
-}
-
-async fn run_with_wait(
-    fut: impl std::future::Future<Output = Result<ExecOutput, ToolError>>,
-    wait: ShellWait,
-    timeout_context: &str,
-) -> Result<ExecOutput, ToolError> {
-    match wait {
-        ShellWait::Wait => fut.await,
-        ShellWait::WaitWithTimeout(limit) => match timeout(limit, fut).await {
-            Ok(out) => out,
-            Err(_) => Err(ToolError::ExecutionFailed(format!(
-                "{timeout_context} after {}",
-                format_duration(limit)
-            ))),
-        },
-        ShellWait::NoWait => Err(ToolError::ExecutionFailed(
-            "run_shell wait=false requires a tmux-backed execution target".into(),
-        )),
-    }
-}
-
-fn format_duration(duration: Duration) -> String {
-    let secs = duration.as_secs();
-    let millis = duration.subsec_millis();
-    if secs == 0 {
-        return format!("{millis}ms");
-    }
-    if millis == 0 {
-        if secs % 3600 == 0 {
-            return format!("{}h", secs / 3600);
-        }
-        if secs % 60 == 0 {
-            return format!("{}m", secs / 60);
-        }
-        return format!("{secs}s");
-    }
-    format!("{secs}.{millis:03}s")
-}
-
-async fn run_process(
-    program: &str,
-    args: &[String],
-    stdin: Option<&[u8]>,
-) -> Result<ExecOutput, ToolError> {
-    let mut cmd = Command::new(program);
-    // Background-task cancellation aborts in-flight futures; ensure child
-    // processes are terminated when their owning future is dropped.
-    cmd.kill_on_drop(true);
-    cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
-    if stdin.is_some() {
-        cmd.stdin(Stdio::piped());
-    }
-
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| ToolError::ExecutionFailed(format!("{program}: {e}")))?;
-
-    if let Some(input) = stdin {
-        if let Some(mut child_stdin) = child.stdin.take() {
-            child_stdin
-                .write_all(input)
-                .await
-                .map_err(|e| ToolError::ExecutionFailed(format!("{program}: {e}")))?;
-        }
-    }
-
-    let output = child
-        .wait_with_output()
-        .await
-        .map_err(|e| ToolError::ExecutionFailed(format!("{program}: {e}")))?;
-
-    Ok(ExecOutput {
-        exit_code: output.status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-    })
-}
-
-fn ensure_success(output: ExecOutput, context: String) -> Result<ExecOutput, ToolError> {
-    if output.exit_code == 0 {
-        return Ok(output);
-    }
-
-    let mut details = if output.stderr.trim().is_empty() {
-        output.stdout.trim().to_string()
-    } else {
-        output.stderr.trim().to_string()
-    };
-    if details.is_empty() {
-        details = format!("command exited with {}", output.exit_code);
-    }
-
-    Err(ToolError::ExecutionFailed(format!("{context}: {details}")))
-}
-
-async fn detect_container_engine() -> Result<ContainerEngine, ToolError> {
-    if let Some(version) = probe_version("docker").await? {
-        let kind = docker_frontend_kind(&version);
-        return Ok(ContainerEngine {
-            command: "docker",
-            kind,
-        });
-    }
-
-    if probe_version("podman").await?.is_some() {
-        return Ok(ContainerEngine {
-            command: "podman",
-            kind: ContainerEngineKind::Podman,
-        });
-    }
-
-    Err(ToolError::ExecutionFailed(
-        "neither `docker` nor `podman` was found in PATH".into(),
-    ))
-}
-
-async fn probe_version(command: &str) -> Result<Option<String>, ToolError> {
-    let output = match Command::new(command).arg("--version").output().await {
-        Ok(out) => out,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => {
-            return Err(ToolError::ExecutionFailed(format!(
-                "failed to probe {command}: {e}"
-            )))
-        }
-    };
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    Ok(Some(format!("{stdout}\n{stderr}")))
-}
-
-fn docker_frontend_kind(version_output: &str) -> ContainerEngineKind {
-    let text = version_output.to_ascii_lowercase();
-    if text.contains("podman") {
-        ContainerEngineKind::Podman
-    } else {
-        ContainerEngineKind::Docker
-    }
-}
-
-fn shell_quote(s: &str) -> String {
-    if s.is_empty() {
-        "''".into()
-    } else {
-        format!("'{}'", s.replace('\'', "'\\''"))
-    }
 }
 
 #[cfg(test)]
