@@ -1,15 +1,21 @@
-use super::completions;
+//! API client orchestration for OpenAI-compatible chat transports.
+//!
+//! The client facade here intentionally remains small:
+//! - auth token resolution is delegated to `auth`.
+//! - dispatch wiring is delegated to `transport`.
+//! - retry policy logic is delegated to `retry`.
+
+mod auth;
+mod retry;
+mod transport;
+
 use super::policy;
-use super::responses::{self, ResponsesRequestOptions};
 use super::ModelClient;
-use crate::auth::{
-    load_provider_tokens, login_provider_key_for_base_url, refresh_openai_tokens_with_client,
-    save_provider_tokens,
-};
-use crate::config::{ApiConfig, ApiProtocol, AuthMode};
+use crate::config::{ApiConfig, ApiProtocol};
 use crate::error::ApiError;
 use crate::types::{ChatRequest, ChatResponse};
 use async_trait::async_trait;
+use retry::RetryPolicy;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -19,26 +25,9 @@ pub struct ApiClient {
     base_url: String,
     api_key: String,
     protocol: ApiProtocol,
-    auth: AuthMode,
+    auth: crate::config::AuthMode,
     profile: String,
     retry_policy: RetryPolicy,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct RetryPolicy {
-    max_attempts: u32,
-    initial_backoff: Duration,
-    max_backoff: Duration,
-}
-
-impl Default for RetryPolicy {
-    fn default() -> Self {
-        Self {
-            max_attempts: 3,
-            initial_backoff: Duration::from_millis(250),
-            max_backoff: Duration::from_secs(8),
-        }
-    }
 }
 
 impl ApiClient {
@@ -52,10 +41,7 @@ impl ApiClient {
         timeout: Duration,
         retry_policy: RetryPolicy,
     ) -> Self {
-        let http = reqwest::Client::builder()
-            .timeout(timeout)
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+        let http = transport::build_http_client(timeout);
         Self {
             http,
             base_url: config.base_url.trim_end_matches('/').to_string(),
@@ -70,7 +56,15 @@ impl ApiClient {
     /// Send a model request and return a normalized chat-style response.
     pub async fn chat(&self, request: &ChatRequest) -> Result<ChatResponse, ApiError> {
         let base_url = policy::runtime_base_url(&self.base_url, self.auth, &self.api_key);
-        let mut bearer = self.resolve_bearer_token(false).await?;
+        let mut bearer = auth::resolve_bearer_token(
+            &self.http,
+            &self.base_url,
+            self.auth,
+            &self.api_key,
+            &self.profile,
+            false,
+        )
+        .await?;
         let mut response = self
             .dispatch_request_with_retries(&base_url, request, bearer.as_deref())
             .await;
@@ -83,7 +77,15 @@ impl ApiClient {
             .is_some_and(|status| status == 401)
             && policy::uses_login_auth(self.auth, &self.api_key)
         {
-            bearer = self.resolve_bearer_token(true).await?;
+            bearer = auth::resolve_bearer_token(
+                &self.http,
+                &self.base_url,
+                self.auth,
+                &self.api_key,
+                &self.profile,
+                true,
+            )
+            .await?;
             response = self
                 .dispatch_request_with_retries(&base_url, request, bearer.as_deref())
                 .await;
@@ -102,79 +104,22 @@ impl ApiClient {
         response
     }
 
-    async fn resolve_bearer_token(&self, force_refresh: bool) -> Result<Option<String>, ApiError> {
-        if !self.api_key.is_empty() {
-            return Ok(Some(self.api_key.clone()));
-        }
-        if !policy::uses_login_auth(self.auth, &self.api_key) {
-            return Ok(None);
-        }
-        if !policy::supports_login_for_base_url(&self.base_url) {
-            return Err(ApiError::LoginRequired(format!(
-                "Profile `{}` sets `auth = \"login\"`, but base URL `{}` is not an OpenAI login endpoint.",
-                self.profile, self.base_url
-            )));
-        }
-        let provider = login_provider_key_for_base_url(&self.base_url).ok_or_else(|| {
-            ApiError::LoginRequired(format!(
-                "Profile `{}` sets `auth = \"login\"`, but provider for `{}` is unsupported.",
-                self.profile, self.base_url
-            ))
-        })?;
-
-        let mut tokens = load_provider_tokens(provider).map_err(|err| {
-            ApiError::LoginRequired(format!(
-                "failed to read login state for provider `{}`: {}",
-                provider, err
-            ))
-        })?;
-
-        if tokens.is_none() {
-            return Err(ApiError::LoginRequired(format!(
-                "Provider `{}` requires login auth, but no saved login was found. Run `buddy login`.",
-                provider
-            )));
-        }
-
-        if let Some(existing) = tokens.as_ref() {
-            if force_refresh || existing.is_expiring_soon() {
-                let refreshed = refresh_openai_tokens_with_client(&self.http, existing)
-                    .await
-                    .map_err(|err| {
-                        ApiError::LoginRequired(format!(
-                            "failed to refresh `{}` login: {}. Run `buddy login`.",
-                            provider, err
-                        ))
-                    })?;
-                save_provider_tokens(provider, refreshed.clone()).map_err(|err| {
-                    ApiError::LoginRequired(format!(
-                        "failed to persist refreshed `{}` login: {}",
-                        provider, err
-                    ))
-                })?;
-                tokens = Some(refreshed);
-            }
-        }
-
-        Ok(tokens.map(|t| t.access_token))
-    }
-
     async fn dispatch_request(
         &self,
         base_url: &str,
         request: &ChatRequest,
         bearer: Option<&str>,
     ) -> Result<ChatResponse, ApiError> {
-        match self.protocol {
-            ApiProtocol::Completions => {
-                completions::request(&self.http, base_url, request, bearer).await
-            }
-            ApiProtocol::Responses => {
-                let options: ResponsesRequestOptions =
-                    policy::responses_request_options(base_url, self.auth, &self.api_key);
-                responses::request(&self.http, base_url, request, bearer, options).await
-            }
-        }
+        transport::dispatch_request(
+            &self.http,
+            self.protocol,
+            self.auth,
+            &self.api_key,
+            base_url,
+            request,
+            bearer,
+        )
+        .await
     }
 
     async fn dispatch_request_with_retries(
@@ -189,66 +134,15 @@ impl ApiClient {
             match result {
                 Ok(response) => return Ok(response),
                 Err(err) => {
-                    if !self.should_retry(&err, attempt) {
-                        return Err(self.with_diagnostic_hints(err));
+                    if !self.retry_policy.should_retry(&err, attempt) {
+                        return Err(transport::with_diagnostic_hints(self.protocol, err));
                     }
-                    let delay = self.retry_delay_for(attempt, &err);
+                    let delay = self.retry_policy.retry_delay_for(attempt, &err);
                     attempt = attempt.saturating_add(1);
                     sleep(delay).await;
                 }
             }
         }
-    }
-
-    fn should_retry(&self, err: &ApiError, attempt: u32) -> bool {
-        if attempt.saturating_add(1) >= self.retry_policy.max_attempts {
-            return false;
-        }
-        match err {
-            ApiError::Http(inner) => inner.is_timeout() || inner.is_connect(),
-            ApiError::Status { code, .. } => *code == 429 || (*code >= 500 && *code <= 599),
-            ApiError::LoginRequired(_) | ApiError::InvalidResponse(_) => false,
-        }
-    }
-
-    fn retry_delay_for(&self, attempt: u32, err: &ApiError) -> Duration {
-        if let Some(seconds) = err.retry_after_secs() {
-            return Duration::from_secs(seconds.clamp(1, 300));
-        }
-        let pow = 2u32.saturating_pow(attempt);
-        let millis = self
-            .retry_policy
-            .initial_backoff
-            .as_millis()
-            .saturating_mul(pow as u128)
-            .min(self.retry_policy.max_backoff.as_millis());
-        Duration::from_millis(millis as u64)
-    }
-
-    fn with_diagnostic_hints(&self, err: ApiError) -> ApiError {
-        let Some(code) = err.status_code() else {
-            return err;
-        };
-        let ApiError::Status {
-            code: _,
-            mut body,
-            retry_after_secs,
-        } = err
-        else {
-            return err;
-        };
-
-        if code == 404 && self.protocol == ApiProtocol::Responses {
-            body.push_str(
-                "\nHint: this endpoint may not support `/responses`; set `api = \"completions\"` for this model profile.",
-            );
-        }
-        if code == 404 && self.protocol == ApiProtocol::Completions {
-            body.push_str(
-                "\nHint: this endpoint may not support `/chat/completions`; set `api = \"responses\"` for this model profile.",
-            );
-        }
-        ApiError::status(code, body, retry_after_secs)
     }
 }
 
@@ -369,8 +263,10 @@ mod tests {
         api.base_url = "https://example.com/v1".to_string();
         let client =
             ApiClient::new_with_retry_policy(&api, Duration::from_secs(1), RetryPolicy::default());
-        let err =
-            client.with_diagnostic_hints(ApiError::status(404, "not found".to_string(), None));
+        let err = transport::with_diagnostic_hints(
+            client.protocol,
+            ApiError::status(404, "not found".to_string(), None),
+        );
         let text = err.to_string();
         assert!(text.contains("/responses"), "missing hint: {text}");
         assert!(
