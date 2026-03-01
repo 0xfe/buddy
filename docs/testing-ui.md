@@ -1,48 +1,88 @@
 # UI Regression Testing (Tmux Harness)
 
-This document defines the on-demand UI integration/regression harness for terminal behavior.
+This document describes the on-demand terminal UI integration suite used to validate
+real REPL rendering behavior in tmux.
 
-Status: planned in `docs/plans/2026-03-01-feature-requests.md` Milestone 1.
+## Purpose
 
-## Goals
+1. Validate end-to-end UI behavior (startup banner, prompt, spinner, approvals, tool output).
+2. Catch regressions that unit tests cannot see (line redraw, status updates, terminal formatting).
+3. Preserve enough artifacts to make failures debuggable without rerunning immediately.
 
-1. Validate end-to-end REPL rendering and dynamic UI behavior in a real terminal.
-2. Catch regressions in prompts, spinners, approval flows, and output formatting.
-3. Preserve actionable artifacts on failure (pane captures, streamed logs, recordings).
+## Current Suite
 
-## Harness Shape
+Integration test entrypoint:
 
-1. Launch buddy in an isolated tmux session/pane.
-2. Use deterministic mock/fake model responses.
-3. Drive scripted user inputs through tmux pane input.
-4. Observe output via:
-   - `tmux capture-pane` checkpoint snapshots,
-   - `tmux pipe-pane` continuous log stream.
-5. Record each scenario with asciinema.
+- `tests/ui_tmux_regression.rs`
 
-## Planned Scenarios
+Harness utilities:
 
-1. Startup banner and prompt rendering.
-2. Spinner lifecycle during in-flight tasks.
-3. Approval prompt render + acceptance path.
-4. Tool output block formatting and completion lines.
-5. Prompt restoration and status updates after task completion.
+- `tests/ui_tmux/mod.rs`
 
-## Planned Artifact Layout
+Current scenario:
 
-1. `artifacts/ui-regression/<scenario>/capture-*.txt`
-2. `artifacts/ui-regression/<scenario>/pipe.log`
-3. `artifacts/ui-regression/<scenario>/session.cast`
-4. `artifacts/ui-regression/<scenario>/report.json`
+1. Start buddy inside an isolated tmux pane through asciinema.
+2. Run one prompt that produces a deterministic `run_shell` tool call via a fake model server.
+3. Approve the command.
+4. Verify spinner/liveness lines, approval formatting, command output, and final assistant reply.
+5. Exit cleanly and assert expected mock request count.
 
-## Invocation Model
+## Runtime Dependencies
 
-The suite is opt-in and should not run under default `cargo test`.
+The suite requires these commands in `PATH`:
 
-Planned command shape:
+1. `tmux`
+2. `asciinema`
+
+If either is missing, the ignored test fails with an actionable prerequisite message.
+
+## Artifact Model
+
+Each run writes under:
+
+- `artifacts/ui-regression/<scenario>-<pid>-<timestamp>/`
+
+Artifacts include:
+
+1. `session.cast`:
+   - full asciinema recording.
+2. `pipe.log`:
+   - continuous `tmux pipe-pane` output stream.
+3. `snapshots/*.txt`:
+   - checkpoint captures from `tmux capture-pane` (plain + ANSI).
+4. `report.json`:
+   - structured assertion report with `matched=true/false` and artifact paths.
+
+Artifacts are intentionally preserved for both pass and fail runs.
+
+## Commands
+
+Opt-in direct cargo command:
 
 ```bash
 cargo test --test ui_tmux_regression -- --ignored --nocapture
 ```
 
-An optional make target may wrap the command after implementation.
+Makefile wrapper:
+
+```bash
+make test-ui-regression
+```
+
+## Determinism Strategy
+
+1. The integration test starts a local scripted fake model HTTP server.
+2. The fake server returns:
+   - tool-call response on request #1,
+   - final assistant text on request #2.
+3. Responses include short delays to exercise spinner/liveness UI paths.
+4. The test writes and uses an isolated `buddy.toml` profile that targets the fake server.
+
+## Extension Guidance
+
+When adding scenarios:
+
+1. Keep each scenario deterministic and minimal.
+2. Add explicit expected substrings for each UI element being validated.
+3. Persist all relevant captures and update `report.json` schema only additively.
+4. Keep tests `#[ignore]` unless intentionally moving them into default CI coverage.

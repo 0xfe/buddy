@@ -4,16 +4,17 @@
 
 - Program status: Active
 - Scope status: Locked to the confirmed feature requests plus a required UI-test prerequisite.
-- Current focus: Milestone 0 complete; Milestone 1 (tmux UI harness) next.
+- Current focus: Milestone 1 complete; Milestone 2 (theme system) next.
 - Completed so far:
   1. Corrected scope to the confirmed feature-request list.
   2. Added a hard prerequisite milestone for tmux-based UI integration/regression testing before terminal work.
   3. Structured milestones with acceptance gates, explicit tests, docs, and commit slices.
   4. Closed Milestone 0 with module-boundary freeze, config-schema decisions, docs pointers, and baseline validation (`cargo test`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`) in commit `f218ec2`.
+  5. Closed Milestone 1 with an opt-in tmux/asciinema UI harness, deterministic fake-model integration scenario, artifactized failure reporting, docs, and make targets.
 - Next steps:
-  1. Execute Milestone 1 (tmux UI harness + on-demand regression suite).
-  2. Begin terminal feature work only after Milestone 1 is closed.
-  3. Add explicit make/CI entrypoint for the opt-in UI suite during Milestone 1 closure.
+  1. Start Milestone 2 (theme library, tokenized palette migration, `/theme`, explorer).
+  2. Keep the UI harness suite as a pre-merge gate for terminal-facing rendering changes.
+  3. Add additional Milestone 1 UI scenarios as new dynamic behavior is introduced.
 
 ## Scope (Locked)
 
@@ -63,7 +64,7 @@ Required prerequisite before terminal feature work:
 ## Integrated Program Board
 
 - [x] Milestone 0: Design Freeze + Baseline Validation
-- [ ] Milestone 1: Tmux UI Integration/Regression Harness (Prerequisite)
+- [x] Milestone 1: Tmux UI Integration/Regression Harness (Prerequisite)
 - [ ] Milestone 2: Theme Library + `/theme` + Theme Explorer
 - [ ] Milestone 3: Build Metadata + Makefile-First + Release CI
 - [ ] Milestone 4: Interactive `buddy init` + First-Run Bootstrap
@@ -171,26 +172,26 @@ Build an on-demand, high-signal UI test system that drives buddy inside tmux and
 
 ### Tasks
 
-1. Build harness runner that:
+1. [x] Build harness runner that:
    - creates isolated tmux session + pane,
    - starts buddy in the pane,
    - uses mock/fake model backend for deterministic outputs,
    - feeds scripted REPL input.
-2. Capture/observe terminal output with:
+2. [x] Capture/observe terminal output with:
    - `tmux capture-pane` snapshots at defined checkpoints,
    - `tmux pipe-pane` live logs for full stream capture.
-3. Record asciinema cast per scenario and store artifact paths.
-4. Create assertion/report layer:
+3. [x] Record asciinema cast per scenario and store artifact paths.
+4. [x] Create assertion/report layer:
    - expected vs actual checks for key UI blocks,
    - clear failure report with offending section,
    - preserve full artifacts on failure.
-5. Add coverage scenarios for current UI interactions and dynamic elements:
+5. [x] Add coverage scenarios for current UI interactions and dynamic elements:
    - startup banner + prompt line,
    - spinner lifecycle while task runs,
    - approval prompt formatting and response flow,
    - task output block rendering,
    - command completion/final status.
-6. Keep suite opt-in only:
+6. [x] Keep suite opt-in only:
    - not part of default `cargo test`,
    - explicit command path (similar to model-regression suites).
 
@@ -221,6 +222,18 @@ Build an on-demand, high-signal UI test system that drives buddy inside tmux and
 1. `test(ui): add tmux harness runner with capture-pane and pipe-pane collection`
 2. `test(ui): add asciinema artifact recording and failure-reporting`
 3. `test(ui): add opt-in regression scenarios for spinner prompt approval and output`
+
+### Milestone 1 Validation Snapshot (2026-03-01)
+
+1. Opt-in UI suite:
+   - `cargo test --test ui_tmux_regression -- --ignored --nocapture`: PASS
+2. Local quality gates after harness integration:
+   - `cargo test`: PASS (includes ignored suite registration)
+   - `cargo fmt --check`: PASS
+   - `cargo clippy --all-targets -- -D warnings`: PASS
+3. Makefile wrappers now include:
+   - `make test-ui-regression`
+   - `make test-model-regression`
 
 ## Milestone 2: Theme Library + `/theme` + Theme Explorer
 
@@ -462,3 +475,4 @@ Run final validation across all milestones and close documentation/workflow upda
 - 2026-03-01: Re-scoped to exact confirmed requests.
 - 2026-03-01: Added Milestone 1 as a hard prerequisite for tmux/asciinema UI integration regression before terminal/UI feature work.
 - 2026-03-01: Milestone 0 completed. Captured module boundaries, planned config schema deltas, and baseline validation results (`cargo test`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`), then updated docs pointers for the upcoming UI harness. Commit: `f218ec2`.
+- 2026-03-01: Milestone 1 implementation landed: added `tests/ui_tmux/` harness helpers, `tests/ui_tmux_regression.rs` ignored scenario, fake-model server, tmux `capture-pane`/`pipe-pane` checkpoints, asciinema recording, structured `report.json`, docs (`docs/testing-ui.md`), README integration notes, and Makefile test targets. Validation: opt-in suite PASS + full local gates PASS.

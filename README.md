@@ -134,6 +134,16 @@ cargo test --test model_regression -- --ignored --nocapture
 
 See [`docs/model-regression-tests.md`](docs/model-regression-tests.md) for setup and auth requirements.
 
+Tmux UI integration regressions are also opt-in:
+
+```bash
+cargo test --test ui_tmux_regression -- --ignored --nocapture
+# or:
+make test-ui-regression
+```
+
+See [`docs/testing-ui.md`](docs/testing-ui.md) for prerequisites, artifact outputs, and scenario details.
+
 **Run from source**
 
 ```bash

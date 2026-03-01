@@ -5,6 +5,7 @@
 /.buddyx/
 /.agentx/
 tmp/
+artifacts/ui-regression/
 
 # Environment/local secrets
 .env
