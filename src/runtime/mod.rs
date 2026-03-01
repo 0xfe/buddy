@@ -13,6 +13,7 @@ use crate::textutil::truncate_with_suffix_by_chars;
 use crate::tools::shell::ShellApprovalRequest;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, watch, Mutex};
 
 mod approvals;
@@ -200,7 +201,7 @@ pub fn spawn_runtime_with_shared_agent(
                             &event_tx,
                             &mut seq,
                             RuntimeEvent::Task(TaskEvent::Failed {
-                                task: TaskRef::from_task_id(done.task_id),
+                                task: done.task_ref,
                                 message: err.to_string(),
                             }),
                         );
@@ -297,7 +298,7 @@ async fn handle_runtime_command(
     let task_done_tx = ctx.task_done_tx;
 
     match command {
-        RuntimeCommand::SubmitPrompt { prompt, .. } => {
+        RuntimeCommand::SubmitPrompt { prompt, metadata } => {
             // Runtime currently enforces one active prompt task at a time.
             if active_task.is_some() {
                 emit_event(
@@ -313,11 +314,19 @@ async fn handle_runtime_command(
 
             let task_id = *next_task_id;
             *next_task_id = next_task_id.saturating_add(1);
+            let correlation_id =
+                correlation_id_from_metadata(task_id, metadata.correlation_id.clone());
+            let task_ref = TaskRef::with_metadata(
+                task_id,
+                state.active_session.clone(),
+                None,
+                Some(correlation_id),
+            );
             emit_event(
                 event_tx,
                 seq,
                 RuntimeEvent::Task(TaskEvent::Queued {
-                    task: TaskRef::from_task_id(task_id),
+                    task: task_ref.clone(),
                     kind: "prompt".to_string(),
                     details: truncate_preview(&prompt, 80),
                 }),
@@ -325,10 +334,15 @@ async fn handle_runtime_command(
 
             // Spawn the prompt task with a dedicated cancellation channel.
             let (cancel_tx, cancel_rx) = watch::channel(false);
-            *active_task = Some(ActiveTask { task_id, cancel_tx });
+            *active_task = Some(ActiveTask {
+                task_id,
+                task_ref: task_ref.clone(),
+                cancel_tx,
+            });
             spawn_prompt_task(
                 Arc::clone(agent),
                 task_id,
+                task_ref,
                 prompt,
                 cancel_rx,
                 agent_event_tx.clone(),
@@ -365,7 +379,7 @@ async fn handle_runtime_command(
                 event_tx,
                 seq,
                 RuntimeEvent::Task(TaskEvent::Cancelling {
-                    task: TaskRef::from_task_id(task_id),
+                    task: active.task_ref.clone(),
                 }),
             );
         }
@@ -600,6 +614,21 @@ fn api_mode_label(protocol: ApiProtocol, auth: AuthMode) -> String {
     format!("{protocol:?}/{auth:?}").to_ascii_lowercase()
 }
 
+/// Resolve prompt correlation id, generating one when caller omitted it.
+fn correlation_id_from_metadata(task_id: u64, provided: Option<String>) -> String {
+    if let Some(value) = provided {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    format!("task-{task_id}-{now}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -641,6 +670,66 @@ mod tests {
         let raw = serde_json::to_string(&cmd).expect("serialize");
         let parsed: RuntimeCommand = serde_json::from_str(&raw).expect("deserialize");
         assert_eq!(parsed, cmd);
+    }
+
+    // Verifies session/correlation/iteration metadata is threaded into task refs.
+    #[tokio::test]
+    async fn runtime_actor_threads_task_metadata_into_events() {
+        let agent = Agent::with_client(
+            Config::default(),
+            crate::tools::ToolRegistry::new(),
+            Box::new(MockClient::new(vec![chat_response_text("r1", "ok")])),
+        );
+        let (handle, mut events) = spawn_runtime_with_agent(
+            agent,
+            Config::default(),
+            None,
+            Some("meta-session".to_string()),
+            None,
+        );
+        let _ = recv_event(&mut events).await;
+        let _ = recv_event(&mut events).await;
+
+        handle
+            .send(RuntimeCommand::SubmitPrompt {
+                prompt: "ping".to_string(),
+                metadata: PromptMetadata {
+                    source: Some("unit".to_string()),
+                    correlation_id: Some("corr-123".to_string()),
+                },
+            })
+            .await
+            .expect("send");
+
+        let mut queued_ref = None;
+        let mut started_ref = None;
+        let mut request_ref = None;
+        for _ in 0..20 {
+            match recv_event(&mut events).await {
+                RuntimeEvent::Task(TaskEvent::Queued { task, .. }) => queued_ref = Some(task),
+                RuntimeEvent::Task(TaskEvent::Started { task }) => started_ref = Some(task),
+                RuntimeEvent::Model(ModelEvent::RequestStarted { task, .. }) => {
+                    request_ref = Some(task)
+                }
+                RuntimeEvent::Task(TaskEvent::Completed { .. }) => break,
+                _ => {}
+            }
+        }
+
+        let queued = queued_ref.expect("queued task ref");
+        assert_eq!(queued.session_id.as_deref(), Some("meta-session"));
+        assert_eq!(queued.correlation_id.as_deref(), Some("corr-123"));
+        assert_eq!(queued.iteration, None);
+
+        let started = started_ref.expect("started task ref");
+        assert_eq!(started.session_id.as_deref(), Some("meta-session"));
+        assert_eq!(started.correlation_id.as_deref(), Some("corr-123"));
+        assert_eq!(started.iteration, None);
+
+        let request = request_ref.expect("request task ref");
+        assert_eq!(request.session_id.as_deref(), Some("meta-session"));
+        assert_eq!(request.correlation_id.as_deref(), Some("corr-123"));
+        assert_eq!(request.iteration, Some(1));
     }
 
     // Verifies warning adapter preserves task id and message content.
@@ -872,13 +961,16 @@ mod tests {
             .expect("send");
 
         let mut labels = Vec::new();
-        for _ in 0..9 {
+        for _ in 0..16 {
             let event = recv_event(&mut events).await;
             let label = match event {
                 RuntimeEvent::Task(TaskEvent::Queued { .. }) => "queued",
                 RuntimeEvent::Task(TaskEvent::Started { .. }) => "started",
                 RuntimeEvent::Metrics(MetricsEvent::ContextUsage { .. }) => "context",
                 RuntimeEvent::Model(ModelEvent::RequestStarted { .. }) => "request",
+                RuntimeEvent::Model(ModelEvent::RequestSummary { .. }) => "request_summary",
+                RuntimeEvent::Model(ModelEvent::ResponseSummary { .. }) => "response_summary",
+                RuntimeEvent::Metrics(MetricsEvent::PhaseDuration { .. }) => "phase_duration",
                 RuntimeEvent::Metrics(MetricsEvent::TokenUsage { .. }) => "tokens",
                 RuntimeEvent::Model(ModelEvent::MessageFinal { .. }) => "final",
                 RuntimeEvent::Task(TaskEvent::Completed { .. }) => {
@@ -897,7 +989,10 @@ mod tests {
                 "started",
                 "context",
                 "request",
+                "request_summary",
+                "phase_duration",
                 "tokens",
+                "response_summary",
                 "final",
                 "completed"
             ]
@@ -1230,7 +1325,7 @@ mod tests {
         let mut saw_warning = false;
         for _ in 0..2 {
             match recv_event(&mut events).await {
-                RuntimeEvent::Session(SessionEvent::Compacted { session_id }) => {
+                RuntimeEvent::Session(SessionEvent::Compacted { session_id, .. }) => {
                     saw_compacted = session_id == "demo-session";
                 }
                 RuntimeEvent::Warning(WarningEvent { message, .. }) => {

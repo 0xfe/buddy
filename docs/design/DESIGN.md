@@ -102,6 +102,8 @@ Detailed inventory: [feature-catalog.md](feature-catalog.md).
 - `ModelClient` trait + `Agent::with_client(...)` for deterministic offline tests.
 - `AgentRunner` facade and runtime actor spawn APIs for alternative frontends.
 - Typed runtime command/event protocol suitable for non-default UIs.
+- Runtime event metadata includes task/session/correlation context plus
+  trace-oriented request/response/phase summary events for replay/debugging.
 - `RenderSink` abstraction to decouple orchestration from concrete terminal rendering.
 - Build/release tooling:
   - compile-time metadata injection via `build.rs`

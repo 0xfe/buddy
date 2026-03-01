@@ -54,6 +54,9 @@ pub(in crate::ui::runtime) fn handle_model(
             );
             eprintln!();
         }
-        ModelEvent::RequestStarted { .. } | ModelEvent::TextDelta { .. } => {}
+        ModelEvent::RequestStarted { .. }
+        | ModelEvent::RequestSummary { .. }
+        | ModelEvent::TextDelta { .. }
+        | ModelEvent::ResponseSummary { .. } => {}
     }
 }

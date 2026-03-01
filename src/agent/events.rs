@@ -88,6 +88,16 @@ impl Agent {
         self.runtime_event_seq = 0;
     }
 
+    /// Set optional runtime task metadata attached to emitted task refs.
+    pub fn set_runtime_event_task_context(
+        &mut self,
+        session_id: Option<String>,
+        correlation_id: Option<String>,
+    ) {
+        self.runtime_task_session_id = session_id;
+        self.runtime_task_correlation_id = correlation_id;
+    }
+
     /// Return the active task id from either UI or runtime sink binding.
     pub(super) fn current_task_id(&self) -> Option<u64> {
         // Prefer task id from legacy UI sink when present; otherwise fall back
@@ -104,9 +114,14 @@ impl Agent {
 
     /// Return the active runtime task reference when a runtime sink is bound.
     pub(super) fn current_task_ref(&self) -> Option<TaskRef> {
-        self.runtime_event_sink
-            .as_ref()
-            .map(|(task_id, _)| TaskRef::from_task_id(*task_id))
+        self.runtime_event_sink.as_ref().map(|(task_id, _)| {
+            TaskRef::with_metadata(
+                *task_id,
+                self.runtime_task_session_id.clone(),
+                self.runtime_iteration,
+                self.runtime_task_correlation_id.clone(),
+            )
+        })
     }
 
     /// Emit a legacy UI event if a UI sink is configured.

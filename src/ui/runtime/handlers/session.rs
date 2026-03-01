@@ -22,7 +22,7 @@ pub(in crate::ui::runtime) fn handle_session(
                 .section(&format!("resumed session: {session_id}"));
             eprintln!();
         }
-        SessionEvent::Compacted { session_id } => {
+        SessionEvent::Compacted { session_id, .. } => {
             ctx.renderer
                 .section(&format!("compacted session: {session_id}"));
             eprintln!();

@@ -31,6 +31,31 @@ Each line is a serialized `RuntimeEventEnvelope`:
 
 `seq` is monotonic per runtime stream and `ts_unix_ms` is wall-clock capture time.
 
+Task-scoped events include enriched `TaskRef` metadata when available:
+
+- `task_id`
+- `session_id`
+- `iteration` (model/tool loop iteration for agent-emitted events)
+- `correlation_id` (stable per submitted prompt)
+
+## High-Value Trace Events
+
+Milestone-1 runtime traces include:
+
+- request lifecycle:
+  - `Model.RequestStarted`
+  - `Model.RequestSummary` (`message_count`, `tool_count`, `estimated_tokens`)
+  - `Metrics.PhaseDuration` (`phase = "model_request"`)
+- response lifecycle:
+  - `Model.ResponseSummary` (`finish_reason`, tool-call count, content presence, usage)
+  - `Model.MessageFinal` when a final assistant response is produced
+- tool lifecycle:
+  - `Tool.CallRequested`
+  - `Tool.Result`
+  - `Metrics.PhaseDuration` (`phase = "tool:<name>"`)
+- compaction lifecycle:
+  - `Session.Compacted` with pre/post token estimate fields and removal counts
+
 ## Redaction Policy
 
 Before writing a trace record, Buddy redacts obvious sensitive content:

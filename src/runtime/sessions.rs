@@ -138,6 +138,10 @@ pub(super) async fn runtime_session_compact(
         seq,
         RuntimeEvent::Session(SessionEvent::Compacted {
             session_id: session_id.clone(),
+            estimated_before: Some(report.estimated_before),
+            estimated_after: Some(report.estimated_after),
+            removed_messages: Some(report.removed_messages as u64),
+            removed_turns: Some(report.removed_turns as u64),
         }),
     );
     emit_event(

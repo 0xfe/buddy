@@ -19,6 +19,8 @@ use tokio::sync::mpsc;
 pub(super) struct PendingRuntimeApproval {
     /// Task that produced this approval request.
     pub(super) task_id: u64,
+    /// Task metadata used for emitted approval resolution events.
+    pub(super) task_ref: TaskRef,
     /// Broker request handle used to approve/deny the underlying command.
     pub(super) request: ShellApprovalRequest,
 }
@@ -53,6 +55,7 @@ pub(super) fn handle_approval_request(
         resolve_pending_approval(
             PendingRuntimeApproval {
                 task_id: active_task.task_id,
+                task_ref: active_task.task_ref.clone(),
                 request,
             },
             decision,
@@ -69,7 +72,7 @@ pub(super) fn handle_approval_request(
         event_tx,
         seq,
         RuntimeEvent::Task(TaskEvent::WaitingApproval {
-            task: TaskRef::from_task_id(active_task.task_id),
+            task: active_task.task_ref.clone(),
             approval_id: approval_id.clone(),
             command: truncate_preview(request.command(), 140),
             risk: request
@@ -86,6 +89,7 @@ pub(super) fn handle_approval_request(
         approval_id,
         PendingRuntimeApproval {
             task_id: active_task.task_id,
+            task_ref: active_task.task_ref.clone(),
             request,
         },
     );
@@ -119,7 +123,7 @@ pub(super) fn resolve_pending_approval(
     event_tx: &mpsc::UnboundedSender<RuntimeEventEnvelope>,
     seq: &mut u64,
 ) {
-    let task = TaskRef::from_task_id(pending.task_id);
+    let task = pending.task_ref;
     match decision {
         ApprovalDecision::Approve => {
             pending.request.approve();

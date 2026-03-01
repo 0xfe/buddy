@@ -16,6 +16,7 @@ use crate::tools::{ToolContext, ToolRegistry};
 use crate::types::{ChatRequest, Message};
 use crate::ui::render::Renderer;
 use serde::{Deserialize, Serialize};
+use std::time::Instant;
 use tokio::sync::{mpsc, watch};
 
 mod events;
@@ -133,6 +134,12 @@ pub struct Agent {
     live_output_sink: Option<(u64, mpsc::UnboundedSender<AgentUiEvent>)>,
     /// Optional runtime event sink `(task_id, sender)` for normalized events.
     runtime_event_sink: Option<(u64, mpsc::UnboundedSender<RuntimeEventEnvelope>)>,
+    /// Optional runtime task session id used for task-ref metadata.
+    runtime_task_session_id: Option<String>,
+    /// Optional runtime request correlation id used for task-ref metadata.
+    runtime_task_correlation_id: Option<String>,
+    /// Optional current model-loop iteration for task-ref metadata.
+    runtime_iteration: Option<u32>,
     /// Monotonic sequence assigned to emitted runtime envelopes.
     runtime_event_seq: u64,
     /// Optional cancellation signal receiver for the in-flight request.
@@ -171,6 +178,9 @@ impl Agent {
             suppress_live_output: false,
             live_output_sink: None,
             runtime_event_sink: None,
+            runtime_task_session_id: None,
+            runtime_task_correlation_id: None,
+            runtime_iteration: None,
             runtime_event_seq: 0,
             cancellation_rx: None,
         }
@@ -285,6 +295,7 @@ impl Agent {
     /// they are executed and results are re-submitted automatically until
     /// either a text response is produced or `max_iterations` is reached.
     pub async fn send(&mut self, user_input: &str) -> Result<String, AgentError> {
+        self.runtime_iteration = None;
         // Normalize history before appending a new turn so malformed provider
         // responses do not accumulate across requests.
         sanitize_conversation_history(&mut self.messages);
@@ -297,6 +308,7 @@ impl Agent {
             if let Some(task) = self.current_task_ref() {
                 let _ = self.emit_runtime_event(RuntimeEvent::Task(TaskEvent::Completed { task }));
             }
+            self.runtime_iteration = None;
             return Ok(CANCELLED_BY_USER_PROMPT_RESPONSE.to_string());
         }
 
@@ -306,6 +318,7 @@ impl Agent {
         // execution -> follow-up model request with tool results.
         loop {
             iterations += 1;
+            self.runtime_iteration = Some(iterations as u32);
             if iterations > self.config.agent.max_iterations {
                 if let Some(task) = self.current_task_ref() {
                     let _ = self.emit_runtime_event(RuntimeEvent::Task(TaskEvent::Failed {
@@ -313,6 +326,7 @@ impl Agent {
                         message: AgentError::MaxIterationsReached.to_string(),
                     }));
                 }
+                self.runtime_iteration = None;
                 return Err(AgentError::MaxIterationsReached);
             }
 
@@ -324,6 +338,7 @@ impl Agent {
                         message: err.to_string(),
                     }));
                 }
+                self.runtime_iteration = None;
                 return Err(err);
             }
 
@@ -341,9 +356,10 @@ impl Agent {
                 temperature: self.config.agent.temperature,
                 top_p: self.config.agent.top_p,
             };
+            let estimated_tokens = TokenTracker::estimate_messages(&self.messages) as u64;
+            let tool_count = request.tools.as_ref().map_or(0, |tools| tools.len() as u64);
             if let Some(task) = self.current_task_ref() {
                 let context_limit = self.tracker.context_limit as u64;
-                let estimated_tokens = TokenTracker::estimate_messages(&self.messages) as u64;
                 let used_percent = if context_limit == 0 {
                     0.0
                 } else {
@@ -357,12 +373,20 @@ impl Agent {
                         used_percent,
                     }));
                 let _ = self.emit_runtime_event(RuntimeEvent::Model(ModelEvent::RequestStarted {
+                    task: task.clone(),
+                    model: request.model.clone(),
+                }));
+                let _ = self.emit_runtime_event(RuntimeEvent::Model(ModelEvent::RequestSummary {
                     task,
                     model: request.model.clone(),
+                    message_count: request.messages.len() as u64,
+                    tool_count,
+                    estimated_tokens,
                 }));
             }
 
             // Call the API.
+            let model_phase_started = Instant::now();
             let response_result = {
                 let phase = if iterations == 1 {
                     format!("calling model {}", self.config.api.model)
@@ -381,6 +405,7 @@ impl Agent {
                             if let Some(task) = self.current_task_ref() {
                                 let _ = self.emit_runtime_event(RuntimeEvent::Task(TaskEvent::Completed { task }));
                             }
+                            self.runtime_iteration = None;
                             return Ok(CANCELLED_BY_USER_PROMPT_RESPONSE.to_string());
                         }
                         response = self.client.chat(&request) => response,
@@ -389,6 +414,14 @@ impl Agent {
                     self.client.chat(&request).await
                 }
             };
+            if let Some(task) = self.current_task_ref() {
+                let _ =
+                    self.emit_runtime_event(RuntimeEvent::Metrics(MetricsEvent::PhaseDuration {
+                        task,
+                        phase: "model_request".to_string(),
+                        elapsed_ms: elapsed_ms(model_phase_started),
+                    }));
+            }
             let response = match response_result {
                 Ok(response) => response,
                 Err(err) => {
@@ -398,12 +431,14 @@ impl Agent {
                             message: err.to_string(),
                         }));
                     }
+                    self.runtime_iteration = None;
                     return Err(err.into());
                 }
             };
 
             // Record token usage if provided.
-            if let Some(usage) = &response.usage {
+            let usage_snapshot = response.usage.clone();
+            if let Some(usage) = &usage_snapshot {
                 self.tracker
                     .record(usage.prompt_tokens, usage.completion_tokens);
                 if let Some(task) = self.current_task_ref() {
@@ -425,18 +460,41 @@ impl Agent {
             }
 
             // Extract the first choice.
-            let choice = response
-                .choices
-                .into_iter()
-                .next()
-                .ok_or(AgentError::EmptyResponse)?;
+            let mut choices = response.choices.into_iter();
+            let choice = match choices.next() {
+                Some(choice) => choice,
+                None => {
+                    self.runtime_iteration = None;
+                    return Err(AgentError::EmptyResponse);
+                }
+            };
+            let finish_reason = choice.finish_reason.clone();
 
             let mut assistant_msg = choice.message;
             sanitize_message(&mut assistant_msg);
+            let tool_call_count = assistant_msg
+                .tool_calls
+                .as_ref()
+                .map_or(0, |calls| calls.len() as u64);
             let has_tool_calls = assistant_msg
                 .tool_calls
                 .as_ref()
                 .is_some_and(|tc| !tc.is_empty());
+            if let Some(task) = self.current_task_ref() {
+                let has_content = assistant_msg
+                    .content
+                    .as_deref()
+                    .is_some_and(|text| !text.trim().is_empty());
+                let _ = self.emit_runtime_event(RuntimeEvent::Model(ModelEvent::ResponseSummary {
+                    task,
+                    finish_reason,
+                    tool_call_count,
+                    has_content,
+                    prompt_tokens: usage_snapshot.as_ref().map(|u| u.prompt_tokens),
+                    completion_tokens: usage_snapshot.as_ref().map(|u| u.completion_tokens),
+                    total_tokens: usage_snapshot.as_ref().map(|u| u.total_tokens),
+                }));
+            }
 
             // Show reasoning/thinking traces when providers emit them.
             for (field, trace) in reasoning_traces(&assistant_msg) {
@@ -453,6 +511,7 @@ impl Agent {
                 let tool_calls = assistant_msg.tool_calls.unwrap();
                 let mut cancelled = false;
                 for (idx, tc) in tool_calls.iter().enumerate() {
+                    let tool_phase_started = Instant::now();
                     if let Some(task) = self.current_task_ref() {
                         let _ =
                             self.emit_runtime_event(RuntimeEvent::Tool(ToolEvent::CallRequested {
@@ -509,6 +568,15 @@ impl Agent {
                     while let Ok(stream_event) = tool_stream_rx.try_recv() {
                         self.emit_tool_stream_event(&tc.function.name, stream_event);
                     }
+                    if let Some(task) = self.current_task_ref() {
+                        let _ = self.emit_runtime_event(RuntimeEvent::Metrics(
+                            MetricsEvent::PhaseDuration {
+                                task,
+                                phase: format!("tool:{}", tc.function.name),
+                                elapsed_ms: elapsed_ms(tool_phase_started),
+                            },
+                        ));
+                    }
 
                     if let Some(task) = self.current_task_ref() {
                         let _ = self.emit_runtime_event(RuntimeEvent::Tool(ToolEvent::Result {
@@ -539,6 +607,7 @@ impl Agent {
                                     task,
                                 }));
                         }
+                        self.runtime_iteration = None;
                         return Ok(CANCELLED_BY_USER_PROMPT_RESPONSE.to_string());
                     }
                 }
@@ -556,6 +625,7 @@ impl Agent {
                 }));
                 let _ = self.emit_runtime_event(RuntimeEvent::Task(TaskEvent::Completed { task }));
             }
+            self.runtime_iteration = None;
             return Ok(content);
         }
     }
@@ -577,6 +647,11 @@ async fn wait_for_cancellation(cancel_rx: &mut watch::Receiver<bool>) {
         return;
     }
     let _ = cancel_rx.changed().await;
+}
+
+/// Convert elapsed duration since `started` into milliseconds with saturation.
+fn elapsed_ms(started: Instant) -> u64 {
+    started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
 }
 
 /// Build initial conversation message list from configured system prompt.
@@ -1105,8 +1180,11 @@ mod tests {
             let label = match envelope.event {
                 RuntimeEvent::Task(TaskEvent::Started { .. }) => "task_started",
                 RuntimeEvent::Model(ModelEvent::RequestStarted { .. }) => "model_request_started",
+                RuntimeEvent::Model(ModelEvent::RequestSummary { .. }) => "model_request_summary",
                 RuntimeEvent::Metrics(MetricsEvent::ContextUsage { .. }) => "context_usage",
+                RuntimeEvent::Metrics(MetricsEvent::PhaseDuration { .. }) => "phase_duration",
                 RuntimeEvent::Metrics(MetricsEvent::TokenUsage { .. }) => "token_usage",
+                RuntimeEvent::Model(ModelEvent::ResponseSummary { .. }) => "response_summary",
                 RuntimeEvent::Tool(ToolEvent::CallRequested { .. }) => "tool_call",
                 RuntimeEvent::Tool(ToolEvent::Result { .. }) => "tool_result",
                 RuntimeEvent::Model(ModelEvent::MessageFinal { .. }) => "message_final",
@@ -1120,12 +1198,19 @@ mod tests {
             "task_started",
             "context_usage",
             "model_request_started",
+            "model_request_summary",
+            "phase_duration",
             "token_usage",
+            "response_summary",
             "tool_call",
+            "phase_duration",
             "tool_result",
             "context_usage",
             "model_request_started",
+            "model_request_summary",
+            "phase_duration",
             "token_usage",
+            "response_summary",
             "message_final",
             "task_completed",
         ];

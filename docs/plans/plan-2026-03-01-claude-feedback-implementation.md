@@ -4,14 +4,15 @@
 
 - Program status: Active
 - Scope status: Locked to actionable items from `docs/plans/review-2026-03-01-claude-feedback.md`, sequenced for lowest-risk delivery.
-- Current focus: Milestone 1 (tracing foundation) is in progress.
+- Current focus: Milestone 2 (logging/verbosity and span model) is next.
 - Completed so far:
   1. Reviewed `docs/plans/review-2026-03-01-claude-feedback.md` end-to-end.
   2. Mapped priority recommendations into an execution board with validation gates.
   3. Implemented first Milestone 1 slice: `--trace` + `BUDDY_TRACE_FILE`, JSONL runtime-event sink wiring in REPL/exec, and best-effort redaction.
+  4. Completed Milestone 1 event completeness: phase durations, task metadata threading (session/iteration/correlation), request/response summaries, and compaction stats in runtime events.
 - Next steps:
-  1. Finish Milestone 1 event completeness (phase durations, correlation/task metadata, model/compaction summaries).
-  2. Add runtime/golden trace tests for event ordering and payload shape.
+  1. Start Milestone 2 (`--verbose`, tracing subscriber, span coverage).
+  2. Keep JSONL trace sink compatible with verbosity layers.
 
 ## Goal
 
@@ -66,7 +67,7 @@ Out of scope for this plan:
 ## Integrated Program Board
 
 - [ ] Milestone 0: Baseline, Repro Matrix, and Design Freeze
-- [ ] Milestone 1: Tracing Foundation (`--trace`, JSONL sink, event completeness)
+- [x] Milestone 1: Tracing Foundation (`--trace`, JSONL sink, event completeness)
 - [ ] Milestone 2: Logging/Verbosity and Span Model
 - [ ] Milestone 3: Prompt Context Architecture (static system + dynamic snapshot as turn context)
 - [ ] Milestone 4: Compaction Integrity and Error-Preserving Memory
@@ -440,3 +441,11 @@ Close the loop with analysis tooling, cost metrics, and regression confidence.
    - added heuristic trace redaction for obvious secret-bearing fields/content,
    - added tests in `src/app/trace.rs` and `src/cli.rs`,
    - validated with `cargo test` (full suite).
+   - commit: `f9983ad`.
+3. 2026-03-01: Finished Milestone 1:
+   - emitted `Metrics.PhaseDuration` for model requests and tool execution,
+   - threaded `TaskRef` metadata (`session_id`, `iteration`, `correlation_id`) across runtime + agent events,
+   - added `Model.RequestSummary` and `Model.ResponseSummary` events for trace-friendly request/response artifacts,
+   - enriched `Session.Compacted` with pre/post token estimates and removal counts,
+   - expanded runtime/agent tests to verify new event ordering and metadata propagation,
+   - validated with `cargo fmt` and `cargo test` (full suite).

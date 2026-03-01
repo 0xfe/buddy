@@ -23,6 +23,9 @@ pub struct TaskRef {
     /// Optional iteration index within a multi-step task flow.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub iteration: Option<u32>,
+    /// Optional correlation id used to stitch related request/response events.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
 }
 
 impl TaskRef {
@@ -32,6 +35,22 @@ impl TaskRef {
             task_id,
             session_id: None,
             iteration: None,
+            correlation_id: None,
+        }
+    }
+
+    /// Build a task ref with optional metadata fields.
+    pub fn with_metadata(
+        task_id: u64,
+        session_id: Option<String>,
+        iteration: Option<u32>,
+        correlation_id: Option<String>,
+    ) -> Self {
+        Self {
+            task_id,
+            session_id,
+            iteration,
+            correlation_id,
         }
     }
 }
@@ -194,7 +213,21 @@ pub enum SessionEvent {
     /// Active session snapshot was persisted.
     Saved { session_id: String },
     /// Active session history was compacted.
-    Compacted { session_id: String },
+    Compacted {
+        session_id: String,
+        /// Estimated token count before compaction.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        estimated_before: Option<u64>,
+        /// Estimated token count after compaction.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        estimated_after: Option<u64>,
+        /// Number of messages removed from history.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        removed_messages: Option<u64>,
+        /// Number of turn groups removed from history.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        removed_turns: Option<u64>,
+    },
 }
 
 /// Task state transitions.
@@ -279,6 +312,19 @@ pub enum ModelEvent {
         /// Model identifier for this request.
         model: String,
     },
+    /// Summary of one normalized model request payload.
+    RequestSummary {
+        /// Logical task reference.
+        task: TaskRef,
+        /// Model identifier for this request.
+        model: String,
+        /// Number of messages sent in request history.
+        message_count: u64,
+        /// Number of tools included in request schema.
+        tool_count: u64,
+        /// Estimated token usage for request history.
+        estimated_tokens: u64,
+    },
     /// Incremental assistant text delta.
     TextDelta {
         /// Logical task reference.
@@ -301,6 +347,27 @@ pub enum ModelEvent {
         task: TaskRef,
         /// Final assistant message content.
         content: String,
+    },
+    /// Summary of one normalized model response payload.
+    ResponseSummary {
+        /// Logical task reference.
+        task: TaskRef,
+        /// Provider finish reason for first choice, if present.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        finish_reason: Option<String>,
+        /// Number of tool calls declared by the assistant message.
+        tool_call_count: u64,
+        /// Whether assistant message included non-empty content.
+        has_content: bool,
+        /// Prompt tokens reported by provider usage, if available.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        prompt_tokens: Option<u64>,
+        /// Completion tokens reported by provider usage, if available.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        completion_tokens: Option<u64>,
+        /// Total tokens reported by provider usage, if available.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        total_tokens: Option<u64>,
     },
 }
 
