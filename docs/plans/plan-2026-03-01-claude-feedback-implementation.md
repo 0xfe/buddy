@@ -449,3 +449,4 @@ Close the loop with analysis tooling, cost metrics, and regression confidence.
    - enriched `Session.Compacted` with pre/post token estimates and removal counts,
    - expanded runtime/agent tests to verify new event ordering and metadata propagation,
    - validated with `cargo fmt` and `cargo test` (full suite).
+   - commit: `911a305`.
