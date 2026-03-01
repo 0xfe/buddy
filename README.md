@@ -31,7 +31,7 @@ Buddy supports most models that implement the OpenAI completions or responses AP
 **1. Build**
 
 ```bash
-cargo build --release
+make build
 
 # Install to $HOME/.local/bin
 make install
@@ -109,6 +109,7 @@ Theme selection is persisted in config (`display.theme`) and supports built-ins 
 - [`docs/remote-execution.md`](docs/remote-execution.md): local/container/ssh/tmux execution model.
 - [`docs/terminal-repl.md`](docs/terminal-repl.md): REPL input, rendering, and runtime event UX.
 - [`docs/testing-ui.md`](docs/testing-ui.md): tmux-based opt-in UI regression harness approach and artifact model.
+- [`docs/ci-release.md`](docs/ci-release.md): build metadata, Makefile workflow, and release-tag CI publishing.
 - [`docs/tips/`](docs/tips): short tactical notes for contributors/AI agents.
 
 
@@ -117,7 +118,7 @@ Theme selection is persisted in config (`display.theme`) and supports built-ins 
 **Test**
 
 ```bash
-cargo test
+make test
 ```
 
 Tests cover config parsing, API type serialization/deserialization, token estimation, and message constructors. All tests run offline (no network).
@@ -126,6 +127,12 @@ Optional parser property tests (feature-gated):
 
 ```bash
 cargo test --features fuzz-tests
+```
+
+Full local quality gate (format + clippy + tests):
+
+```bash
+make check
 ```
 
 Live provider/model regressions are in an explicit ignored suite:
@@ -356,7 +363,15 @@ Options:
                               In `buddy exec`, bypass shell confirmation prompts and auto-approve `run_shell` commands. Dangerous: use only in trusted contexts
       --no-color             Disable color output
   -h, --help                 Print help
-  -V, --version              Print version
+  -V, --version              Print version/commit/build metadata
+```
+
+`buddy --version` now prints:
+
+```text
+<semver>
+commit: <git hash>
+built: <UTC timestamp>
 ```
 
 At startup, the system prompt is rendered from one compiled template with runtime placeholders (enabled tools, execution target, optional `[agent].system_prompt` operator instructions, and tmux pane snapshot context when reattaching to an existing managed tmux pane). When `--container` or `--ssh` is set, the rendered prompt includes explicit remote-target guidance.
@@ -380,6 +395,31 @@ Buddy performs profile preflight validation at startup and on `/model` switches 
 | `time` | Return harness-recorded current wall-clock time in multiple common formats (epoch + UTC text formats). |
 
 All tool responses use a JSON envelope with `result` and `harness_timestamp` fields.
+
+## Build and release workflow
+
+Buddy uses `make` as the primary developer/release interface:
+
+```bash
+make help
+make build
+make test
+make check
+make release-artifacts
+make release
+```
+
+Version helpers:
+
+```bash
+make version
+make bump-patch
+make bump-minor
+make bump-major
+make bump-set VERSION=0.2.0
+```
+
+Release tags (`v*`) trigger GitHub Actions artifact builds and release publishing for macOS and Linux.
 
 ### Context window catalog
 

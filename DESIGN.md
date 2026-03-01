@@ -78,6 +78,7 @@ Detailed inventory: [docs/design/feature-catalog.md](docs/design/feature-catalog
   - dynamic tmux screenshot block refresh before each model request when available
 - Output/rendering behavior:
   - semantic theme-token rendering with built-in `dark`/`light` palettes and optional `[themes.<name>]` overrides
+  - startup banner includes build metadata (version, commit hash, build timestamp)
   - assistant response on stdout
   - status/chrome on stderr
   - progress/liveness indicators and structured tool/result rendering
@@ -97,6 +98,10 @@ Detailed inventory: [docs/design/feature-catalog.md](docs/design/feature-catalog
 - `AgentRunner` facade and runtime actor spawn APIs for alternative frontends.
 - Typed runtime command/event protocol suitable for non-default UIs.
 - `RenderSink` abstraction to decouple orchestration from concrete terminal rendering.
+- Build/release tooling:
+  - compile-time metadata injection via `build.rs`
+  - Makefile-first dev/release commands
+  - tag-triggered GitHub Actions release artifact publishing
 
 ## Detail Docs
 
