@@ -4,16 +4,17 @@
 
 - Program status: Active
 - Scope status: Locked to actionable items from `docs/plans/review-2026-03-01-claude-feedback.md`, sequenced for lowest-risk delivery.
-- Current focus: Milestone 3 (prompt context architecture) is next.
+- Current focus: Milestone 4 (compaction integrity and error-preserving memory) is next.
 - Completed so far:
   1. Reviewed `docs/plans/review-2026-03-01-claude-feedback.md` end-to-end.
   2. Mapped priority recommendations into an execution board with validation gates.
   3. Implemented first Milestone 1 slice: `--trace` + `BUDDY_TRACE_FILE`, JSONL runtime-event sink wiring in REPL/exec, and best-effort redaction.
   4. Completed Milestone 1 event completeness: phase durations, task metadata threading (session/iteration/correlation), request/response summaries, and compaction stats in runtime events.
   5. Completed Milestone 2: `-v/-vv/-vvv`, structured logging subscriber wiring, and span instrumentation for runtime commands, turns, model requests/responses, tool calls, and compaction paths.
+  6. Completed Milestone 3: static system prompt + request-scoped tmux snapshot context injection with non-default target labeling and prompt-architecture docs updates.
 - Next steps:
-  1. Start Milestone 3 (static system prompt + dynamic snapshot turn-context split).
-  2. Keep Milestone 2 logging/tracing behavior stable while prompt architecture changes land.
+  1. Start Milestone 4 (tool-call/result-safe compaction + failure-preserving memory).
+  2. Keep Milestone 1/2/3 observability and prompt-context behavior stable during compaction changes.
 
 ## Goal
 
@@ -70,7 +71,7 @@ Out of scope for this plan:
 - [ ] Milestone 0: Baseline, Repro Matrix, and Design Freeze
 - [x] Milestone 1: Tracing Foundation (`--trace`, JSONL sink, event completeness)
 - [x] Milestone 2: Logging/Verbosity and Span Model
-- [ ] Milestone 3: Prompt Context Architecture (static system + dynamic snapshot as turn context)
+- [x] Milestone 3: Prompt Context Architecture (static system + dynamic snapshot as turn context)
 - [ ] Milestone 4: Compaction Integrity and Error-Preserving Memory
 - [ ] Milestone 5: Prompt and Tooling Reliability Hardening
 - [ ] Milestone 6: Provider/Model Compatibility and Token Accuracy
@@ -460,3 +461,11 @@ Close the loop with analysis tooling, cost metrics, and regression confidence.
    - updated observability/developer/reference docs for verbosity and tracing usage,
    - validated with `cargo fmt` and `cargo test` (full suite).
    - commit: `d680cdc`.
+5. 2026-03-01: Finished Milestone 3:
+   - removed dynamic system-message mutation for tmux snapshots and kept system prompt static across turns,
+   - introduced request-scoped dynamic context injection for default shared-pane screenshots,
+   - added non-default tmux-target context labeling when recent tool calls explicitly route away from default shared pane,
+   - hardened snapshot framing with explicit context markers and truncation notes,
+   - updated prompt architecture documentation (`docs/design/prompt.md`) and related design docs,
+   - validated with `cargo fmt`, `cargo test`, and `cargo test --test ui_tmux_regression -- --ignored --nocapture`.
+   - commit: `d00838d`.
