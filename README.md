@@ -46,6 +46,9 @@ tmux attach -t buddy # on a separate terminal
 # Optional: runtime event trace (JSONL) for debugging
 buddy --trace /tmp/buddy.trace.jsonl
 
+# Optional: structured diagnostics
+buddy -vv
+
 # Operate a remote host (in tmux on the remote host)
 buddy --ssh user@host
 

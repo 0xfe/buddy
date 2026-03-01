@@ -15,6 +15,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, watch, Mutex};
+use tracing::{debug, info_span, Instrument};
 
 mod approvals;
 mod schema;
@@ -287,6 +288,9 @@ async fn handle_runtime_command(
     command: RuntimeCommand,
     ctx: &mut RuntimeCommandContext<'_>,
 ) -> bool {
+    let command_name = runtime_command_name(&command);
+    let command_span = info_span!("runtime.command", command = command_name);
+    debug!(parent: &command_span, "handling runtime command");
     let agent = ctx.agent;
     let state = &mut *ctx.state;
     let active_task = &mut *ctx.active_task;
@@ -322,6 +326,13 @@ async fn handle_runtime_command(
                 None,
                 Some(correlation_id),
             );
+            debug!(
+                task_id,
+                session_id = %task_ref.session_id.as_deref().unwrap_or("default"),
+                correlation_id = %task_ref.correlation_id.as_deref().unwrap_or(""),
+                prompt_chars = prompt.chars().count(),
+                "queued prompt task"
+            );
             emit_event(
                 event_tx,
                 seq,
@@ -339,11 +350,21 @@ async fn handle_runtime_command(
                 task_ref: task_ref.clone(),
                 cancel_tx,
             });
+            let turn_span = info_span!(
+                "gen_ai.turn",
+                gen_ai_system = "openai_compatible",
+                gen_ai_operation_name = "chat",
+                gen_ai_request_model = %state.config.api.model,
+                task_id,
+                session_id = %task_ref.session_id.as_deref().unwrap_or("default"),
+                correlation_id = %task_ref.correlation_id.as_deref().unwrap_or("")
+            );
             spawn_prompt_task(
                 Arc::clone(agent),
                 task_id,
                 task_ref,
                 prompt,
+                turn_span,
                 cancel_rx,
                 agent_event_tx.clone(),
                 task_done_tx.clone(),
@@ -487,7 +508,14 @@ async fn handle_runtime_command(
             );
         }
         RuntimeCommand::SessionNew => {
-            if let Err(err) = runtime_session_new(agent, state, event_tx, seq).await {
+            let session_span = info_span!(
+                "runtime.session.new",
+                active_session = %state.active_session.as_deref().unwrap_or("none")
+            );
+            if let Err(err) = runtime_session_new(agent, state, event_tx, seq)
+                .instrument(session_span)
+                .await
+            {
                 emit_event(
                     event_tx,
                     seq,
@@ -499,7 +527,14 @@ async fn handle_runtime_command(
             }
         }
         RuntimeCommand::SessionResume { session_id } => {
-            if let Err(err) = runtime_session_resume(agent, state, &session_id, event_tx, seq).await
+            let session_span = info_span!(
+                "runtime.session.resume",
+                target_session = %session_id,
+                active_session = %state.active_session.as_deref().unwrap_or("none")
+            );
+            if let Err(err) = runtime_session_resume(agent, state, &session_id, event_tx, seq)
+                .instrument(session_span)
+                .await
             {
                 emit_event(
                     event_tx,
@@ -558,7 +593,14 @@ async fn handle_runtime_command(
             }
         }
         RuntimeCommand::SessionCompact => {
-            if let Err(err) = runtime_session_compact(agent, state, event_tx, seq).await {
+            let session_span = info_span!(
+                "runtime.session.compact",
+                active_session = %state.active_session.as_deref().unwrap_or("default")
+            );
+            if let Err(err) = runtime_session_compact(agent, state, event_tx, seq)
+                .instrument(session_span)
+                .await
+            {
                 emit_event(
                     event_tx,
                     seq,
@@ -627,6 +669,22 @@ fn correlation_id_from_metadata(task_id: u64, provided: Option<String>) -> Strin
         .unwrap_or_default()
         .as_millis();
     format!("task-{task_id}-{now}")
+}
+
+/// Return a static label for runtime command tracing spans.
+fn runtime_command_name(command: &RuntimeCommand) -> &'static str {
+    match command {
+        RuntimeCommand::SubmitPrompt { .. } => "submit_prompt",
+        RuntimeCommand::CancelTask { .. } => "cancel_task",
+        RuntimeCommand::SetApprovalPolicy { .. } => "set_approval_policy",
+        RuntimeCommand::SwitchModel { .. } => "switch_model",
+        RuntimeCommand::SessionNew => "session_new",
+        RuntimeCommand::SessionResume { .. } => "session_resume",
+        RuntimeCommand::SessionResumeLast => "session_resume_last",
+        RuntimeCommand::SessionCompact => "session_compact",
+        RuntimeCommand::Approve { .. } => "approve",
+        RuntimeCommand::Shutdown => "shutdown",
+    }
 }
 
 #[cfg(test)]

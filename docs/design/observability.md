@@ -10,6 +10,22 @@ Buddy supports optional runtime-event tracing for debugging and replay.
   - startup open failures are warnings (runtime continues),
   - write failures disable tracing and emit one warning.
 
+## Verbose Logging
+
+- `-v` enables `info` logs.
+- `-vv` enables `debug` logs.
+- `-vvv` enables `trace` logs.
+- `BUDDY_LOG` overrides all CLI verbosity with a `tracing` filter expression.
+- `RUST_LOG` is also supported when `BUDDY_LOG` is unset.
+
+Default verbose filter applies targeted component noise limits:
+
+- `buddy=<level>`
+- `reqwest=warn`
+- `hyper=warn`
+- `h2=warn`
+- `rustls=warn`
+
 ## Record Shape
 
 Each line is a serialized `RuntimeEventEnvelope`:
@@ -56,6 +72,21 @@ Milestone-1 runtime traces include:
 - compaction lifecycle:
   - `Session.Compacted` with pre/post token estimate fields and removal counts
 
+## Span Model
+
+Milestone-2 adds `tracing` spans around key operations:
+
+- `runtime.command`: every runtime actor command branch.
+- `gen_ai.turn`: prompt task envelope with task/session/correlation metadata.
+- `agent.turn` and `agent.turn_iteration`: per-turn loop structure.
+- `gen_ai.chat.request`: model request/response scope.
+- `gen_ai.tool.call`: tool execution scope.
+- `runtime.session.*` and `agent.history.compaction`: session + compaction lifecycle.
+
+Semconv alignment is pragmatic: fields use snake_case equivalents (for example
+`gen_ai_system`, `gen_ai_operation_name`, `gen_ai_request_model`) so traces
+can be mapped cleanly into OTel-compatible exporters later.
+
 ## Redaction Policy
 
 Before writing a trace record, Buddy redacts obvious sensitive content:
@@ -70,3 +101,4 @@ Redaction is heuristic and conservative; traces are intended for local operator 
 - Trace records follow runtime event ordering.
 - Duplicate sequence IDs are skipped by the trace writer.
 - Recommended for incident debugging, tool-flow audits, and model-behavior analysis.
+- JSONL runtime traces and `-v` logging are independent and can be combined.

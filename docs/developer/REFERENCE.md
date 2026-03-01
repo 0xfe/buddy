@@ -28,6 +28,7 @@ Login soft-fail behavior:
 | `--ssh <user@host>` | Execute shell/file tools over SSH. |
 | `--tmux [session]` | Use tmux-backed execution; optional custom session name. |
 | `--trace <path>` | Write runtime events to a JSONL trace file. |
+| `-v`, `--verbose` | Increase diagnostics (`-v` info, `-vv` debug, `-vvv` trace). |
 | `--no-color` | Disable ANSI colors. |
 | `--dangerously-auto-approve` | In `exec` mode, bypass shell approvals. |
 
@@ -92,8 +93,8 @@ Commonly overridden tokens:
 
 Highest precedence wins:
 
-1. CLI flags (`--config`, `--model`, `--base-url`, `--container`, `--ssh`, `--tmux`, `--trace`, `--no-color`, `--dangerously-auto-approve`)
-2. Environment variables (`BUDDY_API_KEY`, `BUDDY_BASE_URL`, `BUDDY_MODEL`, `BUDDY_API_TIMEOUT_SECS`, `BUDDY_FETCH_TIMEOUT_SECS`, `BUDDY_TRACE_FILE`)
+1. CLI flags (`--config`, `--model`, `--base-url`, `--container`, `--ssh`, `--tmux`, `--trace`, `--verbose`, `--no-color`, `--dangerously-auto-approve`)
+2. Environment variables (`BUDDY_API_KEY`, `BUDDY_BASE_URL`, `BUDDY_MODEL`, `BUDDY_API_TIMEOUT_SECS`, `BUDDY_FETCH_TIMEOUT_SECS`, `BUDDY_TRACE_FILE`, `BUDDY_LOG`, `RUST_LOG`)
 3. Local config (`./buddy.toml`)
 4. Global config (`~/.config/buddy/buddy.toml`)
 5. Built-in defaults

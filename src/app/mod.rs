@@ -13,6 +13,8 @@ pub(crate) mod entry;
 pub(crate) mod exec_mode;
 /// `buddy init` interactive flow + first-run bootstrap helpers.
 pub(crate) mod init_flow;
+/// Global logging/tracing subscriber wiring.
+pub(crate) mod logging;
 /// Shared slash-command dispatch for REPL/approval prompts.
 pub(crate) mod repl_loop;
 /// Interactive REPL mode orchestration.

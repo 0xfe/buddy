@@ -7,6 +7,7 @@ use crate::agent::Agent;
 use crate::runtime::{RuntimeEventEnvelope, TaskRef};
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch, Mutex};
+use tracing::Instrument;
 
 /// Runtime-owned metadata for the currently active prompt task.
 pub(super) struct ActiveTask {
@@ -34,34 +35,38 @@ pub(super) fn spawn_prompt_task(
     task_id: u64,
     task_ref: TaskRef,
     prompt: String,
+    turn_span: tracing::Span,
     cancel_rx: watch::Receiver<bool>,
     event_tx: mpsc::UnboundedSender<RuntimeEventEnvelope>,
     done_tx: mpsc::UnboundedSender<TaskDone>,
 ) {
-    tokio::spawn(async move {
-        // Configure the shared agent for runtime-stream mode: direct stderr
-        // rendering is suppressed and all live updates are routed to events.
-        let mut agent = agent.lock().await;
-        agent.set_live_output_suppressed(true);
-        agent.set_live_output_sink(None);
-        agent.set_runtime_event_sink(Some((task_id, event_tx)));
-        agent.set_runtime_event_task_context(
-            task_ref.session_id.clone(),
-            task_ref.correlation_id.clone(),
-        );
-        agent.set_cancellation_receiver(Some(cancel_rx));
-        let result = agent.send(&prompt).await;
-        // Always restore baseline settings before releasing the lock so future
-        // tasks start from a clean configuration.
-        agent.set_cancellation_receiver(None);
-        agent.set_runtime_event_sink(None);
-        agent.set_runtime_event_task_context(None, None);
-        agent.set_live_output_suppressed(false);
-        drop(agent);
-        let _ = done_tx.send(TaskDone {
-            task_id,
-            task_ref,
-            result,
-        });
-    });
+    tokio::spawn(
+        async move {
+            // Configure the shared agent for runtime-stream mode: direct stderr
+            // rendering is suppressed and all live updates are routed to events.
+            let mut agent = agent.lock().await;
+            agent.set_live_output_suppressed(true);
+            agent.set_live_output_sink(None);
+            agent.set_runtime_event_sink(Some((task_id, event_tx)));
+            agent.set_runtime_event_task_context(
+                task_ref.session_id.clone(),
+                task_ref.correlation_id.clone(),
+            );
+            agent.set_cancellation_receiver(Some(cancel_rx));
+            let result = agent.send(&prompt).await;
+            // Always restore baseline settings before releasing the lock so future
+            // tasks start from a clean configuration.
+            agent.set_cancellation_receiver(None);
+            agent.set_runtime_event_sink(None);
+            agent.set_runtime_event_task_context(None, None);
+            agent.set_live_output_suppressed(false);
+            drop(agent);
+            let _ = done_tx.send(TaskDone {
+                task_id,
+                task_ref,
+                result,
+            });
+        }
+        .instrument(turn_span),
+    );
 }

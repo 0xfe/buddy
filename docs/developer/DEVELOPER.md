@@ -8,6 +8,20 @@ This document covers library embedding and extension points. For build/test/rele
 cargo run -- exec "your prompt here"
 cargo run
 cargo run -- --trace /tmp/buddy.trace.jsonl
+cargo run -- -vv
+```
+
+## Debug recipes
+
+```bash
+# Structured logs + runtime JSONL trace together
+cargo run -- -vv --trace /tmp/buddy.trace.jsonl
+
+# Target a single component with explicit filter expression
+BUDDY_LOG=buddy::runtime=trace cargo run
+
+# Use standard Rust log env var when preferred
+RUST_LOG=buddy::agent=debug cargo run -- -v
 ```
 
 ## Use as a library

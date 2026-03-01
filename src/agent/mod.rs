@@ -18,6 +18,7 @@ use crate::ui::render::Renderer;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 use tokio::sync::{mpsc, watch};
+use tracing::{debug, info_span, warn, Instrument};
 
 mod events;
 mod history;
@@ -246,8 +247,16 @@ impl Agent {
             .max(1.0) as usize;
 
         let mut estimated_tokens = TokenTracker::estimate_messages(&self.messages);
+        let _budget_span =
+            info_span!("agent.context_budget", context_limit, estimated_tokens).entered();
         if estimated_tokens >= warning_tokens {
             let percent = ((estimated_tokens as f64 / context_limit as f64) * 100.0) as f32;
+            warn!(
+                context_limit,
+                estimated_tokens,
+                used_percent = percent,
+                "context usage crossed warning threshold"
+            );
             self.warn_live(&format!(
                 "Context usage is {percent:.1}% ({estimated_tokens}/{context_limit}). Use `/compact` or `/session new` if needed."
             ));
@@ -262,6 +271,13 @@ impl Agent {
                 CONTEXT_AUTO_COMPACT_TARGET_FRACTION,
                 false,
             ) {
+                debug!(
+                    removed_turns = report.removed_turns,
+                    removed_messages = report.removed_messages,
+                    estimated_before = report.estimated_before,
+                    estimated_after = report.estimated_after,
+                    "auto-compacted history to stay within context budget"
+                );
                 estimated_tokens = report.estimated_after as usize;
                 self.warn_live(&format!(
                     "Compacted history (removed {} turns / {} messages) to reduce context usage.",
@@ -271,6 +287,10 @@ impl Agent {
         }
 
         if estimated_tokens >= hard_limit_tokens {
+            warn!(
+                context_limit,
+                estimated_tokens, hard_limit_tokens, "context limit exceeded after compaction"
+            );
             return Err(AgentError::ContextLimitExceeded {
                 estimated_tokens: estimated_tokens as u64,
                 context_limit: context_limit as u64,
@@ -296,6 +316,18 @@ impl Agent {
     /// either a text response is produced or `max_iterations` is reached.
     pub async fn send(&mut self, user_input: &str) -> Result<String, AgentError> {
         self.runtime_iteration = None;
+        let turn_task_id = self
+            .current_task_ref()
+            .map(|task| task.task_id)
+            .unwrap_or(0);
+        let turn_span = info_span!(
+            "agent.turn",
+            task_id = turn_task_id,
+            session_id = %self.runtime_task_session_id.as_deref().unwrap_or("default"),
+            correlation_id = %self.runtime_task_correlation_id.as_deref().unwrap_or(""),
+            user_input_chars = user_input.chars().count()
+        );
+        debug!(parent: &turn_span, "starting agent turn");
         // Normalize history before appending a new turn so malformed provider
         // responses do not accumulate across requests.
         sanitize_conversation_history(&mut self.messages);
@@ -319,6 +351,12 @@ impl Agent {
         loop {
             iterations += 1;
             self.runtime_iteration = Some(iterations as u32);
+            let iteration_span = info_span!(
+                "agent.turn_iteration",
+                iteration = iterations as u32,
+                max_iterations = self.config.agent.max_iterations as u32
+            );
+            debug!(parent: &iteration_span, "running agent iteration");
             if iterations > self.config.agent.max_iterations {
                 if let Some(task) = self.current_task_ref() {
                     let _ = self.emit_runtime_event(RuntimeEvent::Task(TaskEvent::Failed {
@@ -358,6 +396,17 @@ impl Agent {
             };
             let estimated_tokens = TokenTracker::estimate_messages(&self.messages) as u64;
             let tool_count = request.tools.as_ref().map_or(0, |tools| tools.len() as u64);
+            let llm_span = info_span!(
+                "gen_ai.chat.request",
+                gen_ai_system = "openai_compatible",
+                gen_ai_operation_name = "chat",
+                gen_ai_request_model = %request.model,
+                iteration = iterations as u32,
+                message_count = request.messages.len() as u64,
+                tool_count,
+                estimated_tokens
+            );
+            debug!(parent: &llm_span, "dispatching model request");
             if let Some(task) = self.current_task_ref() {
                 let context_limit = self.tracker.context_limit as u64;
                 let used_percent = if context_limit == 0 {
@@ -408,10 +457,13 @@ impl Agent {
                             self.runtime_iteration = None;
                             return Ok(CANCELLED_BY_USER_PROMPT_RESPONSE.to_string());
                         }
-                        response = self.client.chat(&request) => response,
+                        response = self.client.chat(&request).instrument(llm_span.clone()) => response,
                     }
                 } else {
-                    self.client.chat(&request).await
+                    self.client
+                        .chat(&request)
+                        .instrument(llm_span.clone())
+                        .await
                 }
             };
             if let Some(task) = self.current_task_ref() {
@@ -425,6 +477,7 @@ impl Agent {
             let response = match response_result {
                 Ok(response) => response,
                 Err(err) => {
+                    warn!(error = %err, "model request failed");
                     if let Some(task) = self.current_task_ref() {
                         let _ = self.emit_runtime_event(RuntimeEvent::Task(TaskEvent::Failed {
                             task,
@@ -464,6 +517,7 @@ impl Agent {
             let choice = match choices.next() {
                 Some(choice) => choice,
                 None => {
+                    warn!("model response had no choices");
                     self.runtime_iteration = None;
                     return Err(AgentError::EmptyResponse);
                 }
@@ -480,11 +534,29 @@ impl Agent {
                 .tool_calls
                 .as_ref()
                 .is_some_and(|tc| !tc.is_empty());
+            let llm_response_span = info_span!(
+                "gen_ai.chat.response",
+                gen_ai_system = "openai_compatible",
+                gen_ai_operation_name = "chat",
+                gen_ai_request_model = %self.config.api.model,
+                iteration = iterations as u32,
+                finish_reason = ?finish_reason,
+                tool_call_count
+            );
             if let Some(task) = self.current_task_ref() {
                 let has_content = assistant_msg
                     .content
                     .as_deref()
                     .is_some_and(|text| !text.trim().is_empty());
+                debug!(
+                    parent: &llm_response_span,
+                    finish_reason = ?finish_reason,
+                    tool_call_count,
+                    has_content,
+                    prompt_tokens = usage_snapshot.as_ref().map(|u| u.prompt_tokens),
+                    completion_tokens = usage_snapshot.as_ref().map(|u| u.completion_tokens),
+                    "received model response summary"
+                );
                 let _ = self.emit_runtime_event(RuntimeEvent::Model(ModelEvent::ResponseSummary {
                     task,
                     finish_reason,
@@ -511,6 +583,16 @@ impl Agent {
                 let tool_calls = assistant_msg.tool_calls.unwrap();
                 let mut cancelled = false;
                 for (idx, tc) in tool_calls.iter().enumerate() {
+                    let tool_span = info_span!(
+                        "gen_ai.tool.call",
+                        gen_ai_system = "openai_compatible",
+                        gen_ai_operation_name = "tool_call",
+                        gen_ai_request_model = %self.config.api.model,
+                        iteration = iterations as u32,
+                        tool_name = %tc.function.name,
+                        tool_call_id = %tc.id
+                    );
+                    debug!(parent: &tool_span, "executing tool call");
                     let tool_phase_started = Instant::now();
                     if let Some(task) = self.current_task_ref() {
                         let _ =
@@ -544,7 +626,7 @@ impl Agent {
                                 cancelled = true;
                                 CANCELLED_BY_USER_TOOL_RESULT.to_string()
                             }
-                            exec = self.tools.execute_with_context(&tc.function.name, &tc.function.arguments, &tool_context) => {
+                            exec = self.tools.execute_with_context(&tc.function.name, &tc.function.arguments, &tool_context).instrument(tool_span.clone()) => {
                                 match exec {
                                     Ok(output) => output,
                                     Err(err) => format!("Tool error: {err}"),
@@ -559,6 +641,7 @@ impl Agent {
                                 &tc.function.arguments,
                                 &tool_context,
                             )
+                            .instrument(tool_span.clone())
                             .await
                         {
                             Ok(output) => output,
@@ -586,6 +669,13 @@ impl Agent {
                             result: result.clone(),
                         }));
                     }
+                    debug!(
+                        parent: &tool_span,
+                        tool_name = %tc.function.name,
+                        result_chars = result.chars().count(),
+                        cancelled,
+                        "tool call completed"
+                    );
                     if self.config.display.show_tool_calls {
                         self.tool_result_live(&tc.function.name, &tc.function.arguments, &result);
                     }
@@ -618,6 +708,10 @@ impl Agent {
 
             // No tool calls — this is the final text response.
             let content = assistant_msg.content.unwrap_or_default();
+            debug!(
+                content_chars = content.chars().count(),
+                "agent turn completed"
+            );
             if let Some(task) = self.current_task_ref() {
                 let _ = self.emit_runtime_event(RuntimeEvent::Model(ModelEvent::MessageFinal {
                     task: task.clone(),

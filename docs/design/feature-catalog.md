@@ -23,6 +23,8 @@ For the high-level architecture narrative, see [docs/design/DESIGN.md](DESIGN.md
 - `--container <name>`: run shell/file tools in a container target.
 - `--ssh <user@host>`: run shell/file tools over SSH.
 - `--tmux [session]`: opt into tmux-backed execution and optionally set session name.
+- `--trace <path>`: write runtime events to a JSONL trace file.
+- `-v, --verbose`: increase diagnostics (`-v` info, `-vv` debug, `-vvv` trace).
 - `--no-color`: disable colored output.
 - `--dangerously-auto-approve`: in `exec` mode, bypass `run_shell` confirmations.
 

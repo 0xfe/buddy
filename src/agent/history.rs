@@ -6,6 +6,7 @@
 use super::Agent;
 use crate::tokens::TokenTracker;
 use crate::types::{Message, Role};
+use tracing::{debug, info_span};
 
 /// Minimum number of most-recent turns preserved during compaction.
 const CONTEXT_COMPACT_KEEP_RECENT_TURNS: usize = 3;
@@ -52,14 +53,27 @@ pub(super) fn compact_history_with_budget(
     target_fraction: f64,
     force: bool,
 ) -> Option<HistoryCompactionReport> {
+    let _compaction_span = info_span!(
+        "agent.history.compaction",
+        context_limit,
+        target_fraction,
+        force,
+        message_count_before = messages.len() as u64
+    )
+    .entered();
     // Guard rails: if we cannot estimate a useful budget, skip compaction.
     if context_limit == 0 || messages.is_empty() {
+        debug!("skipping compaction: empty history or zero context limit");
         return None;
     }
 
     let estimated_before = TokenTracker::estimate_messages(messages);
     let target_tokens = ((context_limit as f64) * target_fraction).floor().max(1.0) as usize;
     if !force && estimated_before <= target_tokens {
+        debug!(
+            estimated_before,
+            target_tokens, "skipping automatic compaction; target already satisfied"
+        );
         return None;
     }
 
@@ -106,6 +120,7 @@ pub(super) fn compact_history_with_budget(
     }
 
     if removed_messages.is_empty() && previous_summary.is_none() {
+        debug!("compaction produced no removable content");
         return None;
     }
 
@@ -131,6 +146,16 @@ pub(super) fn compact_history_with_budget(
         estimated_after: estimated_after as u64,
         removed_messages: removed_messages.len(),
         removed_turns,
+    })
+    .map(|report| {
+        debug!(
+            estimated_before = report.estimated_before,
+            estimated_after = report.estimated_after,
+            removed_messages = report.removed_messages,
+            removed_turns = report.removed_turns,
+            "history compaction completed"
+        );
+        report
     })
 }
 

@@ -49,6 +49,10 @@ pub struct Args {
     #[arg(long = "no-color", global = true)]
     pub no_color: bool,
 
+    /// Increase runtime diagnostics (`-v`, `-vv`, `-vvv`).
+    #[arg(short = 'v', long = "verbose", global = true, action = ArgAction::Count)]
+    pub verbose: u8,
+
     /// Write runtime events to a JSONL trace file.
     #[arg(long = "trace", global = true, value_name = "PATH")]
     pub trace: Option<String>,
@@ -205,6 +209,16 @@ mod tests {
     fn trace_flag_parses() {
         let args = Args::parse_from(["buddy", "--trace", "/tmp/buddy-trace.jsonl"]);
         assert_eq!(args.trace.as_deref(), Some("/tmp/buddy-trace.jsonl"));
+    }
+
+    // Verifies verbosity counters map to the expected numeric levels.
+    #[test]
+    fn verbose_flag_counts_occurrences() {
+        let once = Args::parse_from(["buddy", "-v"]);
+        assert_eq!(once.verbose, 1);
+
+        let thrice = Args::parse_from(["buddy", "-vvv"]);
+        assert_eq!(thrice.verbose, 3);
     }
 
     #[test]

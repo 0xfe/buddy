@@ -9,6 +9,7 @@ use crate::agent::Agent;
 use crate::runtime::{RuntimeEvent, RuntimeEventEnvelope, SessionEvent, WarningEvent};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
+use tracing::debug;
 
 /// Create a new session, persisting the current active session first if needed.
 pub(super) async fn runtime_session_new(
@@ -17,6 +18,10 @@ pub(super) async fn runtime_session_new(
     event_tx: &mpsc::UnboundedSender<RuntimeEventEnvelope>,
     seq: &mut u64,
 ) -> Result<(), String> {
+    debug!(
+        active_session = %state.active_session.as_deref().unwrap_or("none"),
+        "starting new runtime session flow"
+    );
     // Session commands are a no-op without persistence backing.
     let Some(store) = state.session_store.as_ref() else {
         return Err("session store is unavailable".to_string());
@@ -40,6 +45,7 @@ pub(super) async fn runtime_session_new(
         .create_new_session(&snapshot)
         .map_err(|e| format!("failed to create new session: {e}"))?;
     state.active_session = Some(new_id.clone());
+    debug!(session_id = %new_id, "created runtime session");
     emit_event(
         event_tx,
         seq,
@@ -56,6 +62,11 @@ pub(super) async fn runtime_session_resume(
     event_tx: &mpsc::UnboundedSender<RuntimeEventEnvelope>,
     seq: &mut u64,
 ) -> Result<(), String> {
+    debug!(
+        target_session = %session_id,
+        active_session = %state.active_session.as_deref().unwrap_or("none"),
+        "starting runtime session resume flow"
+    );
     // Session commands are a no-op without persistence backing.
     let Some(store) = state.session_store.as_ref() else {
         return Err("session store is unavailable".to_string());
@@ -82,6 +93,7 @@ pub(super) async fn runtime_session_resume(
         .save(session_id, &snapshot)
         .map_err(|e| format!("failed to refresh session {session_id}: {e}"))?;
     state.active_session = Some(session_id.to_string());
+    debug!(session_id = %session_id, "resumed runtime session");
     emit_event(
         event_tx,
         seq,
@@ -99,6 +111,10 @@ pub(super) async fn runtime_session_compact(
     event_tx: &mpsc::UnboundedSender<RuntimeEventEnvelope>,
     seq: &mut u64,
 ) -> Result<(), String> {
+    debug!(
+        active_session = %state.active_session.as_deref().unwrap_or("default"),
+        "starting runtime session compaction"
+    );
     // Compaction is performed by the agent so token accounting stays centralized.
     let report = {
         let mut guard = agent.lock().await;
@@ -133,6 +149,14 @@ pub(super) async fn runtime_session_compact(
         .active_session
         .clone()
         .unwrap_or_else(|| "default".to_string());
+    debug!(
+        session_id = %session_id,
+        removed_turns = report.removed_turns,
+        removed_messages = report.removed_messages,
+        estimated_before = report.estimated_before,
+        estimated_after = report.estimated_after,
+        "compacted runtime session"
+    );
     emit_event(
         event_tx,
         seq,

@@ -56,6 +56,7 @@ Detailed inventory: [feature-catalog.md](feature-catalog.md).
   - config/model/base-url overrides
   - `--ssh`, `--container`, `--tmux [session]`
   - `--trace <path>` (`BUDDY_TRACE_FILE` fallback) for JSONL runtime event capture
+  - `-v/--verbose` (`-vv`, `-vvv`) for structured diagnostics on stderr
   - `--no-color`
   - `--dangerously-auto-approve` for non-interactive exec guardrail override
 - Profile-based config with per-profile protocol/auth mode (`completions` vs `responses`; `api-key` vs `login`).
