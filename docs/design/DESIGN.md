@@ -42,7 +42,7 @@ main.rs + cli.rs + app/                 CLI parsing and mode orchestration
 
 ## Features
 
-Detailed inventory: [design/feature-catalog.md](design/feature-catalog.md).
+Detailed inventory: [feature-catalog.md](feature-catalog.md).
 
 ### User-facing
 
@@ -109,15 +109,15 @@ Detailed inventory: [design/feature-catalog.md](design/feature-catalog.md).
 
 ## Detail Docs
 
-- Feature inventory: [design/feature-catalog.md](design/feature-catalog.md)
-- Current module responsibility map: [design/module-map.md](design/module-map.md)
-- Runtime actor and API protocol behavior: [design/runtime-and-protocols.md](design/runtime-and-protocols.md)
-- Tool contracts and execution backends: [design/tools-and-execution.md](design/tools-and-execution.md)
-- UI regression harness approach: [testing-ui.md](testing-ui.md)
+- Feature inventory: [feature-catalog.md](feature-catalog.md)
+- Current module responsibility map: [module-map.md](module-map.md)
+- Runtime actor and API protocol behavior: [runtime-and-protocols.md](runtime-and-protocols.md)
+- Tool contracts and execution backends: [tools-and-execution.md](tools-and-execution.md)
+- UI regression harness approach: [../developer/testing-ui.md](../developer/testing-ui.md)
 
 ## Near-Term Delivery Track
 
-Current execution plan: [plans/2026-03-01-feature-requests.md](plans/2026-03-01-feature-requests.md).
+Current execution plan: [../plans/2026-03-01-feature-requests.md](../plans/2026-03-01-feature-requests.md).
 
 High-level sequence:
 

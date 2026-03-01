@@ -107,7 +107,7 @@ Legacy compatibility:
 - `AGENT_*` env vars are still accepted.
 - `agent.toml` legacy config filenames are still accepted.
 - `.agentx` legacy session/auth paths are still accepted with warnings.
-- See [docs/deprecations.md](deprecations.md) for removal timelines.
+- See [docs/developer/deprecations.md](deprecations.md) for removal timelines.
 
 ## Full config reference
 

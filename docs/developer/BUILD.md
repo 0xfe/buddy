@@ -47,8 +47,8 @@ cargo test --features fuzz-tests
 ```
 
 More detail:
-- [docs/testing-ui.md](testing-ui.md)
-- [docs/model-regression-tests.md](model-regression-tests.md)
+- [docs/developer/testing-ui.md](testing-ui.md)
+- [docs/developer/model-regression-tests.md](model-regression-tests.md)
 
 ## Release artifacts
 
@@ -69,7 +69,7 @@ make release
 ```
 
 Installer details:
-- [docs/install.md](install.md)
+- [docs/developer/install.md](install.md)
 
 ## Version helpers
 

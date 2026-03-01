@@ -2,7 +2,7 @@
 
 This document is the detailed feature inventory for Buddy. It is intentionally implementation-oriented.
 
-For the high-level architecture narrative, see [docs/DESIGN.md](../DESIGN.md).
+For the high-level architecture narrative, see [docs/design/DESIGN.md](DESIGN.md).
 
 ## CLI Surface
 

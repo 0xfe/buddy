@@ -66,7 +66,7 @@ The modularization split those files into cohesive submodules:
 3. Keep old public facades while call sites migrate.
 4. Run `cargo test` after each slice.
 5. Commit each slice separately with a behavior-preserving message.
-6. Update docs (`docs/DESIGN.md`, `README.md`, `docs/architecture.md`, `ai-state.md`) in the same milestone.
+6. Update docs (`docs/design/DESIGN.md`, `README.md`, `docs/design/architecture.md`, `ai-state.md`) in the same milestone.
 
 ## Review checklist for refactor PRs
 

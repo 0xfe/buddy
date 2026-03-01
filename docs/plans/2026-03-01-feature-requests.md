@@ -176,7 +176,7 @@ Finalize architecture and test strategy for all scoped features, including the t
 1. [x] Module boundaries documented in this plan.
 2. [x] Config schema deltas documented in this plan.
 3. [x] Baseline validation commands executed and results recorded.
-4. [x] Docs index points to UI regression approach stub (`docs/testing-ui.md`).
+4. [x] Docs index points to UI regression approach stub (`docs/developer/testing-ui.md`).
 5. [x] `DESIGN.md` includes near-term feature-request roadmap reference.
 
 ## Milestone 1: Tmux UI Integration/Regression Harness (Prerequisite)
@@ -225,7 +225,7 @@ Build an on-demand, high-signal UI test system that drives buddy inside tmux and
 
 ### Docs
 
-1. New `docs/testing-ui.md`:
+1. New `docs/developer/testing-ui.md`:
    - harness architecture,
    - running tests,
    - artifact layout,
@@ -316,8 +316,8 @@ Add first-class tmux management tools and tmux-target routing with strict owners
 ### Docs
 
 1. `DESIGN.md` features + tmux-ownership constraints.
-2. `docs/testing-ui.md` scenario catalog update for tmux management coverage.
-3. `docs/terminal-repl.md` tmux targeting semantics and snapshot rules.
+2. `docs/developer/testing-ui.md` scenario catalog update for tmux management coverage.
+3. `docs/design/terminal-repl.md` tmux targeting semantics and snapshot rules.
 
 ### Commits
 
@@ -367,7 +367,7 @@ Implement composable semantic theming after harness baseline is in place.
 ### Docs
 
 1. `README.md` theme usage and `/theme`.
-2. `docs/terminal-repl.md` semantic token model and explorer usage.
+2. `docs/design/terminal-repl.md` semantic token model and explorer usage.
 3. `DESIGN.md` feature list update.
 
 ### Commits
@@ -457,7 +457,7 @@ Upgrade init into an interactive TUI flow for setup and config updates.
 ### Docs
 
 1. `README.md` quickstart/init guidance.
-2. `docs/REFERENCE.md` init/update and first-run behavior.
+2. `docs/developer/REFERENCE.md` init/update and first-run behavior.
 
 ### Commits
 
@@ -506,7 +506,7 @@ Add cross-platform packaging/distribution and installer flow to `~/.local/bin`.
 ### Docs
 
 1. `README.md` install section.
-2. New `docs/install.md` for installer behavior/troubleshooting.
+2. New `docs/developer/install.md` for installer behavior/troubleshooting.
 
 ### Commits
 
@@ -608,11 +608,11 @@ Run final validation across all milestones and close documentation/workflow upda
 - 2026-03-01: Re-scoped to exact confirmed requests.
 - 2026-03-01: Added Milestone 1 as a hard prerequisite for tmux/asciinema UI integration regression before terminal/UI feature work.
 - 2026-03-01: Milestone 0 completed. Captured module boundaries, planned config schema deltas, and baseline validation results (`cargo test`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`), then updated docs pointers for the upcoming UI harness. Commit: `f218ec2`.
-- 2026-03-01: Milestone 1 implementation landed: added `tests/ui_tmux/` harness helpers, `tests/ui_tmux_regression.rs` ignored scenario, fake-model server, tmux `capture-pane`/`pipe-pane` checkpoints, asciinema recording, structured `report.json`, docs (`docs/testing-ui.md`), README integration notes, and Makefile test targets. Validation: opt-in suite PASS + full local gates PASS. Commit: `892ca5d`.
+- 2026-03-01: Milestone 1 implementation landed: added `tests/ui_tmux/` harness helpers, `tests/ui_tmux_regression.rs` ignored scenario, fake-model server, tmux `capture-pane`/`pipe-pane` checkpoints, asciinema recording, structured `report.json`, docs (`docs/developer/testing-ui.md`), README integration notes, and Makefile test targets. Validation: opt-in suite PASS + full local gates PASS. Commit: `892ca5d`.
 - 2026-03-01: Scope expanded to include first-class tmux management (managed session/pane lifecycle, tmux-targeted tool routing, ownership boundaries, and session/pane limits). Inserted new Milestone 2 and shifted prior Milestones 2-7 to 3-8.
 - 2026-03-01: Milestone 2 implementation complete: added managed tmux lifecycle tools (`tmux-create-session`, `tmux-kill-session`, `tmux-create-pane`, `tmux-kill-pane`), optional `session`/`pane` selectors for `run_shell`/`capture-pane`/`send-keys`, managed ownership markers and canonical naming, `[tmux]` limits (`max_sessions`, `max_panes`), target-aware default-pane snapshot injection rules, and extended ignored UI regression coverage for targeted managed-pane execution. Validation: `cargo fmt --check` PASS, `cargo test` PASS, `cargo clippy --all-targets -- -D warnings` PASS, `make test-ui-regression` PASS. Commit: `78415e4`.
 - 2026-03-01: Milestone 3 implementation complete: added `ui::theme` semantic token infrastructure with Solarized-inspired dark/light defaults, config-driven `[themes.<name>]` overrides, full renderer/prompt/progress/startup/approval color migration to theme tokens, `/theme [name|index]` picker with persisted `display.theme` updates, and a built-in preview flow to explore theme output blocks. Validation: `cargo test -q` PASS, `cargo clippy --all-targets -- -D warnings` PASS, `make test-ui-regression` PASS. Commit: `69fc204`.
 - 2026-03-01: Milestone 4 implementation complete: added build-time metadata injection (`build.rs`) and `build_info` runtime exposure, surfaced metadata in startup banner + version/help output, promoted Makefile to primary build/check/release/version-bump interface, and added release-tag GitHub Actions workflow with matrix artifact builds + publish job. Validation: `make check` PASS, `make release-artifacts` PASS, `cargo run -- --version`/`--help` metadata checks PASS. Commits: `6f0c5c9`, `2643c59`, `ed04bfd`, `8a3f447`.
-- 2026-03-01: Milestone 5 implementation complete: added first-run auto-init bootstrap (`buddy` now starts guided setup when no config exists), interactive `buddy init` existing-config actions (update/overwrite/cancel), safe `agent.model` persistence support, and login guidance prompts for login-auth profiles. Updated docs (`README.md`, `docs/REFERENCE.md`, `docs/DESIGN.md`). Validation: `cargo test -q` PASS, `cargo clippy --all-targets -- -D warnings` PASS. Commit: `5e3c8cb`.
-- 2026-03-01: Milestone 6 implementation complete: added `scripts/install.sh` curl-style installer (platform detection, explicit/latest version installs, checksum verification, `--force` idempotent reinstall semantics, offline `--from-dist` mode, and post-install `buddy init` handoff), added `docs/install.md`, wired Makefile installer targets/smoke test, and added installer smoke validation in release CI. Validation: `bash -n scripts/install.sh` PASS, `make test-installer-smoke` PASS, `cargo test -q` PASS, `cargo clippy --all-targets -- -D warnings` PASS, `cargo fmt --check` PASS. Commit: `81d2de6`.
-- 2026-03-01: Milestone 7 implementation complete: preflight now treats missing login credentials as non-fatal warnings (startup/model-switch continue), warning text includes profile-specific recovery commands (`/login <profile>` and `buddy login <profile>`), runtime model switch surfaces preflight warnings, and auth docs updated (`README.md`, `docs/REFERENCE.md`, `docs/DESIGN.md`). Validation: `cargo test -q` PASS, `cargo clippy --all-targets -- -D warnings` PASS, `cargo fmt --check` PASS. Commit: `a530dec`.
+- 2026-03-01: Milestone 5 implementation complete: added first-run auto-init bootstrap (`buddy` now starts guided setup when no config exists), interactive `buddy init` existing-config actions (update/overwrite/cancel), safe `agent.model` persistence support, and login guidance prompts for login-auth profiles. Updated docs (`README.md`, `docs/developer/REFERENCE.md`, `docs/design/DESIGN.md`). Validation: `cargo test -q` PASS, `cargo clippy --all-targets -- -D warnings` PASS. Commit: `5e3c8cb`.
+- 2026-03-01: Milestone 6 implementation complete: added `scripts/install.sh` curl-style installer (platform detection, explicit/latest version installs, checksum verification, `--force` idempotent reinstall semantics, offline `--from-dist` mode, and post-install `buddy init` handoff), added `docs/developer/install.md`, wired Makefile installer targets/smoke test, and added installer smoke validation in release CI. Validation: `bash -n scripts/install.sh` PASS, `make test-installer-smoke` PASS, `cargo test -q` PASS, `cargo clippy --all-targets -- -D warnings` PASS, `cargo fmt --check` PASS. Commit: `81d2de6`.
+- 2026-03-01: Milestone 7 implementation complete: preflight now treats missing login credentials as non-fatal warnings (startup/model-switch continue), warning text includes profile-specific recovery commands (`/login <profile>` and `buddy login <profile>`), runtime model switch surfaces preflight warnings, and auth docs updated (`README.md`, `docs/developer/REFERENCE.md`, `docs/design/DESIGN.md`). Validation: `cargo test -q` PASS, `cargo clippy --all-targets -- -D warnings` PASS, `cargo fmt --check` PASS. Commit: `a530dec`.

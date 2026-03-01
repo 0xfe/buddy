@@ -3,9 +3,9 @@
 ## 30-second orientation
 - Project: `buddy` Rust crate (`src/lib.rs`) + CLI (`src/main.rs`) for OpenAI-compatible agent workflows.
 - Core loop ownership: `Agent` orchestrates conversation/tool execution; do not duplicate loop control in other modules.
-- Canonical behavior inventory: `docs/DESIGN.md`.
-- Architecture index: `docs/architecture.md`.
-- Runtime + REPL usage/operator docs: `docs/terminal-repl.md`, `docs/tools.md`, `docs/remote-execution.md`.
+- Canonical behavior inventory: `docs/design/DESIGN.md`.
+- Architecture index: `docs/design/architecture.md`.
+- Runtime + REPL usage/operator docs: `docs/design/terminal-repl.md`, `docs/design/tools.md`, `docs/design/remote-execution.md`.
 
 ## Fast local commands
 ```bash
@@ -34,11 +34,11 @@ cargo run -- exec "prompt"
 - Global config lives at `~/.config/buddy/buddy.toml` (bootstrapped when missing).
 - Sessions persist in `.buddyx/sessions` (`.agentx` legacy fallback still supported).
 - REPL history persists in `~/.config/buddy/history` when enabled.
-- Local execution commonly uses tmux-backed contexts; see `docs/tips/tmux.md` + `docs/remote-execution.md`.
+- Local execution commonly uses tmux-backed contexts; see `docs/tips/tmux.md` + `docs/design/remote-execution.md`.
 
 ## Docs map for AI agents
-- Core docs: `README.md`, `docs/DESIGN.md`, `docs/architecture.md`.
-- Operational references: `docs/tools.md`, `docs/terminal-repl.md`, `docs/remote-execution.md`, `docs/deprecations.md`.
+- Core docs: `README.md`, `docs/design/DESIGN.md`, `docs/design/architecture.md`.
+- Operational references: `docs/design/tools.md`, `docs/design/terminal-repl.md`, `docs/design/remote-execution.md`, `docs/developer/deprecations.md`.
 - Tactical guidance: `docs/tips/*.md`.
 - Planning/history: `docs/plans/`.
 

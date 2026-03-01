@@ -8,7 +8,7 @@
   1. Streaming/runtime `S0` complete (typed runtime command/event schema).
   2. Streaming/runtime `S1` complete (agent emits runtime events with mockable model client interface).
   3. Streaming/runtime `S2` complete (interactive REPL + exec now runtime command/event-driven with runtime approval flow).
-  4. Remediation Milestone 0 artifacts landed (`ai-state` tracking, `docs/playbook-remediation.md`, shared test fixtures).
+  4. Remediation Milestone 0 artifacts landed (`ai-state` tracking, `docs/developer/playbook-remediation.md`, shared test fixtures).
   5. Remediation Milestone 1 `B1` landed (UTF-8-safe truncation helper and call-site migrations).
   6. Remediation Milestone 1 `R1` landed (centralized API/fetch timeout policy with config).
   7. Remediation Milestone 1 `S2` landed (fetch SSRF controls and domain policy).
@@ -72,7 +72,7 @@ Create repeatable repro and validation for the highest-risk behaviors before cha
 ### Tasks
 
 1. Add a remediation tracking section in `ai-state.md` with issue IDs and status.
-2. Add a `docs/playbook-remediation.md` runbook:
+2. Add a `docs/developer/playbook-remediation.md` runbook:
    - local repro commands for shell approval, fetch SSRF attempts, file write guards, large history growth, SSE edge payloads.
    - how to run offline + ignored regression suites.
 3. Add a lightweight fixture module for parser/auth/execution tests to avoid repeated setup code.
@@ -90,7 +90,7 @@ Create repeatable repro and validation for the highest-risk behaviors before cha
 ### Docs
 
 1. `ai-state.md`
-2. New `docs/playbook-remediation.md`
+2. New `docs/developer/playbook-remediation.md`
 
 ### Commit
 
@@ -138,7 +138,7 @@ Address `S2`, `S3`, `B1`, `R1` first, then tighten `S1` to fail closed safely.
 
 1. `README.md` security behavior notes for shell/fetch/files.
 2. `DESIGN.md` Features updates for guardrails and approval modes.
-3. `docs/tools.md` policy/config reference.
+3. `docs/design/tools.md` policy/config reference.
 
 ### Commits
 
@@ -185,8 +185,8 @@ Address `S4` with provider-scoped encrypted local token storage and migration.
 ### Docs
 
 1. `README.md` auth storage behavior and fallback notes.
-2. `docs/architecture.md` or `DESIGN.md` auth subsystem update.
-3. New `docs/auth-storage.md` operational notes and recovery steps.
+2. `docs/design/architecture.md` or `DESIGN.md` auth subsystem update.
+3. New `docs/design/auth-storage.md` operational notes and recovery steps.
 
 ### Commit
 
@@ -223,7 +223,7 @@ Address `B5`, `R3`, `R5`, and protocol-specific reliability gaps.
 ### Docs
 
 1. `DESIGN.md` API behavior/retry section.
-2. `docs/architecture.md` API flow update (if present), else `docs/agent-loop.md`.
+2. `docs/design/architecture.md` API flow update (if present), else `docs/design/agent-loop.md`.
 
 ### Commit
 
@@ -263,7 +263,7 @@ Address `R2`, `B2`, `B3`, `R4`.
 
 1. `README.md` session and context budget behavior.
 2. `DESIGN.md` Features updates (`/compact`, pruning, cleanup).
-3. `docs/remote-execution.md` cleanup lifecycle notes.
+3. `docs/design/remote-execution.md` cleanup lifecycle notes.
 
 ### Commits
 
@@ -346,7 +346,7 @@ Address `U1`, `U2`, `U3`, `U4`, `U5`, and `B4`.
 ### Docs
 
 1. `README.md` UX notes for streaming/history/context management.
-2. `docs/terminal-repl.md` updates for `/compact` and model-switch behavior.
+2. `docs/design/terminal-repl.md` updates for `/compact` and model-switch behavior.
 3. `DESIGN.md` feature list updates.
 
 ### Commits
@@ -387,8 +387,8 @@ Address lower-priority architecture items after stabilization (`D1`, `D2`, `D3`,
 ### Docs
 
 1. `DESIGN.md` deprecation policy and timeline.
-2. `docs/tools.md` ToolContext/backends architecture.
-3. New `docs/deprecations.md`.
+2. `docs/design/tools.md` ToolContext/backends architecture.
+3. New `docs/developer/deprecations.md`.
 
 ### Commits
 
@@ -423,7 +423,7 @@ Address lower-priority architecture items after stabilization (`D1`, `D2`, `D3`,
   - Added explicit cross-plan mapping for Milestones 5/6 to streaming `S1`-`S4`.
   - Set immediate next steps to complete `S2` and begin Milestone 0/1 remediation slices.
 - 2026-02-27: Completed Milestone 0 baseline artifacts:
-  - Added remediation runbook: `docs/playbook-remediation.md` with reproducible commands/matrix.
+  - Added remediation runbook: `docs/developer/playbook-remediation.md` with reproducible commands/matrix.
   - Added remediation tracking section to `ai-state.md`.
   - Added shared fixture module `src/testsupport.rs` and adopted it in parser/files tests.
   - Validation: `cargo test` passed (`208` lib, `31` bin, doc-tests pass).
@@ -468,7 +468,7 @@ Address lower-priority architecture items after stabilization (`D1`, `D2`, `D3`,
   - Added machine-derived encrypted auth store with DEK wrapping and AEAD per-token records.
   - Added legacy plaintext migration, tamper/error recovery messaging, and credential reset flow.
   - Added login diagnostics (`buddy login --check`) and reset path (`buddy login --reset`) used by both CLI and REPL login flow.
-  - Added auth storage docs (`docs/auth-storage.md`) and auth regression tests.
+  - Added auth storage docs (`docs/design/auth-storage.md`) and auth regression tests.
   - Validation: `cargo test` passed.
   - commit: `84724e3`
 - 2026-02-27: Completed Milestone 3 (API correctness/robustness):
@@ -522,7 +522,7 @@ Address lower-priority architecture items after stabilization (`D1`, `D2`, `D3`,
   - commit: `efb1116`
 - 2026-02-27: Completed Milestone 7 slice `C3`:
   - Added load-time config diagnostics (`load_config_with_diagnostics`) and startup warnings for deprecated `AGENT_*`, `agent.toml`, legacy `[api]`, `.agentx`, and legacy auth profile records.
-  - Added migration policy doc `docs/deprecations.md` and updated README/DESIGN/docs/tools references.
+  - Added migration policy doc `docs/developer/deprecations.md` and updated README/DESIGN/docs/tools references.
   - Validation: `cargo test -q` passed.
   - commit: `e5b09e4`
 - 2026-02-27: Completed Milestone 7 slice `T4`:

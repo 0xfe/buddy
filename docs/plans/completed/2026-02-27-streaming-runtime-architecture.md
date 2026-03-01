@@ -413,7 +413,7 @@ Commit:
   - Updated next steps to include remediation gate handoff once `S2` interactive migration completes.
 - 2026-02-27: Remediation Milestone 0 completed in parallel:
   - Added shared parser/auth/execution test fixtures in `src/testsupport.rs`.
-  - Added remediation runbook (`docs/playbook-remediation.md`) and ai-state issue tracking.
+  - Added remediation runbook (`docs/developer/playbook-remediation.md`) and ai-state issue tracking.
   - Maintains `S2` as active milestone for interactive runtime migration.
 - 2026-02-27: Parallel remediation Milestone 1 slice `B1` completed:
   - Added shared UTF-8-safe truncation helpers and migrated truncation call sites.

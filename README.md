@@ -77,7 +77,7 @@ buddy resume --last
 
 ## Configuration
 
-See config reference in [docs/REFERENCE.md](docs/REFERENCE.md).
+See config reference in [docs/developer/REFERENCE.md](docs/developer/REFERENCE.md).
 
 ## Login auth behavior
 
@@ -94,21 +94,21 @@ make check
 make release-artifacts
 ```
 
-Install/distribution details are in [docs/install.md](docs/install.md).  
-Full build, test, versioning, and release CI details are in [docs/BUILD.md](docs/BUILD.md).
+Install/distribution details are in [docs/developer/install.md](docs/developer/install.md).  
+Full build, test, versioning, and release CI details are in [docs/developer/BUILD.md](docs/developer/BUILD.md).
 
 ## Documentation map
 
-- [docs/DESIGN.md](docs/DESIGN.md): high-level architecture and current feature inventory.
-- [docs/REFERENCE.md](docs/REFERENCE.md): CLI flags/commands, REPL slash commands, config, models, themes, and tool references.
-- [docs/BUILD.md](docs/BUILD.md): build/test commands, release process, build metadata, and GitHub Actions release flow.
-- [docs/install.md](docs/install.md): curl installer, offline install mode, and troubleshooting.
-- [docs/DEVELOPER.md](docs/DEVELOPER.md): library embedding, custom tools, extension points, and developer integration notes.
+- [docs/design/DESIGN.md](docs/design/DESIGN.md): high-level architecture and current feature inventory.
+- [docs/developer/REFERENCE.md](docs/developer/REFERENCE.md): CLI flags/commands, REPL slash commands, config, models, themes, and tool references.
+- [docs/developer/BUILD.md](docs/developer/BUILD.md): build/test commands, release process, build metadata, and GitHub Actions release flow.
+- [docs/developer/install.md](docs/developer/install.md): curl installer, offline install mode, and troubleshooting.
+- [docs/developer/DEVELOPER.md](docs/developer/DEVELOPER.md): library embedding, custom tools, extension points, and developer integration notes.
 - [docs/design/](docs/design): detailed design breakdown (feature catalog, module map, runtime/protocols, tools/execution).
-- [docs/architecture.md](docs/architecture.md): module boundaries and extension points.
-- [docs/tools.md](docs/tools.md): tool schemas, guardrails, and runtime behavior.
-- [docs/remote-execution.md](docs/remote-execution.md): local/container/ssh/tmux execution model.
-- [docs/terminal-repl.md](docs/terminal-repl.md): REPL input/rendering/runtime UX details.
-- [docs/testing-ui.md](docs/testing-ui.md): tmux-based opt-in UI regression harness.
-- [docs/model-regression-tests.md](docs/model-regression-tests.md): live provider regression suite.
+- [docs/design/architecture.md](docs/design/architecture.md): module boundaries and extension points.
+- [docs/design/tools.md](docs/design/tools.md): tool schemas, guardrails, and runtime behavior.
+- [docs/design/remote-execution.md](docs/design/remote-execution.md): local/container/ssh/tmux execution model.
+- [docs/design/terminal-repl.md](docs/design/terminal-repl.md): REPL input/rendering/runtime UX details.
+- [docs/developer/testing-ui.md](docs/developer/testing-ui.md): tmux-based opt-in UI regression harness.
+- [docs/developer/model-regression-tests.md](docs/developer/model-regression-tests.md): live provider regression suite.
 - [docs/tips/](docs/tips): short tactical notes for contributors and AI agents.

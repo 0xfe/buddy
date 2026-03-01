@@ -45,7 +45,7 @@
 - Tests: runtime approval event mapping tests + prompt formatting tests + tool arg validation tests.
 
 ### M5: Docs + verification
-- Update `README.md`, `DESIGN.md`, `docs/tools.md`, `docs/remote-execution.md`, and `ai-state.md` for new behavior.
+- Update `README.md`, `DESIGN.md`, `docs/design/tools.md`, `docs/design/remote-execution.md`, and `ai-state.md` for new behavior.
 - Run full test suite.
 - Final pass on UX strings to match requested output shape.
 
@@ -83,6 +83,6 @@
   - Approval UI now renders risk + reason lines and dynamic prompt markers for `(privileged)` and `(mutation)`.
   - Added/updated unit tests for required metadata validation and approval metadata propagation.
 - 2026-02-28: M5 complete.
-  - Updated docs: `README.md`, `DESIGN.md`, `docs/tools.md`, `docs/remote-execution.md`, `ai-state.md`.
+  - Updated docs: `README.md`, `DESIGN.md`, `docs/design/tools.md`, `docs/design/remote-execution.md`, `ai-state.md`.
   - Verified full suite: `cargo test -q` (all passing).
   - Finalized formatting with `cargo fmt` and re-verified `cargo test -q`.

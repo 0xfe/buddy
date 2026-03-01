@@ -59,7 +59,7 @@ impl Tool for SendKeysTool {
             tool_type: "function".into(),
             function: FunctionDefinition {
                 name: self.name().into(),
-                description: "Send keys directly to a tmux pane (for example Ctrl-C/Ctrl-Z/Enter/arrows) to control interactive or stuck terminal programs. Common flow: run_shell with wait=false, poll with capture-pane, and send keys as needed."
+                description: "Send keys directly to a tmux pane (for example Ctrl-C/Ctrl-Z/Enter/arrows) to control interactive or stuck terminal programs. Common flow: run_shell with wait=false, poll with capture-pane, and send keys as needed. IMPORTANT: provide at most one delay field (`delay` OR `delay_ms`), not both."
                     .into(),
                 parameters: serde_json::json!({
                     "type": "object",
@@ -91,12 +91,12 @@ impl Tool for SendKeysTool {
                         },
                         "delay": {
                             "type": "string",
-                            "description": "Optional delay before sending keys, like '500ms', '2s', '1m', or '1h'."
+                            "description": "Optional delay before sending keys, like '500ms', '2s', '1m', or '1h'. Mutually exclusive with `delay_ms`."
                         },
                         "delay_ms": {
                             "type": "integer",
                             "minimum": 0,
-                            "description": "Optional delay before sending keys in milliseconds."
+                            "description": "Optional delay before sending keys in milliseconds. Mutually exclusive with `delay`."
                         },
                         "risk": {
                             "type": "string",

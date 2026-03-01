@@ -1,6 +1,6 @@
 # Developer Guide
 
-This document covers library embedding and extension points. For build/test/release commands, use [docs/BUILD.md](BUILD.md).
+This document covers library embedding and extension points. For build/test/release commands, use [docs/developer/BUILD.md](BUILD.md).
 
 ## Run from source
 
@@ -112,7 +112,7 @@ cargo run --example alternate_frontend -- "list files"
 
 ## Architecture docs
 
-- High-level: [docs/DESIGN.md](DESIGN.md)
-- Detailed module map: [docs/design/module-map.md](design/module-map.md)
-- Runtime/protocol behavior: [docs/design/runtime-and-protocols.md](design/runtime-and-protocols.md)
-- Tool/execution contracts: [docs/design/tools-and-execution.md](design/tools-and-execution.md)
+- High-level: [docs/design/DESIGN.md](../design/DESIGN.md)
+- Detailed module map: [docs/design/module-map.md](../design/module-map.md)
+- Runtime/protocol behavior: [docs/design/runtime-and-protocols.md](../design/runtime-and-protocols.md)
+- Tool/execution contracts: [docs/design/tools-and-execution.md](../design/tools-and-execution.md)

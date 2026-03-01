@@ -57,7 +57,7 @@ Fix the currently reported regressions:
   - approval command now renders in a stable tinted block before input,
   - prompt line is now compact `• approve? [y/n]`,
   - liveness-line updates are disabled while waiting for approval input to avoid redraw drift.
-- Added provider regression suite (`tests/model_regression.rs`, ignored by default) + usage doc (`docs/model-regression-tests.md`).
+- Added provider regression suite (`tests/model_regression.rs`, ignored by default) + usage doc (`docs/developer/model-regression-tests.md`).
 - Explicit regression run in this environment:
   - passed: `gpt-codex`, `gpt-spark`, `openrouter-deepseek`, `openrouter-glm`
   - failed preflight: `kimi` (missing `MOONSHOT_API_KEY`).

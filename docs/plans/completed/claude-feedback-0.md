@@ -42,7 +42,7 @@ All 30 findings were addressed across 7 milestones documented in `2026-02-27-cla
 | U5 | No persistent history | History saved to `~/.config/buddy/history` as JSON, configurable via `[display].persist_history` |
 | C1 | Monolithic main.rs | Partially addressed — runtime event/command decoupling, `CliEventRenderer` extraction, but `main.rs` grew to ~2825 lines (net larger due to runtime integration) |
 | C2 | Duplicated config logic | Shared `resolve_config_from_file_config()` used by both runtime and tests |
-| C3 | No deprecation timeline | Load-time diagnostics for `AGENT_*`, `agent.toml`, `.agentx`, legacy `[api]`; `docs/deprecations.md` with migration timeline |
+| C3 | No deprecation timeline | Load-time diagnostics for `AGENT_*`, `agent.toml`, `.agentx`, legacy `[api]`; `docs/developer/deprecations.md` with migration timeline |
 
 ### Will-Not-Fix (1/30)
 

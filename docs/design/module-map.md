@@ -2,7 +2,7 @@
 
 This is the current architectural map for `src/`, grouped by responsibility.
 
-For a high-level overview, see [docs/DESIGN.md](../DESIGN.md).
+For a high-level overview, see [docs/design/DESIGN.md](DESIGN.md).
 
 ## Entrypoints and App Wiring
 
