@@ -100,6 +100,17 @@ Detailed inventory: [docs/design/feature-catalog.md](docs/design/feature-catalog
 - Current module responsibility map: [docs/design/module-map.md](docs/design/module-map.md)
 - Runtime actor and API protocol behavior: [docs/design/runtime-and-protocols.md](docs/design/runtime-and-protocols.md)
 - Tool contracts and execution backends: [docs/design/tools-and-execution.md](docs/design/tools-and-execution.md)
+- UI regression harness approach: [docs/testing-ui.md](docs/testing-ui.md)
+
+## Near-Term Delivery Track
+
+Current execution plan: [docs/plans/2026-03-01-feature-requests.md](docs/plans/2026-03-01-feature-requests.md).
+
+High-level sequence:
+
+1. Freeze architecture/test gates (Milestone 0).
+2. Build tmux-based UI regression harness as a prerequisite for terminal UX changes (Milestone 1).
+3. Deliver requested feature slices (theme system, build metadata/release flow, init UX, packaging, login soft-fail).
 
 ## High-Level Data Flow
 

@@ -106,6 +106,7 @@ REPL input history is persisted to `~/.config/buddy/history` (disable with `disp
 - [`docs/tools.md`](docs/tools.md): built-in tool schemas, guardrails, and behavior.
 - [`docs/remote-execution.md`](docs/remote-execution.md): local/container/ssh/tmux execution model.
 - [`docs/terminal-repl.md`](docs/terminal-repl.md): REPL input, rendering, and runtime event UX.
+- [`docs/testing-ui.md`](docs/testing-ui.md): tmux-based opt-in UI regression harness approach and artifact model.
 - [`docs/tips/`](docs/tips): short tactical notes for contributors/AI agents.
 
 

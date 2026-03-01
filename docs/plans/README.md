@@ -5,5 +5,5 @@
 - When a plan is finished or no longer relevant, move it into `completed/` instead of deleting it.
 
 Current state:
-- no active plan files at this level.
+- active plan: `2026-03-01-feature-requests.md`.
 - all historical plans are archived in `docs/plans/completed/`.
