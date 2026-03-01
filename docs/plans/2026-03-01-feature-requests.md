@@ -4,7 +4,7 @@
 
 - Program status: Active
 - Scope status: Locked to the confirmed feature requests plus a required UI-test prerequisite and first-class tmux-management feature.
-- Current focus: Milestones 1-6 complete; Milestone 7 (`auth=login` soft-fail UX) next.
+- Current focus: Milestones 1-7 complete; Milestone 8 (final integration/regression/docs closure) next.
 - Completed so far:
   1. Corrected scope to the confirmed feature-request list.
   2. Added a hard prerequisite milestone for tmux-based UI integration/regression testing before terminal work.
@@ -16,10 +16,11 @@
   8. Implemented Milestone 4 with compile-time build metadata wiring, startup/version surfaces, Makefile-first build/release/version targets, and release-tag GitHub Actions automation in commits `6f0c5c9`, `2643c59`, `ed04bfd`, and `8a3f447`.
   9. Implemented Milestone 5 with first-run auto-init bootstrap, interactive `buddy init` update/overwrite flow, model-selection persistence, and login guidance in commit `5e3c8cb`.
   10. Implemented Milestone 6 with a curl-style installer (`scripts/install.sh`), idempotent reinstall semantics, post-install init handoff, dedicated install docs, Makefile smoke target, and release-CI installer validation in commit `81d2de6`.
+  11. Implemented Milestone 7 with login-auth preflight soft-fail behavior (startup/model-switch warnings instead of exit), profile-specific `/login` guidance, and auth docs updates in commit `a530dec`.
 - Next steps:
-  1. Start Milestone 7 (`auth=login` soft-fail UX).
+  1. Start Milestone 8 (final integration/regression/docs closure).
   2. Keep the UI harness suite as a pre-merge gate for terminal-facing rendering changes.
-  3. Continue with Milestone 8 after M7 acceptance.
+  3. Move this plan to `docs/plans/completed/` after Milestone 8 validation and final commit.
 
 ## Scope (Locked)
 
@@ -83,7 +84,7 @@ Required prerequisite before terminal feature work:
 - [x] Milestone 4: Build Metadata + Makefile-First + Release CI
 - [x] Milestone 5: Interactive `buddy init` + First-Run Bootstrap
 - [x] Milestone 6: Packaging + Curl Installer + Init Handoff
-- [ ] Milestone 7: `auth=login` Soft-Fail UX
+- [x] Milestone 7: `auth=login` Soft-Fail UX
 - [ ] Milestone 8: Final Integration, Regression, and Docs Closure
 
 ## Goal
@@ -555,6 +556,14 @@ Do not abort startup when login credentials are missing; provide clear recovery 
 ### Commit
 
 1. `fix(auth): soft-fail missing login credentials with /login guidance`
+2. Completed as `a530dec`.
+
+### Milestone 7 Validation Snapshot (2026-03-01)
+
+1. `cargo test -q` PASS.
+2. `cargo clippy --all-targets -- -D warnings` PASS.
+3. `cargo fmt --check` PASS.
+4. Added deterministic preflight coverage for non-fatal missing-login guidance (`src/preflight.rs`).
 
 ## Milestone 8: Final Integration, Regression, and Docs Closure
 
@@ -606,3 +615,4 @@ Run final validation across all milestones and close documentation/workflow upda
 - 2026-03-01: Milestone 4 implementation complete: added build-time metadata injection (`build.rs`) and `build_info` runtime exposure, surfaced metadata in startup banner + version/help output, promoted Makefile to primary build/check/release/version-bump interface, and added release-tag GitHub Actions workflow with matrix artifact builds + publish job. Validation: `make check` PASS, `make release-artifacts` PASS, `cargo run -- --version`/`--help` metadata checks PASS. Commits: `6f0c5c9`, `2643c59`, `ed04bfd`, `8a3f447`.
 - 2026-03-01: Milestone 5 implementation complete: added first-run auto-init bootstrap (`buddy` now starts guided setup when no config exists), interactive `buddy init` existing-config actions (update/overwrite/cancel), safe `agent.model` persistence support, and login guidance prompts for login-auth profiles. Updated docs (`README.md`, `docs/REFERENCE.md`, `docs/DESIGN.md`). Validation: `cargo test -q` PASS, `cargo clippy --all-targets -- -D warnings` PASS. Commit: `5e3c8cb`.
 - 2026-03-01: Milestone 6 implementation complete: added `scripts/install.sh` curl-style installer (platform detection, explicit/latest version installs, checksum verification, `--force` idempotent reinstall semantics, offline `--from-dist` mode, and post-install `buddy init` handoff), added `docs/install.md`, wired Makefile installer targets/smoke test, and added installer smoke validation in release CI. Validation: `bash -n scripts/install.sh` PASS, `make test-installer-smoke` PASS, `cargo test -q` PASS, `cargo clippy --all-targets -- -D warnings` PASS, `cargo fmt --check` PASS. Commit: `81d2de6`.
+- 2026-03-01: Milestone 7 implementation complete: preflight now treats missing login credentials as non-fatal warnings (startup/model-switch continue), warning text includes profile-specific recovery commands (`/login <profile>` and `buddy login <profile>`), runtime model switch surfaces preflight warnings, and auth docs updated (`README.md`, `docs/REFERENCE.md`, `docs/DESIGN.md`). Validation: `cargo test -q` PASS, `cargo clippy --all-targets -- -D warnings` PASS, `cargo fmt --check` PASS. Commit: `a530dec`.
