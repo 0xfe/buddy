@@ -6,6 +6,7 @@ use crate::app::commands::model::{configured_model_profile_names, resolve_model_
 #[cfg(test)]
 use crate::app::commands::session::handle_session_command;
 use crate::app::commands::session::resume_request_from_command;
+use crate::app::init_flow::{maybe_run_auto_init, run_init_flow, InitInvocation};
 #[cfg(test)]
 use crate::app::tasks::background_liveness_line;
 #[cfg(test)]
@@ -17,11 +18,9 @@ use buddy::auth::{
     login_provider_key_for_base_url, provider_login_health, reset_provider_tokens,
     save_provider_tokens, start_openai_device_login, supports_openai_login, try_open_browser,
 };
-use buddy::config::ensure_default_global_config;
-use buddy::config::initialize_default_global_config;
 use buddy::config::load_config_with_diagnostics;
 use buddy::config::select_model_profile;
-use buddy::config::{AuthMode, Config, GlobalConfigInitResult, ToolsConfig};
+use buddy::config::{AuthMode, Config, ToolsConfig};
 use buddy::preflight::validate_active_profile_ready;
 use buddy::prompt::{render_system_prompt, ExecutionTarget, SystemPromptParams};
 #[cfg(test)]
@@ -100,11 +99,19 @@ pub(crate) async fn run(args: crate::cli::Args) -> i32 {
 
     let bootstrap_renderer = Renderer::new(!args.no_color);
     if let Some(cli::Command::Init { force }) = args.command.as_ref() {
-        if let Err(msg) = run_init_flow(&bootstrap_renderer, *force) {
+        if let Err(msg) = run_init_flow(
+            &bootstrap_renderer,
+            InitInvocation::Manual { force: *force },
+        ) {
             bootstrap_renderer.error(&msg);
             return 1;
         }
         return 0;
+    }
+
+    if let Err(msg) = maybe_run_auto_init(&bootstrap_renderer, &args) {
+        bootstrap_renderer.error(&msg);
+        return 1;
     }
 
     let loaded = match load_config_state(&args) {
@@ -221,10 +228,6 @@ struct ToolSetup {
 
 /// Load config, apply CLI overrides, and collect startup diagnostics/warnings.
 fn load_config_state(args: &crate::cli::Args) -> Result<LoadedConfigState, String> {
-    if let Err(err) = ensure_default_global_config() {
-        eprintln!("warning: failed to initialize ~/.config/buddy/buddy.toml: {err}");
-    }
-
     let loaded =
         load_config_with_diagnostics(args.config.as_deref()).map_err(|err| err.to_string())?;
     let mut config = loaded.config;
@@ -494,31 +497,6 @@ fn build_tools(
     ToolSetup {
         tools,
         shell_approval_rx,
-    }
-}
-
-/// Handle `buddy init` flow and render user-facing status messages.
-fn run_init_flow(renderer: &dyn RenderSink, force: bool) -> Result<(), String> {
-    match initialize_default_global_config(force)
-        .map_err(|e| format!("failed to initialize ~/.config/buddy: {e}"))?
-    {
-        GlobalConfigInitResult::Created { path } => {
-            renderer.section("initialized buddy config");
-            renderer.field("path", &path.display().to_string());
-            eprintln!();
-            Ok(())
-        }
-        GlobalConfigInitResult::Overwritten { path, backup_path } => {
-            renderer.section("reinitialized buddy config");
-            renderer.field("path", &path.display().to_string());
-            renderer.field("backup", &backup_path.display().to_string());
-            eprintln!();
-            Ok(())
-        }
-        GlobalConfigInitResult::AlreadyInitialized { path } => Err(format!(
-            "buddy is already initialized at {}. Use `buddy init --force` to overwrite.",
-            path.display()
-        )),
     }
 }
 

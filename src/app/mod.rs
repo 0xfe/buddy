@@ -11,6 +11,8 @@ pub(crate) mod commands;
 pub(crate) mod entry;
 /// One-shot exec mode orchestration.
 pub(crate) mod exec_mode;
+/// `buddy init` interactive flow + first-run bootstrap helpers.
+pub(crate) mod init_flow;
 /// Shared slash-command dispatch for REPL/approval prompts.
 pub(crate) mod repl_loop;
 /// Interactive REPL mode orchestration.

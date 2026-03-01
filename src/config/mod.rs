@@ -128,6 +128,14 @@ pub fn persist_display_theme(
     persist::persist_display_theme(path_override, theme)
 }
 
+/// Persist `[agent].model` to the effective config file.
+pub fn persist_agent_model(
+    path_override: Option<&str>,
+    model: &str,
+) -> Result<PathBuf, ConfigError> {
+    persist::persist_agent_model(path_override, model)
+}
+
 /// Switch the active profile to a configured `[models.<name>]` entry.
 pub fn select_model_profile(config: &mut Config, profile_name: &str) -> Result<(), ConfigError> {
     selector::select_model_profile(config, profile_name)

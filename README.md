@@ -27,16 +27,54 @@ The default config template (`src/templates/buddy.toml`) includes tested profile
 make build
 make install
 
-# Initialize config under ~/.config/buddy
+# First run auto-starts guided init when no config exists.
+# You can run init again later to update/overwrite settings.
+buddy
 buddy init
 $EDITOR ~/.config/buddy/buddy.toml
 
 # Optional: login flow for auth = "login" profiles
 buddy login
 
-# Start REPL (tmux-backed by default)
+# Start buddy operating on the local host (and connect to the tmux session)
 buddy
+tmux attach -t buddy # on a separate terminal
+
+# Operate a remote host (in tmux on the remote host)
+buddy --ssh user@host
+
+# Operate a docker container
+buddy --container my-container
+
+# Other handy commands
+buddy exec <prompt>
+buddy resume <session-id>
+buddy resume --last
 ```
+
+## REPL slash commands
+
+| Command | Description |
+|---------|-------------|
+| `/status` | Show current model, base URL, enabled tools, and session counters. |
+| `/model [name\|index]` | Switch configured model profile (`/model` with no args opens picker). |
+| `/theme [name\|index]` | Switch terminal theme (`/theme` with no args opens picker), persist config, and render preview blocks. |
+| `/login [name\|index]` | Check/start login flow for a configured profile. |
+| `/context` | Show estimated context usage and token stats. |
+| `/compact` | Summarize and trim older turns to reclaim context budget. |
+| `/ps` | Show running background tasks with IDs and elapsed time. |
+| `/kill <id>` | Cancel a running background task by ID. |
+| `/timeout <duration> [id]` | Set timeout for a background task. |
+| `/approve ask|all|none|<duration>` | Configure shell approval policy for this REPL session. |
+| `/session` | List saved sessions ordered by last use. |
+| `/session resume <session-id\|last>` | Resume a session by ID or most recent. |
+| `/session new` | Create and switch to a new generated session ID. |
+| `/help` | Show slash command help (only when no tasks are running). |
+| `/quit` `/exit` `/q` | Exit interactive mode (only when no tasks are running). |
+
+## Configuration
+
+See config reference in [docs/REFERENCE.md](docs/REFERENCE.md).
 
 ## Build and release
 
