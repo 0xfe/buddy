@@ -3,17 +3,23 @@
 //! This module defines the user-facing command surface and leaves all runtime
 //! behavior to higher-level orchestration code (`main.rs` / `agent.rs`).
 
-use clap::{Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand};
 
 /// An AI agent for the terminal. Works with OpenAI-compatible APIs.
 #[derive(Debug, Parser)]
 #[command(
     name = "buddy",
     version = buddy::build_info::VERSION,
-    long_version = buddy::build_info::LONG_VERSION,
+    long_version = buddy::build_info::VERSION,
+    after_help = buddy::build_info::HELP_BUILD_METADATA,
+    disable_version_flag = true,
     subcommand_required = false
 )]
 pub struct Args {
+    /// Print version/commit/build metadata.
+    #[arg(short = 'V', long = "version", global = true, action = ArgAction::SetTrue)]
+    pub version: bool,
+
     /// Path to config file (default: ./buddy.toml or ~/.config/buddy/buddy.toml).
     #[arg(short = 'c', long = "config", global = true)]
     pub config: Option<String>,
@@ -102,6 +108,7 @@ mod tests {
     fn no_args_defaults_to_repl_mode() {
         let args = Args::parse_from(["buddy"]);
         assert!(args.command.is_none());
+        assert!(!args.version);
     }
 
     // Confirms one-shot execution captures prompt text as a positional argument.
@@ -194,9 +201,18 @@ mod tests {
         // The clap command should include the compile-time extended version block.
         let cmd = Args::command();
         assert_eq!(cmd.get_version(), Some(buddy::build_info::VERSION));
-        assert_eq!(
-            cmd.get_long_version(),
-            Some(buddy::build_info::LONG_VERSION)
-        );
+        assert_eq!(cmd.get_long_version(), Some(buddy::build_info::VERSION));
+        let mut help = Vec::<u8>::new();
+        cmd.clone().write_long_help(&mut help).unwrap();
+        let help_text = String::from_utf8(help).unwrap();
+        assert!(help_text.contains("Build metadata:"));
+    }
+
+    #[test]
+    fn version_flag_parses_with_no_subcommand() {
+        // `buddy --version` should route through the manual version path.
+        let args = Args::parse_from(["buddy", "--version"]);
+        assert!(args.version);
+        assert!(args.command.is_none());
     }
 }

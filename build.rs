@@ -14,15 +14,12 @@ fn main() {
     println!("cargo:rerun-if-env-changed=BUDDY_BUILD_GIT_HASH");
     println!("cargo:rerun-if-env-changed=BUDDY_BUILD_TIMESTAMP");
 
-    let version = env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "unknown".to_string());
     let git_hash = env::var("BUDDY_BUILD_GIT_HASH").unwrap_or_else(|_| git_short_hash());
     let build_timestamp =
         env::var("BUDDY_BUILD_TIMESTAMP").unwrap_or_else(|_| build_timestamp_utc());
-    let long_version = format!("{version}\ncommit: {git_hash}\nbuilt: {build_timestamp}");
 
     println!("cargo:rustc-env=BUDDY_BUILD_GIT_HASH={git_hash}");
     println!("cargo:rustc-env=BUDDY_BUILD_TIMESTAMP={build_timestamp}");
-    println!("cargo:rustc-env=BUDDY_LONG_VERSION={long_version}");
 }
 
 fn emit_head_ref_watch() {

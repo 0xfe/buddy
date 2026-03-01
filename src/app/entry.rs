@@ -93,6 +93,11 @@ pub(crate) async fn run(args: crate::cli::Args) -> i32 {
     // 1) handle init/login early-return commands,
     // 2) load + validate config/runtime setup,
     // 3) dispatch into one-shot exec mode or interactive REPL mode.
+    if args.version {
+        println!("{}", buddy::build_info::cli_version_text());
+        return 0;
+    }
+
     let bootstrap_renderer = Renderer::new(!args.no_color);
     if let Some(cli::Command::Init { force }) = args.command.as_ref() {
         if let Err(msg) = run_init_flow(&bootstrap_renderer, *force) {
