@@ -11,6 +11,11 @@ This page centralizes command, flag, model, theme, config, and tool reference ma
 - `buddy init [--force]`: guided init flow for `~/.config/buddy/buddy.toml` (update existing config, overwrite with backup, or cancel).
 - `buddy login [model] [--check] [--reset]`: login/check/reset provider credentials for a model profile.
 
+Login soft-fail behavior:
+
+- If the active profile uses `auth = "login"` and no saved credentials exist, startup/model switching stays available.
+- Buddy surfaces a warning with exact recovery commands: `/login <profile>` or `buddy login <profile>`.
+
 ## Global flags
 
 | Flag | Description |

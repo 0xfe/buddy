@@ -3,22 +3,39 @@
 //! These checks run before startup and model switches to surface common
 //! configuration/auth mistakes as actionable errors instead of raw API failures.
 
-use crate::auth::{load_provider_tokens, login_provider_key_for_base_url, supports_openai_login};
+use crate::auth::{
+    load_provider_tokens, login_provider_key_for_base_url, supports_openai_login, AuthError,
+    OAuthTokens,
+};
 use crate::config::{AuthMode, Config, ModelConfig};
 use std::net::IpAddr;
 
+/// Result payload for active-profile preflight checks.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProfilePreflight {
+    /// Non-fatal startup warnings surfaced to the user.
+    pub warnings: Vec<String>,
+}
+
 /// Validate that the currently active profile can be used for requests.
-pub fn validate_active_profile_ready(config: &Config) -> Result<(), String> {
+pub fn validate_active_profile_ready(config: &Config) -> Result<ProfilePreflight, String> {
     // Validate URL and model shape first so later auth errors are not masking
     // malformed profile data.
     let base_url = validate_base_url(config)?;
     validate_model_name(config)?;
 
     let profile = config.models.get(&config.api.profile);
+    let mut warnings = Vec::new();
     match config.api.auth {
-        AuthMode::ApiKey => validate_api_key_mode(config, profile, &base_url),
-        AuthMode::Login => validate_login_mode(config),
+        AuthMode::ApiKey => validate_api_key_mode(config, profile, &base_url)?,
+        AuthMode::Login => {
+            if let Some(warning) = validate_login_mode(config)? {
+                warnings.push(warning);
+            }
+        }
     }
+
+    Ok(ProfilePreflight { warnings })
 }
 
 /// Validate API base URL syntax and scheme.
@@ -115,7 +132,15 @@ fn validate_api_key_mode(
 }
 
 /// Validate login-based auth configuration and credential availability.
-fn validate_login_mode(config: &Config) -> Result<(), String> {
+fn validate_login_mode(config: &Config) -> Result<Option<String>, String> {
+    validate_login_mode_with(config, load_provider_tokens)
+}
+
+/// Validate login-mode profile shape and token availability via injected loader.
+fn validate_login_mode_with<F>(config: &Config, load_tokens: F) -> Result<Option<String>, String>
+where
+    F: Fn(&str) -> Result<Option<OAuthTokens>, AuthError>,
+{
     if !supports_openai_login(&config.api.base_url) {
         return Err(format!(
             "profile `{}` uses `auth = \"login\"`, but base URL `{}` is not an OpenAI login endpoint",
@@ -130,12 +155,12 @@ fn validate_login_mode(config: &Config) -> Result<(), String> {
         ));
     };
 
-    match load_provider_tokens(provider) {
-        Ok(Some(_)) => Ok(()),
-        Ok(None) => Err(format!(
-            "provider `{}` requires login auth, but no saved login was found. Run `buddy login` (or `/login` inside REPL).",
-            provider
-        )),
+    match load_tokens(provider) {
+        Ok(Some(_)) => Ok(None),
+        Ok(None) => Ok(Some(format!(
+            "provider `{}` requires login auth, but no saved login was found. Run `buddy login {}` (or `/login {}` inside REPL).",
+            provider, config.api.profile, config.api.profile
+        ))),
         Err(err) => Err(format!(
             "failed to load login credentials for provider `{}`: {err}",
             provider
@@ -225,6 +250,28 @@ mod tests {
         profile.api_key.clear();
         profile.api_key_env = None;
         profile.api_key_file = None;
-        assert!(validate_active_profile_ready(&cfg).is_ok());
+        let report = validate_active_profile_ready(&cfg).expect("should pass");
+        assert!(report.warnings.is_empty());
+    }
+
+    // Missing login credentials should be non-fatal and surface guidance.
+    #[test]
+    fn preflight_warns_when_login_tokens_missing() {
+        let mut cfg = Config::default();
+        cfg.api.profile = "gpt-codex".to_string();
+        cfg.api.auth = AuthMode::Login;
+        cfg.api.base_url = "https://api.openai.com/v1".to_string();
+        cfg.api.model = "gpt-5.3-codex".to_string();
+        let warning = validate_login_mode_with(&cfg, |_provider| Ok(None))
+            .expect("non-fatal warning should pass");
+        let report = ProfilePreflight {
+            warnings: warning.into_iter().collect(),
+        };
+        assert_eq!(report.warnings.len(), 1);
+        assert!(
+            report.warnings[0].contains("buddy login gpt-codex"),
+            "warning: {}",
+            report.warnings[0]
+        );
     }
 }

@@ -413,17 +413,20 @@ async fn handle_runtime_command(
                 );
                 return false;
             }
-            if let Err(err) = validate_active_profile_ready(&next) {
-                emit_event(
-                    event_tx,
-                    seq,
-                    RuntimeEvent::Error(ErrorEvent {
-                        task: None,
-                        message: err,
-                    }),
-                );
-                return false;
-            }
+            let preflight = match validate_active_profile_ready(&next) {
+                Ok(report) => report,
+                Err(err) => {
+                    emit_event(
+                        event_tx,
+                        seq,
+                        RuntimeEvent::Error(ErrorEvent {
+                            task: None,
+                            message: err,
+                        }),
+                    );
+                    return false;
+                }
+            };
 
             // Keep the runtime config in sync with the agent's active API config.
             state.config = next.clone();
@@ -443,6 +446,16 @@ async fn handle_runtime_command(
                             api_mode_label(previous_protocol, previous_auth),
                             api_mode_label(next.api.protocol, next.api.auth)
                         ),
+                    }),
+                );
+            }
+            for warning in preflight.warnings {
+                emit_event(
+                    event_tx,
+                    seq,
+                    RuntimeEvent::Warning(WarningEvent {
+                        task: None,
+                        message: warning,
                     }),
                 );
             }

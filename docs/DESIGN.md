@@ -58,6 +58,9 @@ Detailed inventory: [design/feature-catalog.md](design/feature-catalog.md).
   - `--no-color`
   - `--dangerously-auto-approve` for non-interactive exec guardrail override
 - Profile-based config with per-profile protocol/auth mode (`completions` vs `responses`; `api-key` vs `login`).
+- Login auth startup behavior:
+  - missing login credentials are surfaced as warnings (non-fatal startup/model-switch),
+  - user guidance points to `/login <profile>` and `buddy login <profile>`.
 - Built-in tools:
   - `run_shell`, `read_file`, `write_file`, `fetch_url`, `web_search`, `capture-pane`, `send-keys`, `time`
   - tmux lifecycle tools: `tmux-create-session`, `tmux-kill-session`, `tmux-create-pane`, `tmux-kill-pane`

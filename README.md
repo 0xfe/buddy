@@ -79,6 +79,12 @@ buddy resume --last
 
 See config reference in [docs/REFERENCE.md](docs/REFERENCE.md).
 
+## Login auth behavior
+
+- Profiles using `auth = "login"` no longer hard-fail startup when credentials are missing.
+- Buddy starts normally and shows guidance to run `/login <profile>` (or `buddy login <profile>`).
+- Requests on that profile still require valid saved login credentials.
+
 ## Build and release
 
 Keep `make` as the primary workflow:

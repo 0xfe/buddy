@@ -291,7 +291,10 @@ async fn prepare_runtime_setup(
                 .to_string(),
         );
     }
-    validate_active_profile_ready(&loaded.config)?;
+    let preflight = validate_active_profile_ready(&loaded.config)?;
+    for warning in preflight.warnings {
+        renderer.warn(&warning);
+    }
 
     let is_exec_command = matches!(args.command.as_ref(), Some(cli::Command::Exec { .. }));
     match enforce_exec_shell_guardrails(
