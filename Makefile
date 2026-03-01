@@ -11,21 +11,23 @@ ARTIFACT_STEM := $(BIN_NAME)-v$(CRATE_VERSION)-$(HOST_TRIPLE)
 SHA256_CMD := $(shell if command -v shasum >/dev/null 2>&1; then echo "shasum -a 256"; elif command -v sha256sum >/dev/null 2>&1; then echo "sha256sum"; else echo ""; fi)
 
 .PHONY: help build build-debug run run-exec install clean \
-	test test-ui-regression test-model-regression \
+	test test-ui-regression test-model-regression test-installer-smoke \
 	fmt fmt-check clippy check release release-artifacts version \
-	bump-patch bump-minor bump-major bump-set
+	bump-patch bump-minor bump-major bump-set install-from-release
 
 help:
 	@echo "buddy make targets:"
 	@echo "  make build               Build release binary"
 	@echo "  make build-debug         Build debug binary"
 	@echo "  make test                Run cargo test"
+	@echo "  make test-installer-smoke Run offline installer smoke test"
 	@echo "  make fmt                 Format sources"
 	@echo "  make fmt-check           Check formatting"
 	@echo "  make clippy              Run clippy with warnings as errors"
 	@echo "  make check               Run fmt-check + clippy + test"
 	@echo "  make release             Run checks and create release artifact"
 	@echo "  make release-artifacts   Package release tarball + checksum"
+	@echo "  make install-from-release Install from latest GitHub release (curl-style script)"
 	@echo "  make install             Install binary to ~/.local/bin"
 	@echo "  make version             Print Cargo.toml version"
 	@echo "  make bump-patch          Bump patch version in Cargo.toml"
@@ -62,6 +64,12 @@ test-ui-regression:
 test-model-regression:
 	env -u BUDDY_API_KEY -u AGENT_API_KEY -u BUDDY_BASE_URL -u AGENT_BASE_URL -u BUDDY_MODEL -u AGENT_MODEL cargo test --test model_regression -- --ignored --nocapture
 
+test-installer-smoke: release-artifacts
+	@tmp="$$(mktemp -d)"; \
+		./scripts/install.sh --from-dist "$(DIST_DIR)" --version "v$(CRATE_VERSION)" --install-dir "$$tmp/bin" --skip-init; \
+		./scripts/install.sh --from-dist "$(DIST_DIR)" --version "v$(CRATE_VERSION)" --install-dir "$$tmp/bin" --skip-init; \
+		"$$tmp/bin/$(BIN_NAME)" --version >/dev/null
+
 fmt:
 	cargo fmt
 
@@ -87,6 +95,9 @@ release-artifacts: build
 		cd "$(DIST_DIR)" && $(SHA256_CMD) "$(ARTIFACT_STEM).tar.gz" > "$(ARTIFACT_STEM).tar.gz.sha256"; \
 	fi
 	@echo "wrote $(DIST_DIR)/$(ARTIFACT_STEM).tar.gz"
+
+install-from-release:
+	curl -fsSL https://raw.githubusercontent.com/0xfe/buddy/main/scripts/install.sh | bash
 
 version:
 	@echo "$(CRATE_VERSION)"

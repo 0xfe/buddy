@@ -10,8 +10,10 @@ Core targets:
 make build          # cargo build --release
 make build-debug    # cargo build
 make test           # cargo test
+make test-installer-smoke # offline installer smoke test
 make check          # fmt --check + clippy -D warnings + test
 make install        # install to ~/.local/bin
+make install-from-release # curl-style install script
 ```
 
 Other useful targets:
@@ -65,6 +67,9 @@ Full local release gate:
 ```bash
 make release
 ```
+
+Installer details:
+- [docs/install.md](install.md)
 
 ## Version helpers
 

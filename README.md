@@ -23,7 +23,10 @@ The default config template (`src/templates/buddy.toml`) includes tested profile
 ## Quickstart
 
 ```bash
-# Build and install
+# Option A: install from release (curl-style)
+curl -fsSL https://raw.githubusercontent.com/0xfe/buddy/main/scripts/install.sh | bash
+
+# Option B: build from source and install
 make build
 make install
 
@@ -85,6 +88,7 @@ make check
 make release-artifacts
 ```
 
+Install/distribution details are in [docs/install.md](docs/install.md).  
 Full build, test, versioning, and release CI details are in [docs/BUILD.md](docs/BUILD.md).
 
 ## Documentation map
@@ -92,6 +96,7 @@ Full build, test, versioning, and release CI details are in [docs/BUILD.md](docs
 - [docs/DESIGN.md](docs/DESIGN.md): high-level architecture and current feature inventory.
 - [docs/REFERENCE.md](docs/REFERENCE.md): CLI flags/commands, REPL slash commands, config, models, themes, and tool references.
 - [docs/BUILD.md](docs/BUILD.md): build/test commands, release process, build metadata, and GitHub Actions release flow.
+- [docs/install.md](docs/install.md): curl installer, offline install mode, and troubleshooting.
 - [docs/DEVELOPER.md](docs/DEVELOPER.md): library embedding, custom tools, extension points, and developer integration notes.
 - [docs/design/](docs/design): detailed design breakdown (feature catalog, module map, runtime/protocols, tools/execution).
 - [docs/architecture.md](docs/architecture.md): module boundaries and extension points.

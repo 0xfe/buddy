@@ -23,6 +23,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Run make check
         run: make check
+      - name: Run installer smoke test
+        run: make test-installer-smoke
 
   release-artifacts:
     name: release artifacts (${{ matrix.os }})
