@@ -25,7 +25,7 @@ use backend::ssh::{
 use contracts::ExecutionBackendOps;
 use process::{
     detect_container_engine, ensure_success, run_container_tmux_sh_process, run_process,
-    run_sh_process, run_ssh_raw_process, shell_quote,
+    run_sh_process, run_ssh_raw_process,
 };
 #[cfg(test)]
 use std::path::PathBuf;
@@ -38,7 +38,6 @@ use types::ContainerEngine;
 use types::ContainerEngineKind;
 use types::{
     ContainerContext, ContainerTmuxContext, ExecOutput, LocalBackend, LocalTmuxContext, SshContext,
-    TMUX_WINDOW_NAME,
 };
 
 pub use types::{
@@ -264,17 +263,6 @@ impl ExecutionContext {
                     &owner_prefix,
                     &owner_prefix,
                     requested_tmux_session.as_deref(),
-                )?;
-                let session_q = shell_quote(&session_name);
-                let window_q = shell_quote(TMUX_WINDOW_NAME);
-                let script = format!(
-                    "tmux has-session -t {session_q} 2>/dev/null || tmux new-session -d -s {session_q} -n {window_q}"
-                );
-                let tmux_result =
-                    run_ssh_raw_process(&target, &control_path, &script, None).await?;
-                ensure_success(
-                    tmux_result,
-                    format!("failed to create remote tmux session {session_name}"),
                 )?;
                 Ok(Some(session_name))
             } else if requested_tmux_session.is_some() {

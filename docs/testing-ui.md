@@ -61,6 +61,12 @@ Artifacts include:
 
 Artifacts are intentionally preserved for both pass and fail runs.
 
+Tmux cleanup behavior:
+
+1. Harness always kills its own detached session on teardown.
+2. Harness also kills the buddy-managed tmux session derived from the scenario session name to prevent session leaks across runs.
+3. Regression scenarios explicitly assert that the derived buddy-managed session does not exist after teardown.
+
 ## Commands
 
 Opt-in direct cargo command:

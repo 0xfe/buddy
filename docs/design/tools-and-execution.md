@@ -229,6 +229,13 @@ Buddy standardizes managed tmux behavior across local/SSH/container:
 
 Prompt initialization installs command markers used by run parser logic.
 
+Prompt-bootstrap requirement:
+
+- Prompt marker bootstrap runs only when a managed pane is newly created.
+- Reused/existing panes are not re-bootstrapped.
+- SSH, local, and container paths must follow the same rule.
+- Startup must ensure that first-time SSH tmux setup does not pre-create the session outside pane-ensure flow; otherwise new-pane detection is lost and marker bootstrap may be skipped.
+
 ## Tmux Command Completion Parsing
 
 For tmux-backed `run_shell wait=true|timeout`:

@@ -9,8 +9,9 @@ use serde_json::json;
 use std::fs;
 use std::time::Duration;
 use ui_tmux::{
-    assertion_report_json, built_buddy_binary, record_contains_assertion, verify_tooling_prereqs,
-    write_ui_regression_config, AssertionRecord, MockModelServer, ScenarioArtifacts, TmuxHarness,
+    assertion_report_json, built_buddy_binary, record_contains_assertion, tmux_session_exists,
+    verify_tooling_prereqs, write_ui_regression_config, AssertionRecord, MockModelServer,
+    ScenarioArtifacts, TmuxHarness,
 };
 
 /// Full REPL flow regression: startup banner/prompt, spinner, approval, command output, and final prompt.
@@ -174,6 +175,13 @@ fn run_scenario(
     let _command =
         tmux.wait_until_command_exits(&["asciinema", "buddy"], Duration::from_secs(30))?;
     tmux.disable_pipe_logging();
+    let managed_session = tmux.managed_session_name();
+    tmux.cleanup();
+    if tmux_session_exists(&managed_session)? {
+        return Err(format!(
+            "managed ui regression tmux session leaked after cleanup: {managed_session}"
+        ));
+    }
 
     let request_count = server.request_count();
     let request_expect = json!({ "expected_requests": 2, "actual_requests": request_count });
@@ -300,6 +308,13 @@ fn run_tmux_management_scenario(
     let _command =
         tmux.wait_until_command_exits(&["asciinema", "buddy"], Duration::from_secs(30))?;
     tmux.disable_pipe_logging();
+    let managed_session = tmux.managed_session_name();
+    tmux.cleanup();
+    if tmux_session_exists(&managed_session)? {
+        return Err(format!(
+            "managed ui regression tmux session leaked after cleanup: {managed_session}"
+        ));
+    }
 
     let request_count = server.request_count();
     let request_expect = json!({ "expected_requests": 3, "actual_requests": request_count });
