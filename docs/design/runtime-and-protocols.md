@@ -115,8 +115,8 @@ Core loop (`Agent::send`) behavior:
 1. sanitize existing conversation history
 2. append user message
 3. enforce context budget (warning, auto-compaction, hard-limit error)
-4. refresh dynamic tmux snapshot section in system prompt (when available)
-5. build `ChatRequest` with message history + tool definitions
+4. build request-scoped tmux context message (when available)
+5. build `ChatRequest` with static history + dynamic request context + tool definitions
 6. call model client
 7. record usage metrics if provided
 8. normalize assistant message and reasoning traces

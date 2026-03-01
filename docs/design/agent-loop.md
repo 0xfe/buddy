@@ -114,12 +114,14 @@ If usage remains above the hard threshold after compaction, the send fails with
 
 ### Step 3 — Build the request
 
-Each iteration constructs a fresh `ChatRequest`:
+Each iteration constructs a fresh `ChatRequest`. The system prompt in history
+stays static; when available, Buddy injects a request-scoped tmux context
+message between the system prefix and the conversational history:
 
 ```rust
 ChatRequest {
     model: "gpt-5.3-codex",
-    messages: self.messages.clone(),   // full history
+    messages: request_messages,        // system prefix + dynamic turn context + history
     tools: Some(self.tools.definitions()),
     temperature: ...,
     top_p: ...,

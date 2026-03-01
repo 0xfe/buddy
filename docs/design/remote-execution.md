@@ -120,8 +120,8 @@ the pane disappears (e.g. the user closes it), `ensure_tmux_pane` recreates it
 on the next command.
 
 When startup reuses an existing managed pane, buddy captures a pane screenshot
-and injects it into the rendered system prompt so the model can detect when no
-shell prompt is currently available.
+and feeds it as request-scoped context (not a mutable system prompt) so the
+model can detect when no shell prompt is currently available.
 
 ---
 

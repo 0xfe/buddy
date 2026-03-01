@@ -44,8 +44,8 @@ tmux execution model (follow exactly):
 5) Use `target` only as a legacy escape hatch when you already know an exact tmux target like `%7`.
 6) If a tmux tool reports "tmux target not found", retry once with no `target`/`session`/`pane`.
 
-When tmux tools are available, this prompt includes a fresh DEFAULT SHARED PANE screenshot before
-each model request when default-pane execution is active. Always inspect that screenshot before
+When tmux tools are available, request context includes a fresh DEFAULT SHARED PANE screenshot
+before each model request when default-pane execution is active. Always inspect that screenshot before
 trying to run commands.
 If there is no usable shell prompt, do not run `run_shell` yet: tell the user what is blocking the
 pane, suggest how to stop it, and offer to do it safely via `send-keys`.

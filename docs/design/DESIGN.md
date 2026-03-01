@@ -81,7 +81,8 @@ Detailed inventory: [feature-catalog.md](feature-catalog.md).
   - session control (`/session ...`) and context compaction (`/compact`)
 - Prompt behavior:
   - one template render path with runtime tool/target context
-  - dynamic tmux screenshot block refresh before each model request when available
+  - static system prompt across turns
+  - request-scoped tmux context message refresh before each model request when available
 - Output/rendering behavior:
   - semantic theme-token rendering with built-in `dark`/`light` palettes and optional `[themes.<name>]` overrides
   - startup banner includes build metadata (version, commit hash, build timestamp)
@@ -116,6 +117,7 @@ Detailed inventory: [feature-catalog.md](feature-catalog.md).
 - Feature inventory: [feature-catalog.md](feature-catalog.md)
 - Current module responsibility map: [module-map.md](module-map.md)
 - Runtime actor and API protocol behavior: [runtime-and-protocols.md](runtime-and-protocols.md)
+- Prompt architecture: [prompt.md](prompt.md)
 - Model/provider behavior matrix: [models.md](models.md)
 - Tool contracts and execution backends: [tools-and-execution.md](tools-and-execution.md)
 - UI regression harness approach: [../developer/testing-ui.md](../developer/testing-ui.md)

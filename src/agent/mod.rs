@@ -13,7 +13,7 @@ use crate::runtime::{
 };
 use crate::tokens::{self, TokenTracker};
 use crate::tools::{ToolContext, ToolRegistry};
-use crate::types::{ChatRequest, Message};
+use crate::types::{ChatRequest, Message, Role};
 use crate::ui::render::Renderer;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
@@ -368,7 +368,6 @@ impl Agent {
                 return Err(AgentError::MaxIterationsReached);
             }
 
-            self.refresh_dynamic_tmux_snapshot_prompt().await;
             if let Err(err) = self.enforce_context_budget() {
                 if let Some(task) = self.current_task_ref() {
                     let _ = self.emit_runtime_event(RuntimeEvent::Task(TaskEvent::Failed {
@@ -386,15 +385,18 @@ impl Agent {
             } else {
                 Some(self.tools.definitions())
             };
+            let dynamic_turn_context = self.build_dynamic_turn_context_message().await;
+            let request_messages =
+                build_request_messages(&self.messages, dynamic_turn_context.as_ref());
 
             let request = ChatRequest {
                 model: self.config.api.model.clone(),
-                messages: self.messages.clone(),
+                messages: request_messages,
                 tools: tool_defs,
                 temperature: self.config.agent.temperature,
                 top_p: self.config.agent.top_p,
             };
-            let estimated_tokens = TokenTracker::estimate_messages(&self.messages) as u64;
+            let estimated_tokens = TokenTracker::estimate_messages(&request.messages) as u64;
             let tool_count = request.tools.as_ref().map_or(0, |tools| tools.len() as u64);
             let llm_span = info_span!(
                 "gen_ai.chat.request",
@@ -757,6 +759,30 @@ fn initial_messages(config: &Config) -> Vec<Message> {
     }
 }
 
+/// Build request-scoped message list by injecting optional dynamic context.
+///
+/// Dynamic turn context is inserted immediately after leading system messages
+/// so provider-visible instruction ordering stays stable:
+/// system messages -> dynamic context -> conversational history.
+fn build_request_messages(
+    base_messages: &[Message],
+    dynamic_context: Option<&Message>,
+) -> Vec<Message> {
+    let Some(context) = dynamic_context else {
+        return base_messages.to_vec();
+    };
+
+    let system_prefix_len = base_messages
+        .iter()
+        .take_while(|message| message.role == Role::System)
+        .count();
+    let mut combined = Vec::with_capacity(base_messages.len() + 1);
+    combined.extend_from_slice(&base_messages[..system_prefix_len]);
+    combined.push(context.clone());
+    combined.extend_from_slice(&base_messages[system_prefix_len..]);
+    combined
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -978,6 +1004,33 @@ mod tests {
         assert_eq!(agent.config.api.base_url, "https://example.com/v1");
         assert_eq!(agent.config.api.model, "moonshot-v1");
         assert_eq!(agent.tracker.context_limit, 42_000);
+    }
+
+    // Verifies dynamic turn context is inserted after leading system messages.
+    #[test]
+    fn build_request_messages_inserts_dynamic_context_after_system_prefix() {
+        let base = vec![
+            Message::system("system-one"),
+            Message::system("system-two"),
+            Message::user("user"),
+        ];
+        let dynamic = Message::user("dynamic-context");
+        let built = build_request_messages(&base, Some(&dynamic));
+        assert_eq!(built.len(), 4);
+        assert_eq!(built[0].content.as_deref(), Some("system-one"));
+        assert_eq!(built[1].content.as_deref(), Some("system-two"));
+        assert_eq!(built[2].content.as_deref(), Some("dynamic-context"));
+        assert_eq!(built[3].content.as_deref(), Some("user"));
+    }
+
+    // Verifies helper does not alter message ordering when no dynamic context is provided.
+    #[test]
+    fn build_request_messages_without_dynamic_context_is_passthrough() {
+        let base = vec![Message::system("system"), Message::user("user")];
+        let built = build_request_messages(&base, None);
+        assert_eq!(built.len(), 2);
+        assert_eq!(built[0].content.as_deref(), Some("system"));
+        assert_eq!(built[1].content.as_deref(), Some("user"));
     }
 
     // Verifies history compaction keeps system prefix and recent turns while shrinking history.
@@ -1311,9 +1364,9 @@ mod tests {
         assert_eq!(labels, expected);
     }
 
-    // Verifies dynamic tmux snapshot prompt is replaced each request, not appended.
+    // Verifies tmux snapshot context rotates per request while system prompt remains static.
     #[tokio::test]
-    async fn tmux_snapshot_prompt_is_replaced_each_request() {
+    async fn tmux_snapshot_context_rotates_without_mutating_system_prompt() {
         let first = ChatResponse {
             id: "r1".to_string(),
             choices: vec![Choice {
@@ -1383,10 +1436,22 @@ mod tests {
             .content
             .as_deref()
             .unwrap_or_default();
+        let first_dynamic_context = requests[0].messages[1]
+            .content
+            .as_deref()
+            .unwrap_or_default();
+        let second_dynamic_context = requests[1].messages[1]
+            .content
+            .as_deref()
+            .unwrap_or_default();
 
-        assert!(first_system.contains("snapshot-one"));
-        assert!(!first_system.contains("snapshot-two"));
-        assert!(second_system.contains("snapshot-two"));
-        assert!(!second_system.contains("snapshot-one"));
+        assert_eq!(first_system, "base system prompt");
+        assert_eq!(second_system, "base system prompt");
+        assert!(first_dynamic_context.contains("snapshot-one"));
+        assert!(!first_dynamic_context.contains("snapshot-two"));
+        assert!(second_dynamic_context.contains("snapshot-two"));
+        assert!(!second_dynamic_context.contains("snapshot-one"));
+        assert_eq!(requests[0].messages[1].role, Role::User);
+        assert_eq!(requests[1].messages[1].role, Role::User);
     }
 }

@@ -187,10 +187,11 @@ Selector behavior:
   `tmux-create-pane`, `tmux-kill-pane`) are available and require approval
   metadata (`risk`, `mutation`, `privesc`, `why`).
 
-For model guidance, the dynamic system prompt injects the latest screenshot of
-the **default shared pane** before each request. If the latest tmux-targeted
-tool call explicitly selected a non-default session/pane, default-pane
-screenshot injection is skipped for that request.
+For model guidance, Buddy injects a request-scoped tmux context message with
+the latest screenshot of the **default shared pane** before each request. If
+the latest tmux-targeted tool call explicitly selected a non-default
+session/pane, Buddy omits the default-pane screenshot and injects a
+non-default target context note instead.
 
 ---
 

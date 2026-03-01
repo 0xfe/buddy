@@ -266,10 +266,10 @@ All tool outputs are wrapped as JSON:
   - enabled tools
   - execution target note (local/container/ssh)
   - optional custom operator instructions
-- When `capture-pane` is available, Buddy refreshes a tmux snapshot block before each model request.
-- Snapshot text is explicitly labeled as the default shared-pane screenshot.
-- When the most recent tmux tool call targets a non-default session/pane, default-pane snapshot injection is skipped for that request.
-- Snapshot block is replaced in-place in the primary system message (not accumulated across turns).
+- System prompt remains static across turns for cache friendliness.
+- When `capture-pane` is available, Buddy injects a request-scoped tmux context message before each model request.
+- Snapshot context is explicitly labeled as default shared-pane output and framed as plain terminal text, not instructions.
+- When the most recent tmux tool call targets a non-default session/pane, Buddy omits default-pane screenshot injection and emits a non-default target context note for that request.
 
 ## Rendering and Output Behavior
 
