@@ -4,7 +4,7 @@
 
 - Program status: Active
 - Scope status: Locked to the confirmed feature requests plus a required UI-test prerequisite and first-class tmux-management feature.
-- Current focus: Milestones 1-5 complete; Milestone 6 (packaging + curl installer) next.
+- Current focus: Milestones 1-6 complete; Milestone 7 (`auth=login` soft-fail UX) next.
 - Completed so far:
   1. Corrected scope to the confirmed feature-request list.
   2. Added a hard prerequisite milestone for tmux-based UI integration/regression testing before terminal work.
@@ -15,10 +15,11 @@
   7. Implemented Milestone 3 with semantic theme tokens, built-in dark/light palettes, config-driven custom theme overrides, `/theme` picker+persistence+preview flow, and palette-only renderer migration in commit `69fc204`.
   8. Implemented Milestone 4 with compile-time build metadata wiring, startup/version surfaces, Makefile-first build/release/version targets, and release-tag GitHub Actions automation in commits `6f0c5c9`, `2643c59`, `ed04bfd`, and `8a3f447`.
   9. Implemented Milestone 5 with first-run auto-init bootstrap, interactive `buddy init` update/overwrite flow, model-selection persistence, and login guidance in commit `5e3c8cb`.
+  10. Implemented Milestone 6 with a curl-style installer (`scripts/install.sh`), idempotent reinstall semantics, post-install init handoff, dedicated install docs, Makefile smoke target, and release-CI installer validation in commit `81d2de6`.
 - Next steps:
-  1. Start Milestone 6 (packaging + curl installer + init handoff).
+  1. Start Milestone 7 (`auth=login` soft-fail UX).
   2. Keep the UI harness suite as a pre-merge gate for terminal-facing rendering changes.
-  3. Continue with Milestones 7-8 after M6 acceptance.
+  3. Continue with Milestone 8 after M7 acceptance.
 
 ## Scope (Locked)
 
@@ -81,7 +82,7 @@ Required prerequisite before terminal feature work:
 - [x] Milestone 3: Theme Library + `/theme` + Theme Explorer
 - [x] Milestone 4: Build Metadata + Makefile-First + Release CI
 - [x] Milestone 5: Interactive `buddy init` + First-Run Bootstrap
-- [ ] Milestone 6: Packaging + Curl Installer + Init Handoff
+- [x] Milestone 6: Packaging + Curl Installer + Init Handoff
 - [ ] Milestone 7: `auth=login` Soft-Fail UX
 - [ ] Milestone 8: Final Integration, Regression, and Docs Closure
 
@@ -510,6 +511,15 @@ Add cross-platform packaging/distribution and installer flow to `~/.local/bin`.
 
 1. `feat(dist): add packaging and curl installer for macos and linux`
 2. `feat(installer): add post-install init handoff and idempotent behavior`
+3. Completed as `81d2de6`.
+
+### Milestone 6 Validation Snapshot (2026-03-01)
+
+1. `bash -n scripts/install.sh` PASS.
+2. `make test-installer-smoke` PASS.
+3. `cargo test -q` PASS.
+4. `cargo clippy --all-targets -- -D warnings` PASS.
+5. `cargo fmt --check` PASS.
 
 ## Milestone 7: `auth=login` Soft-Fail UX
 
@@ -595,3 +605,4 @@ Run final validation across all milestones and close documentation/workflow upda
 - 2026-03-01: Milestone 3 implementation complete: added `ui::theme` semantic token infrastructure with Solarized-inspired dark/light defaults, config-driven `[themes.<name>]` overrides, full renderer/prompt/progress/startup/approval color migration to theme tokens, `/theme [name|index]` picker with persisted `display.theme` updates, and a built-in preview flow to explore theme output blocks. Validation: `cargo test -q` PASS, `cargo clippy --all-targets -- -D warnings` PASS, `make test-ui-regression` PASS. Commit: `69fc204`.
 - 2026-03-01: Milestone 4 implementation complete: added build-time metadata injection (`build.rs`) and `build_info` runtime exposure, surfaced metadata in startup banner + version/help output, promoted Makefile to primary build/check/release/version-bump interface, and added release-tag GitHub Actions workflow with matrix artifact builds + publish job. Validation: `make check` PASS, `make release-artifacts` PASS, `cargo run -- --version`/`--help` metadata checks PASS. Commits: `6f0c5c9`, `2643c59`, `ed04bfd`, `8a3f447`.
 - 2026-03-01: Milestone 5 implementation complete: added first-run auto-init bootstrap (`buddy` now starts guided setup when no config exists), interactive `buddy init` existing-config actions (update/overwrite/cancel), safe `agent.model` persistence support, and login guidance prompts for login-auth profiles. Updated docs (`README.md`, `docs/REFERENCE.md`, `docs/DESIGN.md`). Validation: `cargo test -q` PASS, `cargo clippy --all-targets -- -D warnings` PASS. Commit: `5e3c8cb`.
+- 2026-03-01: Milestone 6 implementation complete: added `scripts/install.sh` curl-style installer (platform detection, explicit/latest version installs, checksum verification, `--force` idempotent reinstall semantics, offline `--from-dist` mode, and post-install `buddy init` handoff), added `docs/install.md`, wired Makefile installer targets/smoke test, and added installer smoke validation in release CI. Validation: `bash -n scripts/install.sh` PASS, `make test-installer-smoke` PASS, `cargo test -q` PASS, `cargo clippy --all-targets -- -D warnings` PASS, `cargo fmt --check` PASS. Commit: `81d2de6`.
