@@ -17,7 +17,7 @@
   9. Implemented Milestone 5 with first-run auto-init bootstrap, interactive `buddy init` update/overwrite flow, model-selection persistence, and login guidance in commit `5e3c8cb`.
   10. Implemented Milestone 6 with a curl-style installer (`scripts/install.sh`), idempotent reinstall semantics, post-install init handoff, dedicated install docs, Makefile smoke target, and release-CI installer validation in commit `81d2de6`.
   11. Implemented Milestone 7 with login-auth preflight soft-fail behavior (startup/model-switch warnings instead of exit), profile-specific `/login` guidance, and auth docs updates in commit `a530dec`.
-  12. Closed Milestone 8 with full validation (`fmt`, `clippy`, `test`, UI regression, model regression), docs consistency pass, and final integration fixes in commits `4ca8c5f` and `8edbcf4`.
+  12. Closed Milestone 8 with full validation (`fmt`, `clippy`, `test`, UI regression, model regression), docs consistency pass, final integration fixes in commits `4ca8c5f` and `8edbcf4`, and plan archival in commit `f3e64c0`.
 - Next steps:
   1. Keep the UI harness suite as a pre-merge gate for terminal-facing rendering changes.
   2. Keep model regression as an explicit opt-in release-candidate gate.
@@ -612,7 +612,8 @@ Run final validation across all milestones and close documentation/workflow upda
 5. `make test-model-regression`: PASS (ignored model regression suite, 1 test validating configured default profiles).
 6. Integration follow-up fixes landed in:
    - `4ca8c5f` (docs layout + tool-delay clarification),
-   - `8edbcf4` (hermetic runtime switch-model test + default/tool alignment).
+   - `8edbcf4` (hermetic runtime switch-model test + default/tool alignment),
+   - `f3e64c0` (Milestone 8 closure and plan archival).
 
 ## Execution Log
 
@@ -628,4 +629,4 @@ Run final validation across all milestones and close documentation/workflow upda
 - 2026-03-01: Milestone 5 implementation complete: added first-run auto-init bootstrap (`buddy` now starts guided setup when no config exists), interactive `buddy init` existing-config actions (update/overwrite/cancel), safe `agent.model` persistence support, and login guidance prompts for login-auth profiles. Updated docs (`README.md`, `docs/developer/REFERENCE.md`, `docs/design/DESIGN.md`). Validation: `cargo test -q` PASS, `cargo clippy --all-targets -- -D warnings` PASS. Commit: `5e3c8cb`.
 - 2026-03-01: Milestone 6 implementation complete: added `scripts/install.sh` curl-style installer (platform detection, explicit/latest version installs, checksum verification, `--force` idempotent reinstall semantics, offline `--from-dist` mode, and post-install `buddy init` handoff), added `docs/developer/install.md`, wired Makefile installer targets/smoke test, and added installer smoke validation in release CI. Validation: `bash -n scripts/install.sh` PASS, `make test-installer-smoke` PASS, `cargo test -q` PASS, `cargo clippy --all-targets -- -D warnings` PASS, `cargo fmt --check` PASS. Commit: `81d2de6`.
 - 2026-03-01: Milestone 7 implementation complete: preflight now treats missing login credentials as non-fatal warnings (startup/model-switch continue), warning text includes profile-specific recovery commands (`/login <profile>` and `buddy login <profile>`), runtime model switch surfaces preflight warnings, and auth docs updated (`README.md`, `docs/developer/REFERENCE.md`, `docs/design/DESIGN.md`). Validation: `cargo test -q` PASS, `cargo clippy --all-targets -- -D warnings` PASS, `cargo fmt --check` PASS. Commit: `a530dec`.
-- 2026-03-01: Milestone 8 closed: executed final integration gates (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `make test-ui-regression`, `make test-model-regression`) with all PASS; verified release/make workflow consistency and finalized docs alignment. Follow-up commits included docs/tooling alignment (`4ca8c5f`) and hermetic CI/runtime default-model fixes (`8edbcf4`).
+- 2026-03-01: Milestone 8 closed: executed final integration gates (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `make test-ui-regression`, `make test-model-regression`) with all PASS; verified release/make workflow consistency and finalized docs alignment. Follow-up commits included docs/tooling alignment (`4ca8c5f`), hermetic CI/runtime default-model fixes (`8edbcf4`), and plan archival (`f3e64c0`).
