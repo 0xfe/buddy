@@ -4,15 +4,16 @@
 
 - Program status: Active
 - Scope status: Locked to actionable items from `docs/plans/review-2026-03-01-claude-feedback.md`, sequenced for lowest-risk delivery.
-- Current focus: Milestone 2 (logging/verbosity and span model) is next.
+- Current focus: Milestone 3 (prompt context architecture) is next.
 - Completed so far:
   1. Reviewed `docs/plans/review-2026-03-01-claude-feedback.md` end-to-end.
   2. Mapped priority recommendations into an execution board with validation gates.
   3. Implemented first Milestone 1 slice: `--trace` + `BUDDY_TRACE_FILE`, JSONL runtime-event sink wiring in REPL/exec, and best-effort redaction.
   4. Completed Milestone 1 event completeness: phase durations, task metadata threading (session/iteration/correlation), request/response summaries, and compaction stats in runtime events.
+  5. Completed Milestone 2: `-v/-vv/-vvv`, structured logging subscriber wiring, and span instrumentation for runtime commands, turns, model requests/responses, tool calls, and compaction paths.
 - Next steps:
-  1. Start Milestone 2 (`--verbose`, tracing subscriber, span coverage).
-  2. Keep JSONL trace sink compatible with verbosity layers.
+  1. Start Milestone 3 (static system prompt + dynamic snapshot turn-context split).
+  2. Keep Milestone 2 logging/tracing behavior stable while prompt architecture changes land.
 
 ## Goal
 
@@ -68,7 +69,7 @@ Out of scope for this plan:
 
 - [ ] Milestone 0: Baseline, Repro Matrix, and Design Freeze
 - [x] Milestone 1: Tracing Foundation (`--trace`, JSONL sink, event completeness)
-- [ ] Milestone 2: Logging/Verbosity and Span Model
+- [x] Milestone 2: Logging/Verbosity and Span Model
 - [ ] Milestone 3: Prompt Context Architecture (static system + dynamic snapshot as turn context)
 - [ ] Milestone 4: Compaction Integrity and Error-Preserving Memory
 - [ ] Milestone 5: Prompt and Tooling Reliability Hardening
@@ -450,3 +451,12 @@ Close the loop with analysis tooling, cost metrics, and regression confidence.
    - expanded runtime/agent tests to verify new event ordering and metadata propagation,
    - validated with `cargo fmt` and `cargo test` (full suite).
    - commit: `911a305`.
+4. 2026-03-01: Finished Milestone 2:
+   - added `-v/-vv/-vvv` CLI verbosity levels and a `tracing-subscriber` bootstrap path in `main`,
+   - added `BUDDY_LOG`/`RUST_LOG` filter support with component noise guards (`reqwest/hyper/h2/rustls`),
+   - introduced span instrumentation for runtime commands, session operations, prompt turns, model request/response, tool calls, and history/session compaction,
+   - kept JSONL runtime-event tracing independent and compatible with verbose logging,
+   - expanded tests for CLI verbosity parsing and logging filter resolution,
+   - updated observability/developer/reference docs for verbosity and tracing usage,
+   - validated with `cargo fmt` and `cargo test` (full suite).
+   - commit: `d680cdc`.
