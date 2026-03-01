@@ -21,6 +21,8 @@ pub(crate) mod repl_mode;
 pub(crate) mod startup;
 /// Background-task and runtime-event state helpers.
 pub(crate) mod tasks;
+/// Runtime event trace-file support.
+pub(crate) mod trace;
 
 /// Binary entrypoint used by `main`.
 pub(crate) use entry::run;

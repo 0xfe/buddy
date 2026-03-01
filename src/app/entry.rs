@@ -11,6 +11,7 @@ use crate::app::init_flow::{maybe_run_auto_init, run_init_flow, InitInvocation};
 use crate::app::tasks::background_liveness_line;
 #[cfg(test)]
 use crate::app::tasks::{process_runtime_events, ProcessRuntimeEventsContext};
+use crate::app::trace::resolve_trace_path;
 use crate::cli;
 use buddy::agent::Agent;
 use buddy::auth::{
@@ -151,6 +152,7 @@ pub(crate) async fn run(args: crate::cli::Args) -> i32 {
             return 1;
         }
     };
+    let trace_path = resolve_trace_path(&args);
 
     if let Some(cli::Command::Exec { prompt }) = args.command.as_ref() {
         return crate::app::exec_mode::run_exec_mode(
@@ -158,6 +160,7 @@ pub(crate) async fn run(args: crate::cli::Args) -> i32 {
             runtime_setup.agent,
             runtime_setup.config,
             prompt.clone(),
+            trace_path,
         )
         .await;
     }
@@ -171,6 +174,7 @@ pub(crate) async fn run(args: crate::cli::Args) -> i32 {
         agent: runtime_setup.agent,
         resume_request: runtime_setup.resume_request,
         shell_approval_rx: runtime_setup.shell_approval_rx,
+        trace_path,
     })
     .await
 }

@@ -3,7 +3,7 @@
 **Date:** 2026-02-28
 **Reviewer:** Claude (Sonnet 4.6)
 **Scope:** Post-remediation review — security hardening gaps, new code introduced during remediation, architecture evolution
-**Baseline:** All 30 findings from `claude-feedback-0.md` addressed; ~10,500 lines added across 51 files; 258 lib + 37 bin tests pass.
+**Baseline:** All 30 findings from `review-2026-02-27-claude-feedback-round-1.md` addressed; ~10,500 lines added across 51 files; 258 lib + 37 bin tests pass.
 
 ---
 

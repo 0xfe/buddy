@@ -27,6 +27,7 @@ Login soft-fail behavior:
 | `--container <name>` | Execute shell/file tools inside a running container. |
 | `--ssh <user@host>` | Execute shell/file tools over SSH. |
 | `--tmux [session]` | Use tmux-backed execution; optional custom session name. |
+| `--trace <path>` | Write runtime events to a JSONL trace file. |
 | `--no-color` | Disable ANSI colors. |
 | `--dangerously-auto-approve` | In `exec` mode, bypass shell approvals. |
 
@@ -91,8 +92,8 @@ Commonly overridden tokens:
 
 Highest precedence wins:
 
-1. CLI flags (`--config`, `--model`, `--base-url`, `--container`, `--ssh`, `--tmux`, `--no-color`, `--dangerously-auto-approve`)
-2. Environment variables (`BUDDY_API_KEY`, `BUDDY_BASE_URL`, `BUDDY_MODEL`, `BUDDY_API_TIMEOUT_SECS`, `BUDDY_FETCH_TIMEOUT_SECS`)
+1. CLI flags (`--config`, `--model`, `--base-url`, `--container`, `--ssh`, `--tmux`, `--trace`, `--no-color`, `--dangerously-auto-approve`)
+2. Environment variables (`BUDDY_API_KEY`, `BUDDY_BASE_URL`, `BUDDY_MODEL`, `BUDDY_API_TIMEOUT_SECS`, `BUDDY_FETCH_TIMEOUT_SECS`, `BUDDY_TRACE_FILE`)
 3. Local config (`./buddy.toml`)
 4. Global config (`~/.config/buddy/buddy.toml`)
 5. Built-in defaults

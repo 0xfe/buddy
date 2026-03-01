@@ -3,7 +3,7 @@
 ## Status
 
 - Current milestone: Completed
-- Current status: `S0`-`S5` complete (integrated with `docs/plans/completed/2026-02-27-claude-feedback-remediation-plan.md`)
+- Current status: `S0`-`S5` complete (integrated with `docs/plans/completed/plan-2026-02-27-claude-feedback-remediation.md`)
 - Next steps:
   1. Runtime plan is in maintenance mode; drive new work through remediation post-M7 backlog slices.
   2. Keep model-regression and runtime parity checks as release gates when runtime event contracts change.
@@ -408,7 +408,7 @@ Commit:
   - Ran `cargo fmt --all`.
   - Ran `cargo test` (all passing: 205 lib tests, 31 main tests, doc tests pass; network regression ignored by default).
 - 2026-02-27: Cross-plan integration update:
-  - Synchronized this plan with `2026-02-27-claude-feedback-remediation-plan.md`.
+  - Synchronized this plan with `plan-2026-02-27-claude-feedback-remediation.md`.
   - Added explicit remediation linkage for `S1`-`S5`.
   - Updated next steps to include remediation gate handoff once `S2` interactive migration completes.
 - 2026-02-27: Remediation Milestone 0 completed in parallel:

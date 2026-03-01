@@ -49,6 +49,10 @@ pub struct Args {
     #[arg(long = "no-color", global = true)]
     pub no_color: bool,
 
+    /// Write runtime events to a JSONL trace file.
+    #[arg(long = "trace", global = true, value_name = "PATH")]
+    pub trace: Option<String>,
+
     /// In `buddy exec`, bypass shell confirmation prompts and auto-approve
     /// `run_shell` commands. Dangerous: use only in trusted contexts.
     #[arg(
@@ -194,6 +198,13 @@ mod tests {
     fn dangerously_auto_approve_flag_parses() {
         let args = Args::parse_from(["buddy", "--dangerously-auto-approve", "exec", "hi"]);
         assert!(args.dangerously_auto_approve);
+    }
+
+    // Verifies optional runtime trace path parsing.
+    #[test]
+    fn trace_flag_parses() {
+        let args = Args::parse_from(["buddy", "--trace", "/tmp/buddy-trace.jsonl"]);
+        assert_eq!(args.trace.as_deref(), Some("/tmp/buddy-trace.jsonl"));
     }
 
     #[test]

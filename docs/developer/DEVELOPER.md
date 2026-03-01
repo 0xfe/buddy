@@ -7,6 +7,7 @@ This document covers library embedding and extension points. For build/test/rele
 ```bash
 cargo run -- exec "your prompt here"
 cargo run
+cargo run -- --trace /tmp/buddy.trace.jsonl
 ```
 
 ## Use as a library

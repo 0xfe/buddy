@@ -6,6 +6,7 @@
 - Canonical behavior inventory: `docs/design/DESIGN.md`.
 - Architecture index: `docs/design/architecture.md`.
 - Runtime + REPL usage/operator docs: `docs/design/terminal-repl.md`, `docs/design/tools.md`, `docs/design/remote-execution.md`.
+- Observability docs: `docs/design/observability.md` (`--trace`, `BUDDY_TRACE_FILE`, JSONL runtime-event traces).
 
 ## Fast local commands
 ```bash
@@ -13,6 +14,7 @@ cargo build
 cargo test
 cargo run
 cargo run -- exec "prompt"
+cargo run -- --trace /tmp/buddy.trace.jsonl
 ```
 
 ## High-value file map

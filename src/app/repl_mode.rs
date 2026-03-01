@@ -19,6 +19,7 @@ use crate::app::tasks::{
     background_liveness_line, collect_runtime_events, drain_completed_tasks, enforce_task_timeouts,
     process_runtime_events, ProcessRuntimeEventsContext,
 };
+use crate::app::trace::RuntimeTraceWriter;
 use buddy::agent::Agent;
 use buddy::config::default_history_path;
 use buddy::config::Config;
@@ -34,6 +35,7 @@ use buddy::tools::execution::ExecutionContext;
 use buddy::tools::shell::ShellApprovalRequest;
 use buddy::ui::render::{set_progress_enabled, RenderSink, Renderer};
 use buddy::ui::terminal as term_ui;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 
@@ -59,6 +61,8 @@ pub(crate) struct ReplModeInputs<'a> {
     pub resume_request: Option<ResumeRequest>,
     /// Shell approval request stream (present when tool confirmations are enabled).
     pub shell_approval_rx: Option<mpsc::UnboundedReceiver<ShellApprovalRequest>>,
+    /// Optional runtime event trace output path.
+    pub trace_path: Option<PathBuf>,
 }
 
 /// Run the interactive REPL loop until EOF/cancel/quit.
@@ -78,6 +82,7 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
         mut agent,
         resume_request,
         mut shell_approval_rx,
+        trace_path,
     } = inputs;
 
     if default_uses_legacy_root() {
@@ -144,6 +149,16 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
     let mut runtime_context =
         RuntimeContextState::new(config.api.context_limit.map(|limit| limit as u64));
     let mut last_prompt_context_used_percent: Option<u16> = None;
+    let mut trace_writer =
+        trace_path
+            .as_deref()
+            .and_then(|path| match RuntimeTraceWriter::open(path) {
+                Ok(writer) => Some(writer),
+                Err(err) => {
+                    renderer.warn(&err);
+                    None
+                }
+            });
 
     loop {
         // Keep runtime-derived state fresh before each prompt cycle.
@@ -155,6 +170,7 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
         )
         .await;
         collect_runtime_events(&mut runtime_events, &mut pending_runtime_events);
+        write_runtime_trace(renderer, trace_writer.as_mut(), &pending_runtime_events);
         let mut runtime_event_context = ProcessRuntimeEventsContext {
             renderer,
             background_tasks: &mut background_tasks,
@@ -345,6 +361,7 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
         }
 
         collect_runtime_events(&mut runtime_events, &mut pending_runtime_events);
+        write_runtime_trace(renderer, trace_writer.as_mut(), &pending_runtime_events);
         let mut runtime_event_context = ProcessRuntimeEventsContext {
             renderer,
             background_tasks: &mut background_tasks,
@@ -522,6 +539,23 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
     }
     let _ = runtime.send(RuntimeCommand::Shutdown).await;
     0
+}
+
+/// Write pending runtime events to the optional JSONL trace writer.
+fn write_runtime_trace(
+    renderer: &dyn RenderSink,
+    trace_writer: Option<&mut RuntimeTraceWriter>,
+    events: &[buddy::runtime::RuntimeEventEnvelope],
+) {
+    let Some(writer) = trace_writer else {
+        return;
+    };
+    for envelope in events {
+        if let Some(warning) = writer.write_envelope(envelope) {
+            renderer.warn(&warning);
+            break;
+        }
+    }
 }
 
 /// Render `/help` slash-command listing.

@@ -3,12 +3,14 @@
 //! This module keeps `buddy exec` runtime flow out of `app::entry::run` so
 //! the top-level entrypoint can focus on setup and dispatch.
 
+use crate::app::trace::RuntimeTraceWriter;
 use buddy::agent::Agent;
 use buddy::config::Config;
 use buddy::runtime::{
     spawn_runtime_with_agent, ModelEvent, PromptMetadata, RuntimeCommand, RuntimeEvent, TaskEvent,
 };
 use buddy::ui::render::RenderSink;
+use std::path::PathBuf;
 
 /// Execute a single prompt through the runtime actor and exit.
 pub(crate) async fn run_exec_mode(
@@ -16,6 +18,7 @@ pub(crate) async fn run_exec_mode(
     agent: Agent,
     config: Config,
     prompt: String,
+    trace_path: Option<PathBuf>,
 ) -> i32 {
     // Exec-mode flow:
     // 1) submit exactly one prompt,
@@ -38,7 +41,22 @@ pub(crate) async fn run_exec_mode(
 
     let mut final_response: Option<String> = None;
     let mut failure_message: Option<String> = None;
+    let mut trace_writer =
+        trace_path
+            .as_deref()
+            .and_then(|path| match RuntimeTraceWriter::open(path) {
+                Ok(writer) => Some(writer),
+                Err(err) => {
+                    renderer.warn(&err);
+                    None
+                }
+            });
     while let Some(envelope) = events.recv().await {
+        if let Some(writer) = trace_writer.as_mut() {
+            if let Some(warning) = writer.write_envelope(&envelope) {
+                renderer.warn(&warning);
+            }
+        }
         match envelope.event {
             RuntimeEvent::Model(ModelEvent::MessageFinal { content, .. }) => {
                 final_response = Some(content);

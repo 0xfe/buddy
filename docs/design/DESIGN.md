@@ -55,6 +55,7 @@ Detailed inventory: [feature-catalog.md](feature-catalog.md).
 - Global targeting and runtime flags:
   - config/model/base-url overrides
   - `--ssh`, `--container`, `--tmux [session]`
+  - `--trace <path>` (`BUDDY_TRACE_FILE` fallback) for JSONL runtime event capture
   - `--no-color`
   - `--dangerously-auto-approve` for non-interactive exec guardrail override
 - Profile-based config with per-profile protocol/auth mode (`completions` vs `responses`; `api-key` vs `login`).
@@ -115,10 +116,11 @@ Detailed inventory: [feature-catalog.md](feature-catalog.md).
 - Model/provider behavior matrix: [models.md](models.md)
 - Tool contracts and execution backends: [tools-and-execution.md](tools-and-execution.md)
 - UI regression harness approach: [../developer/testing-ui.md](../developer/testing-ui.md)
+- Observability and trace format: [observability.md](observability.md)
 
 ## Near-Term Delivery Track
 
-Current execution plan: [../plans/2026-03-01-feature-requests.md](../plans/2026-03-01-feature-requests.md).
+Current execution plan: [../plans/completed/plan-2026-03-01-feature-requests.md](../plans/completed/plan-2026-03-01-feature-requests.md).
 
 High-level sequence:
 

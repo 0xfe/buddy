@@ -8,7 +8,7 @@
 
 ## Remediation Status (reviewed 2026-02-28)
 
-All 30 findings were addressed across 7 milestones documented in `2026-02-27-claude-feedback-remediation-plan.md`. The remediation was executed in a single intensive session alongside a parallel streaming-runtime architecture effort. Verification: `cargo check` clean, 258 lib + 37 bin tests pass, model regression suite passes for all default profiles.
+All 30 findings were addressed across 7 milestones documented in `plan-2026-02-27-claude-feedback-remediation.md`. The remediation was executed in a single intensive session alongside a parallel streaming-runtime architecture effort. Verification: `cargo check` clean, 258 lib + 37 bin tests pass, model regression suite passes for all default profiles.
 
 ### Fully Addressed (29/30)
 
@@ -52,8 +52,8 @@ All 30 findings were addressed across 7 milestones documented in `2026-02-27-cla
 
 ### Notes
 
-- **C1** is marked fully addressed per remediation plan scope, but the concern (main.rs complexity) has arguably shifted rather than shrunk — `main.rs` is now ~2825 lines, larger than the original ~1100 lines. The complexity moved partially into `cli_event_renderer.rs` (419 lines) and `runtime.rs` (1674 lines), but `main.rs` itself absorbed runtime command/event wiring. A fresh finding for this is captured in `claude-feedback-1.md`.
-- Several security controls (S1 denylist, S2 SSRF, S3 path restrictions) are defense-in-depth layers behind the interactive approval prompt. Their bypass characteristics are documented in `claude-feedback-1.md` as new findings for the next iteration.
+- **C1** is marked fully addressed per remediation plan scope, but the concern (main.rs complexity) has arguably shifted rather than shrunk — `main.rs` is now ~2825 lines, larger than the original ~1100 lines. The complexity moved partially into `cli_event_renderer.rs` (419 lines) and `runtime.rs` (1674 lines), but `main.rs` itself absorbed runtime command/event wiring. A fresh finding for this is captured in `review-2026-02-28-claude-feedback-round-2.md`.
+- Several security controls (S1 denylist, S2 SSRF, S3 path restrictions) are defense-in-depth layers behind the interactive approval prompt. Their bypass characteristics are documented in `review-2026-02-28-claude-feedback-round-2.md` as new findings for the next iteration.
 
 ---
 

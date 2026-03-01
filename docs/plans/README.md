@@ -5,5 +5,5 @@
 - When a plan is finished or no longer relevant, move it into `completed/` instead of deleting it.
 
 Current state:
-- active plan: none.
+- active plan: `docs/plans/plan-2026-03-01-claude-feedback-implementation.md`.
 - all historical plans are archived in `docs/plans/completed/`.

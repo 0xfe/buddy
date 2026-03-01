@@ -43,6 +43,9 @@ buddy login
 buddy
 tmux attach -t buddy # on a separate terminal
 
+# Optional: runtime event trace (JSONL) for debugging
+buddy --trace /tmp/buddy.trace.jsonl
+
 # Operate a remote host (in tmux on the remote host)
 buddy --ssh user@host
 
@@ -109,6 +112,7 @@ Full build, test, versioning, and release CI details are in [docs/developer/BUIL
 - [docs/design/tools.md](docs/design/tools.md): tool schemas, guardrails, and runtime behavior.
 - [docs/design/remote-execution.md](docs/design/remote-execution.md): local/container/ssh/tmux execution model.
 - [docs/design/terminal-repl.md](docs/design/terminal-repl.md): REPL input/rendering/runtime UX details.
+- [docs/design/observability.md](docs/design/observability.md): runtime trace format, redaction, and debugging workflow.
 - [docs/developer/testing-ui.md](docs/developer/testing-ui.md): tmux-based opt-in UI regression harness.
 - [docs/developer/model-regression-tests.md](docs/developer/model-regression-tests.md): live provider regression suite.
 - [docs/tips/](docs/tips): short tactical notes for contributors and AI agents.
