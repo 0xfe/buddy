@@ -1,5 +1,6 @@
 //! Startup banner and execution-target formatting helpers.
 
+use buddy::build_info;
 use buddy::repl::SessionStartupState;
 use buddy::tools::execution::{TmuxAttachInfo, TmuxAttachTarget};
 use buddy::ui::theme::{self, ThemeToken};
@@ -59,6 +60,7 @@ pub(crate) fn execution_target_label(info: Option<&TmuxAttachInfo>) -> String {
 /// Render initial execution banner with optional attach instructions.
 pub(crate) fn render_startup_banner(color: bool, model: &str, tmux_info: Option<&TmuxAttachInfo>) {
     let target = execution_target_label(tmux_info);
+    let metadata = build_info::startup_metadata_line();
     if color {
         eprintln!(
             "{} {} running on {} with model {}",
@@ -70,8 +72,16 @@ pub(crate) fn render_startup_banner(color: bool, model: &str, tmux_info: Option<
                 .bold(),
             model.with(theme::color(ThemeToken::StartupModel)).bold(),
         );
+        eprintln!(
+            "  version: {}",
+            metadata
+                .as_str()
+                .with(theme::color(ThemeToken::FieldValue))
+                .dim()
+        );
     } else {
         eprintln!("• buddy running on {target} with model {model}");
+        eprintln!("  version: {metadata}");
     }
 
     if let Some(info) = tmux_info {

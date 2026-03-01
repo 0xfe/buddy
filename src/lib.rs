@@ -26,6 +26,8 @@ pub mod agent;
 pub mod api;
 /// Authentication and login-token helpers.
 pub mod auth;
+/// Compile-time build/version metadata.
+pub mod build_info;
 /// Config loading, defaults, and profile selection.
 pub mod config;
 /// Error types used across crate modules.

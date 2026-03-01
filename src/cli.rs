@@ -7,7 +7,12 @@ use clap::{Parser, Subcommand};
 
 /// An AI agent for the terminal. Works with OpenAI-compatible APIs.
 #[derive(Debug, Parser)]
-#[command(name = "buddy", version, subcommand_required = false)]
+#[command(
+    name = "buddy",
+    version = buddy::build_info::VERSION,
+    long_version = buddy::build_info::LONG_VERSION,
+    subcommand_required = false
+)]
 pub struct Args {
     /// Path to config file (default: ./buddy.toml or ~/.config/buddy/buddy.toml).
     #[arg(short = 'c', long = "config", global = true)]
@@ -90,7 +95,7 @@ pub enum Command {
 #[cfg(test)]
 mod tests {
     use super::{Args, Command};
-    use clap::Parser;
+    use clap::{CommandFactory, Parser};
 
     // Verifies the baseline UX contract: no subcommand means "start REPL".
     #[test]
@@ -182,5 +187,16 @@ mod tests {
     fn dangerously_auto_approve_flag_parses() {
         let args = Args::parse_from(["buddy", "--dangerously-auto-approve", "exec", "hi"]);
         assert!(args.dangerously_auto_approve);
+    }
+
+    #[test]
+    fn command_exposes_build_metadata_in_version_output() {
+        // The clap command should include the compile-time extended version block.
+        let cmd = Args::command();
+        assert_eq!(cmd.get_version(), Some(buddy::build_info::VERSION));
+        assert_eq!(
+            cmd.get_long_version(),
+            Some(buddy::build_info::LONG_VERSION)
+        );
     }
 }
