@@ -4,7 +4,7 @@
 
 - Program status: Active
 - Scope status: Locked to the confirmed feature requests plus a required UI-test prerequisite and first-class tmux-management feature.
-- Current focus: Milestones 1-3 complete; Milestone 4 (build metadata/release flow) next.
+- Current focus: Milestones 1-4 complete; Milestone 5 (`buddy init` interactive flow) next.
 - Completed so far:
   1. Corrected scope to the confirmed feature-request list.
   2. Added a hard prerequisite milestone for tmux-based UI integration/regression testing before terminal work.
@@ -13,10 +13,11 @@
   5. Closed Milestone 1 with an opt-in tmux/asciinema UI harness, deterministic fake-model integration scenario, artifactized failure reporting, docs, and make targets in commit `892ca5d`.
   6. Implemented Milestone 2 with first-class tmux lifecycle tools, ownership boundaries, tmux target selectors on existing tools, session/pane limits, target-aware default-pane snapshot logic, and extended opt-in UI regression coverage in commit `78415e4`.
   7. Implemented Milestone 3 with semantic theme tokens, built-in dark/light palettes, config-driven custom theme overrides, `/theme` picker+persistence+preview flow, and palette-only renderer migration in commit `69fc204`.
+  8. Implemented Milestone 4 with compile-time build metadata wiring, startup/version surfaces, Makefile-first build/release/version targets, and release-tag GitHub Actions automation in commits `6f0c5c9`, `2643c59`, and `ed04bfd`.
 - Next steps:
-  1. Start Milestone 4 (build metadata, Makefile-first release workflow).
+  1. Start Milestone 5 (`buddy init` interactive onboarding/update flow).
   2. Keep the UI harness suite as a pre-merge gate for terminal-facing rendering changes.
-  3. Continue with Milestones 5-8 after M4 acceptance.
+  3. Continue with Milestones 6-8 after M5 acceptance.
 
 ## Scope (Locked)
 
@@ -77,7 +78,7 @@ Required prerequisite before terminal feature work:
 - [x] Milestone 1: Tmux UI Integration/Regression Harness (Prerequisite)
 - [x] Milestone 2: First-Class Tmux Management + Targeted Tmux Tooling
 - [x] Milestone 3: Theme Library + `/theme` + Theme Explorer
-- [ ] Milestone 4: Build Metadata + Makefile-First + Release CI
+- [x] Milestone 4: Build Metadata + Makefile-First + Release CI
 - [ ] Milestone 5: Interactive `buddy init` + First-Run Bootstrap
 - [ ] Milestone 6: Packaging + Curl Installer + Init Handoff
 - [ ] Milestone 7: `auth=login` Soft-Fail UX
@@ -411,9 +412,15 @@ Embed build metadata in the binary and standardize make targets + tagged release
 
 ### Commits
 
-1. `feat(build): embed version commit and build-date metadata`
-2. `build(make): make makefile the primary build and release interface`
-3. `ci(release): add release-tag artifact workflow`
+1. `feat(build): embed build metadata in startup and version output` (`6f0c5c9`)
+2. `build(make): expand makefile with check/release/version helpers` (`2643c59`)
+3. `ci(release): add tag-based artifact build and publish workflow` (`ed04bfd`)
+
+### Milestone 4 Validation Snapshot (2026-03-01)
+
+1. `make check` PASS.
+2. `make release-artifacts` PASS (`dist/buddy-v0.1.0-aarch64-apple-darwin.tar.gz` + `.sha256`).
+3. Workflow design validates both non-tag (`validate`) and tag (`release-artifacts` + `publish-release`) paths.
 
 ## Milestone 5: Interactive `buddy init` + First-Run Bootstrap
 
@@ -574,3 +581,4 @@ Run final validation across all milestones and close documentation/workflow upda
 - 2026-03-01: Scope expanded to include first-class tmux management (managed session/pane lifecycle, tmux-targeted tool routing, ownership boundaries, and session/pane limits). Inserted new Milestone 2 and shifted prior Milestones 2-7 to 3-8.
 - 2026-03-01: Milestone 2 implementation complete: added managed tmux lifecycle tools (`tmux-create-session`, `tmux-kill-session`, `tmux-create-pane`, `tmux-kill-pane`), optional `session`/`pane` selectors for `run_shell`/`capture-pane`/`send-keys`, managed ownership markers and canonical naming, `[tmux]` limits (`max_sessions`, `max_panes`), target-aware default-pane snapshot injection rules, and extended ignored UI regression coverage for targeted managed-pane execution. Validation: `cargo fmt --check` PASS, `cargo test` PASS, `cargo clippy --all-targets -- -D warnings` PASS, `make test-ui-regression` PASS. Commit: `78415e4`.
 - 2026-03-01: Milestone 3 implementation complete: added `ui::theme` semantic token infrastructure with Solarized-inspired dark/light defaults, config-driven `[themes.<name>]` overrides, full renderer/prompt/progress/startup/approval color migration to theme tokens, `/theme [name|index]` picker with persisted `display.theme` updates, and a built-in preview flow to explore theme output blocks. Validation: `cargo test -q` PASS, `cargo clippy --all-targets -- -D warnings` PASS, `make test-ui-regression` PASS. Commit: `69fc204`.
+- 2026-03-01: Milestone 4 implementation complete: added build-time metadata injection (`build.rs`) and `build_info` runtime exposure, surfaced metadata in startup banner + clap version output, promoted Makefile to primary build/check/release/version-bump interface, and added release-tag GitHub Actions workflow with matrix artifact builds + publish job. Validation: `make check` PASS, `make release-artifacts` PASS. Commits: `6f0c5c9`, `2643c59`, `ed04bfd`.
