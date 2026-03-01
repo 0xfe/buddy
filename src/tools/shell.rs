@@ -235,7 +235,7 @@ impl Tool for ShellTool {
             function: FunctionDefinition {
                 name: self.name().into(),
                 description:
-                    "Run a shell command and return its output (stdout, stderr, exit code). The optional `wait` argument controls waiting behavior: `true` (default) waits until completion, `false` returns immediately (tmux-backed targets only) so you can poll with `capture-pane`, and a duration string like `10m` waits up to that timeout.".into(),
+                    "Run a shell command and return its output (stdout, stderr, exit code). The optional `wait` argument controls waiting behavior: `true` (default) waits until completion, `false` returns immediately (tmux-backed targets only) so you can poll with `capture-pane`, and a duration string like `10m` waits up to that timeout. Do not use this for tmux lifecycle management; use `tmux-create-session`, `tmux-create-pane`, `tmux-kill-pane`, and `tmux-kill-session`.".into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -262,11 +262,11 @@ impl Tool for ShellTool {
                         },
                         "session": {
                             "type": "string",
-                            "description": "Optional managed tmux session selector. When omitted, uses the default shared session."
+                            "description": "Optional managed tmux session selector. Usually omit this to use the default shared session."
                         },
                         "pane": {
                             "type": "string",
-                            "description": "Optional managed tmux pane selector. When omitted, uses the shared pane."
+                            "description": "Optional managed tmux pane selector. Usually omit this to use the default shared pane."
                         },
                         "wait": {
                             "description": "Waiting mode: true (default) waits to completion; false dispatches and returns immediately (tmux targets only); or duration string like '30s', '10m', '1h' to wait with timeout.",
@@ -297,6 +297,14 @@ impl Tool for ShellTool {
             return Err(ToolError::ExecutionFailed(format!(
                 "command blocked by tools.shell_denylist pattern `{pattern}`"
             )));
+        }
+        if self.execution.tmux_management_available()
+            && looks_like_raw_tmux_lifecycle_command(&args.command)
+        {
+            return Err(ToolError::ExecutionFailed(
+                "tmux lifecycle commands should use first-class tools (`tmux-create-session`, `tmux-create-pane`, `tmux-kill-pane`, `tmux-kill-session`) instead of run_shell"
+                    .to_string(),
+            ));
         }
         let wait = parse_wait_mode(args.wait)?;
         context.emit(ToolStreamEvent::Started {
@@ -458,6 +466,28 @@ fn matched_denylist_pattern(command: &str, denylist: &[String]) -> Option<String
         .map(ToString::to_string)
 }
 
+fn looks_like_raw_tmux_lifecycle_command(command: &str) -> bool {
+    let mut parts = command.split_whitespace();
+    let Some(first) = parts.next() else {
+        return false;
+    };
+    if first != "tmux" {
+        return false;
+    }
+    let Some(second) = parts.next() else {
+        return false;
+    };
+    matches!(
+        second,
+        "new-session"
+            | "new-window"
+            | "split-window"
+            | "kill-session"
+            | "kill-pane"
+            | "create-pane"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -561,6 +591,23 @@ mod tests {
             .name(),
             "run_shell"
         );
+    }
+
+    #[test]
+    fn detects_raw_tmux_lifecycle_commands() {
+        assert!(looks_like_raw_tmux_lifecycle_command(
+            "tmux new-session -d -s x"
+        ));
+        assert!(looks_like_raw_tmux_lifecycle_command(
+            "tmux split-window -d"
+        ));
+        assert!(looks_like_raw_tmux_lifecycle_command(
+            "tmux create-pane :default"
+        ));
+        assert!(!looks_like_raw_tmux_lifecycle_command("tmux list-panes"));
+        assert!(!looks_like_raw_tmux_lifecycle_command(
+            "echo tmux split-window"
+        ));
     }
 
     #[tokio::test]

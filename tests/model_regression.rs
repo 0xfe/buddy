@@ -123,7 +123,9 @@ async fn run_profile_probe(config: &mut Config, profile_name: &str) -> Result<()
         return Err("unexpected tool-calls for no-tools probe request".to_string());
     }
 
-    let text = choice.message.content.unwrap_or_default();
+    assert_reasoning_payload_hygiene(profile_name, &choice.message)?;
+
+    let text = choice.message.content.clone().unwrap_or_default();
     if text.trim().is_empty() {
         return Err(format!(
             "empty assistant content (finish_reason={:?})",
@@ -132,6 +134,38 @@ async fn run_profile_probe(config: &mut Config, profile_name: &str) -> Result<()
     }
 
     Ok(())
+}
+
+/// Validate model-specific reasoning payload hygiene for cross-provider compatibility.
+fn assert_reasoning_payload_hygiene(
+    profile_name: &str,
+    message: &buddy::types::Message,
+) -> Result<(), String> {
+    let mut violations = Vec::<String>::new();
+    for (key, value) in &message.extra {
+        let normalized_key = key.to_ascii_lowercase();
+        if !(normalized_key.contains("reasoning")
+            || normalized_key.contains("thinking")
+            || normalized_key.contains("thought"))
+        {
+            continue;
+        }
+        if let Some(raw) = value.as_str() {
+            let normalized = raw.trim().to_ascii_lowercase();
+            if matches!(normalized.as_str(), "null" | "none" | "[]" | "{}") {
+                violations.push(format!("{key}={raw:?}"));
+            }
+        }
+    }
+
+    if violations.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "reasoning payload hygiene failed for profile `{profile_name}`: {}",
+            violations.join(", ")
+        ))
+    }
 }
 
 /// Verify auth prerequisites for the selected profile before issuing network requests.

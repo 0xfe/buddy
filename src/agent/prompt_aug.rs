@@ -86,6 +86,8 @@ fn render_tmux_snapshot_block(snapshot: &str) -> String {
 ```text\n{clipped}\n```\n\
 Before running any command, inspect this default shared-pane screenshot. If it does not show a usable shell prompt, \
 do not run commands yet. Tell the user what is blocking the pane and offer to recover control with `send-keys`.\n\
+For normal work, omit `session`, `pane`, and `target` so tools operate on this default shared pane.\n\
+If extra workspace is needed, create an additional pane in the default session before considering a new session.\n\
 If you recently targeted a different tmux pane/session, do not assume this default screenshot represents that target."
     )
 }
@@ -125,7 +127,10 @@ fn tool_call_targets_non_default(arguments_json: &str) -> bool {
     let has_target = object
         .get("target")
         .and_then(Value::as_str)
-        .is_some_and(|text| !text.trim().is_empty());
+        .is_some_and(|text| {
+            let target = text.trim();
+            !target.is_empty() && !is_default_target_alias(target)
+        });
     if has_target {
         return true;
     }
@@ -143,6 +148,13 @@ fn tool_call_targets_non_default(arguments_json: &str) -> bool {
             let pane = text.trim();
             !pane.is_empty() && pane != "shared"
         })
+}
+
+fn is_default_target_alias(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "default" | "shared" | "shared-pane" | "default-pane"
+    )
 }
 
 #[cfg(test)]
@@ -184,6 +196,9 @@ mod tests {
         ));
         assert!(!tool_call_targets_non_default(
             r#"{"pane":"shared","risk":"low"}"#
+        ));
+        assert!(!tool_call_targets_non_default(
+            r#"{"target":"default","risk":"low"}"#
         ));
     }
 

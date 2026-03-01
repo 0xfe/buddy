@@ -114,7 +114,9 @@ fn collect_reasoning_strings(value: &Value, key: Option<&str>, out: &mut Vec<Str
         Value::Null => {}
         Value::String(text) => {
             if key.is_none_or(is_reasoning_text_key) {
-                out.push(text.clone());
+                if let Some(normalized) = normalize_reasoning_leaf_text(text, key) {
+                    out.push(normalized);
+                }
             }
         }
         Value::Array(items) => {
@@ -154,10 +156,49 @@ fn is_reasoning_text_key(key: &str) -> bool {
     )
 }
 
+/// Normalize one reasoning text leaf and filter placeholder/noise values.
+fn normalize_reasoning_leaf_text(text: &str, key: Option<&str>) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() || is_placeholder_reasoning_text(trimmed) {
+        return None;
+    }
+
+    // Some providers embed JSON-encoded reasoning arrays/objects inside strings.
+    // Parse and recursively extract only human-readable reasoning text.
+    if looks_like_json_container(trimmed) {
+        if let Ok(parsed) = serde_json::from_str::<Value>(trimmed) {
+            let mut nested = Vec::<String>::new();
+            collect_reasoning_strings(&parsed, key, &mut nested);
+            if nested.is_empty() {
+                return None;
+            }
+            return Some(nested.join("\n"));
+        }
+    }
+
+    Some(trimmed.to_string())
+}
+
+/// Return true for placeholder string values that should never be rendered.
+fn is_placeholder_reasoning_text(text: &str) -> bool {
+    matches!(
+        text.to_ascii_lowercase().as_str(),
+        "null" | "none" | "n/a" | "na" | "[]" | "{}"
+    )
+}
+
+/// Quick check before attempting JSON parse on a string leaf.
+fn looks_like_json_container(text: &str) -> bool {
+    (text.starts_with('{') && text.ends_with('}')) || (text.starts_with('[') && text.ends_with(']'))
+}
+
 /// Return true for JSON strings that are present but effectively empty.
 fn is_empty_json_string(value: &Value) -> bool {
     value
         .as_str()
-        .map(|text| text.trim().is_empty())
+        .map(|text| {
+            let trimmed = text.trim();
+            trimmed.is_empty() || is_placeholder_reasoning_text(trimmed)
+        })
         .unwrap_or(false)
 }

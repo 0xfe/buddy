@@ -64,15 +64,15 @@ impl Tool for SendKeysTool {
                     "properties": {
                         "target": {
                             "type": "string",
-                            "description": "Optional tmux target pane/session (same syntax as tmux -t). Defaults to the active agent pane."
+                            "description": "Optional explicit tmux `-t` target (for example `%7` or `session:window.pane`). Legacy escape hatch; usually omit this and use managed `session`/`pane` (or neither for default shared pane)."
                         },
                         "session": {
                             "type": "string",
-                            "description": "Optional managed tmux session selector. When omitted, uses the default shared session."
+                            "description": "Optional managed tmux session selector. Usually omit this to use the default shared session."
                         },
                         "pane": {
                             "type": "string",
-                            "description": "Optional managed tmux pane selector. When omitted, uses the shared pane."
+                            "description": "Optional managed tmux pane selector. Usually omit this to use the default shared pane."
                         },
                         "keys": {
                             "type": "array",

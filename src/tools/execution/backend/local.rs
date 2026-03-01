@@ -6,8 +6,9 @@ use async_trait::async_trait;
 use crate::tmux::capture::run_local_capture_pane;
 use crate::tmux::management::{
     canonical_session_name, create_managed_pane_script, create_managed_session_script,
-    kill_managed_pane_script, kill_managed_session_script, parse_created_pane,
-    parse_created_session, parse_killed_pane, parse_resolved_target, resolve_managed_target_script,
+    is_default_target_alias, kill_managed_pane_script, kill_managed_session_script,
+    parse_created_pane, parse_created_session, parse_killed_pane, parse_resolved_target,
+    resolve_managed_target_script,
 };
 use crate::tmux::pane::ensure_local_tmux_pane;
 use crate::tmux::prompt::ensure_local_tmux_prompt_setup;
@@ -65,7 +66,10 @@ impl LocalTmuxContext {
         selector: TmuxTargetSelector,
         ensure_default_shared: bool,
     ) -> Result<ResolvedTmuxTarget, ToolError> {
-        let wants_default_shared = selector.target.is_none()
+        let wants_default_shared = selector
+            .target
+            .as_deref()
+            .is_none_or(is_default_target_alias)
             && selector
                 .session
                 .as_deref()
@@ -87,13 +91,35 @@ impl LocalTmuxContext {
         let script =
             resolve_managed_target_script(&self.owner_prefix, &self.tmux_session, &selector)?;
         let output = run_sh_process("sh", &script, None).await?;
-        let output = crate::tools::execution::process::ensure_success(
+        let resolved = match crate::tools::execution::process::ensure_success(
             output,
             "failed to resolve managed tmux target".into(),
-        )?;
-        parse_resolved_target(&output.stdout)
-            .ok_or_else(|| ToolError::ExecutionFailed("failed to parse managed tmux target".into()))
+        ) {
+            Ok(output) => parse_resolved_target(&output.stdout),
+            Err(err) if ensure_default_shared && should_fallback_to_default_target(&err) => None,
+            Err(err) => return Err(err),
+        };
+        if let Some(resolved) = resolved {
+            return Ok(resolved);
+        }
+        if !ensure_default_shared {
+            return Err(ToolError::ExecutionFailed(
+                "failed to parse managed tmux target".into(),
+            ));
+        }
+        let pane_id = self.ensure_prompt_ready().await?;
+        Ok(ResolvedTmuxTarget {
+            session: self.tmux_session.clone(),
+            pane_id,
+            pane_title: TMUX_PANE_TITLE.to_string(),
+            is_default_shared: true,
+        })
     }
+}
+
+fn should_fallback_to_default_target(err: &ToolError) -> bool {
+    let text = err.to_string();
+    text.contains("tmux target not found") || text.contains("failed to parse managed tmux target")
 }
 
 async fn local_tmux_pane_exists(pane_id: &str) -> Result<bool, ToolError> {
@@ -525,5 +551,15 @@ mod tests {
         // Tests should be hermetic unless real tmux mode is explicitly enabled.
         assert!(!local_tmux_allowed());
         assert!(local_tmux_pane_target().is_none());
+    }
+
+    #[test]
+    fn fallback_detection_matches_target_resolution_errors() {
+        let err = ToolError::ExecutionFailed(
+            "failed to resolve managed tmux target: tmux target not found".to_string(),
+        );
+        assert!(should_fallback_to_default_target(&err));
+        let err = ToolError::ExecutionFailed("different failure".to_string());
+        assert!(!should_fallback_to_default_target(&err));
     }
 }

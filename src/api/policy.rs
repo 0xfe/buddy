@@ -1,5 +1,6 @@
 //! Provider-specific API transport/runtime rules.
 
+use super::provider_compat;
 use super::responses::ResponsesRequestOptions;
 use crate::auth::{openai_login_runtime_base_url, supports_openai_login};
 use crate::config::AuthMode;
@@ -30,10 +31,12 @@ pub(crate) fn responses_request_options(
     base_url: &str,
     auth: AuthMode,
     api_key: &str,
+    model: &str,
 ) -> ResponsesRequestOptions {
     let login_openai = uses_login_auth(auth, api_key) && supports_login_for_base_url(base_url);
     ResponsesRequestOptions {
         store_false: login_openai,
         stream: login_openai,
+        reasoning: provider_compat::responses_reasoning_config(base_url, model),
     }
 }

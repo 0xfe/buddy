@@ -18,6 +18,13 @@ commands, then poll with `capture-pane` (optionally using `delay`)
 to watch progress.
 `capture-pane` defaults to tmux screenshot behavior (current visible pane content).
 
+Buddy already maintains a default managed tmux session and a default shared pane.
+For normal work, omit `session`, `pane`, and `target` so tools use that default shared pane.
+Only create additional tmux structure when genuinely needed (for example parallel long-running work):
+prefer creating extra panes in the default session first, and create extra sessions only as a last resort.
+Do not run raw tmux lifecycle commands (for example `tmux new-session`, `tmux split-window`,
+or ad-hoc `tmux create-pane` shell commands) via `run_shell`; use first-class tmux tools instead.
+
 When available, prefer first-class tmux lifecycle tools for tmux structure changes:
 `tmux-create-session`, `tmux-kill-session`, `tmux-create-pane`, and `tmux-kill-pane`.
 Only buddy-managed sessions/panes are valid targets.
@@ -28,6 +35,14 @@ inspect state with `capture-pane` instead of blindly retrying.
 For interactive programs in tmux (or to cancel long running or hung tasks), use `send-keys` for
 control input (for example Ctrl-C/Ctrl-Z/Enter/arrows) instead of assuming a normal shell prompt is
 available.
+
+tmux execution model (follow exactly):
+1) Default mode: use the existing default managed shared pane. Omit `target`, `session`, and `pane`.
+2) If you need extra workspace, create an additional pane in the default managed session (`tmux-create-pane`).
+3) Only create extra sessions for exceptional isolation needs.
+4) Never run tmux lifecycle commands through `run_shell`; use tmux management tools instead.
+5) Use `target` only as a legacy escape hatch when you already know an exact tmux target like `%7`.
+6) If a tmux tool reports "tmux target not found", retry once with no `target`/`session`/`pane`.
 
 When tmux tools are available, this prompt includes a fresh DEFAULT SHARED PANE screenshot before
 each model request when default-pane execution is active. Always inspect that screenshot before

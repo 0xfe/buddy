@@ -8,6 +8,7 @@ pub(super) fn build_responses_payload(
     request: &ChatRequest,
     store_false: bool,
     stream: bool,
+    reasoning: Option<&Value>,
 ) -> Value {
     let mut instructions = Vec::<String>::new();
     let mut input = Vec::<Value>::new();
@@ -65,6 +66,9 @@ pub(super) fn build_responses_payload(
     }
     if stream {
         payload.insert("stream".to_string(), Value::Bool(true));
+    }
+    if let Some(reasoning) = reasoning {
+        payload.insert("reasoning".to_string(), reasoning.clone());
     }
     Value::Object(payload)
 }
@@ -154,7 +158,7 @@ mod tests {
             temperature: None,
             top_p: None,
         };
-        let payload = build_responses_payload(&request, false, false);
+        let payload = build_responses_payload(&request, false, false, None);
         let input = payload["input"].as_array().expect("array");
         assert_eq!(input.len(), 2);
         assert_eq!(input[1]["type"], "function_call_output");
@@ -179,7 +183,7 @@ mod tests {
             temperature: Some(0.1),
             top_p: Some(0.9),
         };
-        let payload = build_responses_payload(&request, false, false);
+        let payload = build_responses_payload(&request, false, false, None);
         assert_eq!(payload["tools"][0]["type"], "function");
         assert_eq!(payload["tools"][0]["name"], "run_shell");
         assert!(payload["tools"][0].get("description").is_some());
@@ -195,7 +199,7 @@ mod tests {
             temperature: None,
             top_p: None,
         };
-        let payload = build_responses_payload(&request, false, false);
+        let payload = build_responses_payload(&request, false, false, None);
         assert_eq!(payload["instructions"], "sys");
         let input = payload["input"].as_array().expect("array");
         assert_eq!(input.len(), 1);
@@ -222,7 +226,7 @@ mod tests {
             temperature: None,
             top_p: None,
         };
-        let payload = build_responses_payload(&request, false, false);
+        let payload = build_responses_payload(&request, false, false, None);
         let input = payload["input"].as_array().expect("array");
         assert_eq!(input.len(), 2);
         assert_eq!(input[0]["content"][0]["type"], "input_text");
@@ -239,7 +243,7 @@ mod tests {
             temperature: None,
             top_p: None,
         };
-        let payload = build_responses_payload(&request, true, false);
+        let payload = build_responses_payload(&request, true, false, None);
         assert_eq!(payload["store"], Value::Bool(false));
     }
 
@@ -253,7 +257,22 @@ mod tests {
             temperature: None,
             top_p: None,
         };
-        let payload = build_responses_payload(&request, false, true);
+        let payload = build_responses_payload(&request, false, true, None);
         assert_eq!(payload["stream"], Value::Bool(true));
+    }
+
+    // Ensures provider compatibility hints can inject reasoning config.
+    #[test]
+    fn responses_payload_sets_reasoning_when_requested() {
+        let request = ChatRequest {
+            model: "gpt-5.3-codex".to_string(),
+            messages: vec![Message::user("hi")],
+            tools: None,
+            temperature: None,
+            top_p: None,
+        };
+        let payload =
+            build_responses_payload(&request, false, false, Some(&json!({"summary":"auto"})));
+        assert_eq!(payload["reasoning"]["summary"], "auto");
     }
 }

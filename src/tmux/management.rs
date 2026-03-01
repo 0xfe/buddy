@@ -54,6 +54,9 @@ pub(crate) fn canonical_session_name(
     let Some(raw) = requested.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(default_session.to_string());
     };
+    if is_default_target_alias(raw) {
+        return Ok(default_session.to_string());
+    }
     if raw == default_session {
         return Ok(default_session.to_string());
     }
@@ -72,6 +75,9 @@ pub(crate) fn canonical_pane_title(
     let Some(raw) = requested.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(TMUX_PANE_TITLE.to_string());
     };
+    if is_default_target_alias(raw) {
+        return Ok(TMUX_PANE_TITLE.to_string());
+    }
     if raw == TMUX_PANE_TITLE {
         return Ok(TMUX_PANE_TITLE.to_string());
     }
@@ -80,6 +86,14 @@ pub(crate) fn canonical_pane_title(
     }
     let fragment = sanitize_tmux_fragment(raw, "pane");
     Ok(format!("{owner_prefix}-{fragment}"))
+}
+
+/// True when a selector token means "use the default managed shared target".
+pub(crate) fn is_default_target_alias(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "default" | "shared" | "shared-pane" | "default-pane"
+    )
 }
 
 /// Build shell script that resolves and validates a managed tmux pane target.
@@ -95,7 +109,19 @@ pub(crate) fn resolve_managed_target_script(
     let default_session_q = shell_quote(default_session);
     let session_q = shell_quote(&session);
     let pane_q = shell_quote(&pane);
-    let target_q = shell_quote(selector.target.as_deref().unwrap_or_default());
+    let target = selector
+        .target
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| {
+            if is_default_target_alias(value) {
+                None
+            } else {
+                Some(value)
+            }
+        });
+    let target_q = shell_quote(target.unwrap_or_default());
     Ok(format!(
         "set -e\n\
 OWNER={owner_q}\n\
@@ -111,7 +137,7 @@ else\n\
   PANE=\"$(tmux list-panes -a -F '#{{session_name}}\\t#{{pane_id}}\\t#{{pane_title}}' 2>/dev/null | awk -F '\\t' -v session=\"$SESSION\" -v pane_title=\"$PANE_TITLE\" '$1==session && $3==pane_title {{print $2; exit}}')\"\n\
 fi\n\
 if [ -z \"$SESSION\" ] || [ -z \"$PANE\" ]; then\n\
-  echo \"tmux target not found\" >&2\n\
+  echo \"tmux target not found; omit target/session/pane to use the default shared pane, or create one with tmux-create-pane\" >&2\n\
   exit 1\n\
 fi\n\
 SESSION_MANAGED=\"$(tmux show-options -v -t \"$SESSION\" {TMUX_MANAGED_OPTION} 2>/dev/null || true)\"\n\
@@ -391,8 +417,54 @@ mod tests {
     }
 
     #[test]
+    fn canonical_session_name_maps_default_aliases() {
+        assert_eq!(
+            canonical_session_name("buddy-agent-mo", "buddy-agent-mo", Some("default")).unwrap(),
+            "buddy-agent-mo"
+        );
+        assert_eq!(
+            canonical_session_name("buddy-agent-mo", "buddy-agent-mo", Some("shared")).unwrap(),
+            "buddy-agent-mo"
+        );
+    }
+
+    #[test]
     fn canonical_pane_title_keeps_shared_default() {
         let out = canonical_pane_title("buddy-agent-mo", None).unwrap();
         assert_eq!(out, "shared");
+    }
+
+    #[test]
+    fn canonical_pane_title_maps_default_aliases() {
+        assert_eq!(
+            canonical_pane_title("buddy-agent-mo", Some("default")).unwrap(),
+            "shared"
+        );
+        assert_eq!(
+            canonical_pane_title("buddy-agent-mo", Some("shared")).unwrap(),
+            "shared"
+        );
+    }
+
+    #[test]
+    fn default_target_aliases_are_detected() {
+        assert!(is_default_target_alias("default"));
+        assert!(is_default_target_alias("shared"));
+        assert!(is_default_target_alias("shared-pane"));
+        assert!(is_default_target_alias("default-pane"));
+        assert!(!is_default_target_alias("%7"));
+        assert!(!is_default_target_alias("buddy-agent-mo-worker"));
+    }
+
+    #[test]
+    fn resolve_script_treats_default_target_alias_as_empty_target() {
+        let selector = TmuxTargetSelector {
+            target: Some("default".to_string()),
+            session: None,
+            pane: None,
+        };
+        let script =
+            resolve_managed_target_script("buddy-agent-mo", "buddy-agent-mo", &selector).unwrap();
+        assert!(script.contains("TARGET=''"));
     }
 }

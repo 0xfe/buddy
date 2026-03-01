@@ -112,6 +112,7 @@ Detailed inventory: [feature-catalog.md](feature-catalog.md).
 - Feature inventory: [feature-catalog.md](feature-catalog.md)
 - Current module responsibility map: [module-map.md](module-map.md)
 - Runtime actor and API protocol behavior: [runtime-and-protocols.md](runtime-and-protocols.md)
+- Model/provider behavior matrix: [models.md](models.md)
 - Tool contracts and execution backends: [tools-and-execution.md](tools-and-execution.md)
 - UI regression harness approach: [../developer/testing-ui.md](../developer/testing-ui.md)
 

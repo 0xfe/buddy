@@ -91,7 +91,8 @@ impl Tool for TmuxCreateSessionTool {
             tool_type: "function".into(),
             function: FunctionDefinition {
                 name: self.name().into(),
-                description: "Create or reuse a buddy-managed tmux session and ensure its shared pane is ready.".into(),
+                description: "Create or reuse a buddy-managed tmux session and ensure its shared pane is ready. Prefer `tmux-create-pane` in the default session first; extra sessions should be uncommon."
+                    .into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -217,12 +218,12 @@ impl Tool for TmuxCreatePaneTool {
             tool_type: "function".into(),
             function: FunctionDefinition {
                 name: self.name().into(),
-                description: "Create or reuse a buddy-managed tmux pane in a managed session."
+                description: "Create or reuse a buddy-managed tmux pane in a managed session. When `session` is omitted, this uses the default managed session (preferred)."
                     .into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
-                        "session": { "type": "string", "description": "Optional session selector. Defaults to managed shared session." },
+                        "session": { "type": "string", "description": "Optional session selector. Usually omit this to create panes in the default managed session." },
                         "pane": { "type": "string", "description": "Pane name (logical name or full managed pane title)." },
                         "risk": { "type": "string", "enum": ["low", "medium", "high"] },
                         "mutation": { "type": "boolean" },

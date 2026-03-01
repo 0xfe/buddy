@@ -62,6 +62,40 @@ pub(super) fn parse_streaming_responses_payload(body: &str) -> Result<ChatRespon
                     .or_default()
                     .push_str(delta);
             }
+            "response.reasoning_summary_text.done" => {
+                let Some(index) = event
+                    .get("summary_index")
+                    .and_then(Value::as_u64)
+                    .and_then(|n| usize::try_from(n).ok())
+                else {
+                    continue;
+                };
+                let Some(text) = event.get("text").and_then(Value::as_str) else {
+                    continue;
+                };
+                reasoning_summary_deltas.insert(index, text.to_string());
+            }
+            "response.reasoning_summary_part.added" | "response.reasoning_summary_part.done" => {
+                let Some(index) = event
+                    .get("summary_index")
+                    .and_then(Value::as_u64)
+                    .and_then(|n| usize::try_from(n).ok())
+                else {
+                    continue;
+                };
+                let Some(part_text) = event
+                    .get("part")
+                    .and_then(Value::as_object)
+                    .and_then(|part| part.get("text"))
+                    .and_then(Value::as_str)
+                else {
+                    continue;
+                };
+                reasoning_summary_deltas
+                    .entry(index)
+                    .or_default()
+                    .push_str(part_text);
+            }
             "response.reasoning_text.delta" => {
                 let Some(index) = event
                     .get("content_index")
@@ -77,6 +111,19 @@ pub(super) fn parse_streaming_responses_payload(body: &str) -> Result<ChatRespon
                     .entry(index)
                     .or_default()
                     .push_str(delta);
+            }
+            "response.reasoning_text.done" => {
+                let Some(index) = event
+                    .get("content_index")
+                    .and_then(Value::as_u64)
+                    .and_then(|n| usize::try_from(n).ok())
+                else {
+                    continue;
+                };
+                let Some(text) = event.get("text").and_then(Value::as_str) else {
+                    continue;
+                };
+                reasoning_content_deltas.insert(index, text.to_string());
             }
             "response.completed" | "response.done" => {
                 if let Some(response) = event.get("response").cloned() {
@@ -276,6 +323,40 @@ mod tests {
             .unwrap_or_default();
         assert!(reasoning.contains("plan"));
         assert!(reasoning.contains("step-1"));
+    }
+
+    // Ensures summary-part and text-done events are accepted for OpenAI responses streams.
+    #[test]
+    fn parse_streaming_responses_payload_captures_summary_part_and_done_events() {
+        let sse = format!(
+            "{}{}{}{}{}",
+            sse_event_block(
+                "response.reasoning_summary_part.added",
+                r#"{"type":"response.reasoning_summary_part.added","summary_index":0,"part":{"type":"summary_text","text":"plan "}}"#
+            ),
+            sse_event_block(
+                "response.reasoning_summary_part.done",
+                r#"{"type":"response.reasoning_summary_part.done","summary_index":0,"part":{"type":"summary_text","text":"A then B"}}"#
+            ),
+            sse_event_block(
+                "response.reasoning_text.done",
+                r#"{"type":"response.reasoning_text.done","content_index":0,"text":"detail-1"}"#
+            ),
+            sse_event_block(
+                "response.completed",
+                r#"{"type":"response.completed","response":{"id":"resp_5","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}}"#
+            ),
+            sse_done_block()
+        );
+        let parsed = parse_streaming_responses_payload(&sse).expect("parse");
+        let reasoning = parsed.choices[0]
+            .message
+            .extra
+            .get("reasoning_stream")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(reasoning.contains("plan A then B"));
+        assert!(reasoning.contains("detail-1"));
     }
 
     // Ensures structured reasoning output items are preserved in `extra.reasoning`.

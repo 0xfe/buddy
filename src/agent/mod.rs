@@ -664,6 +664,24 @@ mod tests {
         assert!(!text.contains("ignore-me"));
     }
 
+    // Verifies placeholder string payloads are suppressed and not rendered.
+    #[test]
+    fn reasoning_value_to_text_suppresses_placeholder_strings() {
+        assert!(reasoning_value_to_text(&json!("null")).is_none());
+        assert!(reasoning_value_to_text(&json!("[]")).is_none());
+        assert!(reasoning_value_to_text(&json!("{}")).is_none());
+    }
+
+    // Verifies JSON-encoded reasoning strings are parsed and reduced to readable text.
+    #[test]
+    fn reasoning_value_to_text_parses_json_encoded_reasoning_strings() {
+        let encoded = json!(
+            "[{\"id\":\"rs_1\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"plan\"}],\"type\":\"reasoning\"}]"
+        );
+        let text = reasoning_value_to_text(&encoded).expect("text");
+        assert_eq!(text, "plan");
+    }
+
     // Verifies sanitization drops assistant messages that have no content/tool calls.
     #[test]
     fn sanitize_history_drops_empty_assistant_messages() {

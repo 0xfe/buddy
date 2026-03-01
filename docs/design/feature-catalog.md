@@ -294,6 +294,8 @@ All tool outputs are wrapped as JSON:
   - `/responses`
 - `/responses` path includes request translation and response normalization back to internal chat/tool-call shape.
 - OpenAI login-backed Responses requests can force `store=false` and `stream=true` with SSE parsing.
+- OpenAI reasoning-capable `/responses` profiles request reasoning summaries (`reasoning.summary = auto`) so thinking text can be rendered when emitted.
+- OpenRouter reasoning-capable `/chat/completions` profiles request surfaced reasoning (`include_reasoning`, `reasoning` payload hints).
 - Retry policy covers timeouts/connectivity/429/5xx with `Retry-After` support.
 - 404 errors include protocol mismatch hints.
 
@@ -303,6 +305,7 @@ Conversation compatibility behaviors:
 - Empty/null assistant turns are sanitized from history.
 - Assistant messages are normalized before persistence/reuse.
 - Provider reasoning payloads are extracted and rendered when textual.
+- Placeholder/noise reasoning values (`null`, `[]`, `{}`) are suppressed from reasoning output blocks.
 
 Migration compatibility behaviors:
 

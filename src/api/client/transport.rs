@@ -32,7 +32,7 @@ pub(super) async fn dispatch_request(
         ApiProtocol::Completions => completions::request(http, base_url, request, bearer).await,
         ApiProtocol::Responses => {
             let options: ResponsesRequestOptions =
-                policy::responses_request_options(base_url, auth, api_key);
+                policy::responses_request_options(base_url, auth, api_key, &request.model);
             responses::request(http, base_url, request, bearer, options).await
         }
     }

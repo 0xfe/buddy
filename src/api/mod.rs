@@ -15,6 +15,7 @@ use std::time::SystemTime;
 mod client;
 mod completions;
 mod policy;
+mod provider_compat;
 mod responses;
 
 pub use client::ApiClient;

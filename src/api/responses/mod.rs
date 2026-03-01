@@ -17,12 +17,14 @@ pub(crate) use response_parser::parse_responses_payload;
 use serde_json::Value;
 use sse_parser::parse_streaming_responses_payload;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct ResponsesRequestOptions {
     /// Emit `"store": false` for providers that should not persist prompts.
     pub(crate) store_false: bool,
     /// Request SSE streaming and parse streamed events when true.
     pub(crate) stream: bool,
+    /// Optional reasoning config payload inserted into `/responses` requests.
+    pub(crate) reasoning: Option<Value>,
 }
 
 /// Send one `/responses` request and normalize provider output.
@@ -35,7 +37,12 @@ pub(crate) async fn request(
 ) -> Result<ChatResponse, ApiError> {
     let url = format!("{base_url}/responses");
     // Translate chat-style request shape into the `/responses` wire format.
-    let payload = build_responses_payload(request, options.store_false, options.stream);
+    let payload = build_responses_payload(
+        request,
+        options.store_false,
+        options.stream,
+        options.reasoning.as_ref(),
+    );
     let mut req = http.post(&url).json(&payload);
     if let Some(token) = bearer.filter(|value| !value.trim().is_empty()) {
         req = req.header("Authorization", format!("Bearer {token}"));
