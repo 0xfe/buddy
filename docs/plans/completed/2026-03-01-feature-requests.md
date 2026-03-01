@@ -2,9 +2,9 @@
 
 ## Status
 
-- Program status: Active
+- Program status: Completed
 - Scope status: Locked to the confirmed feature requests plus a required UI-test prerequisite and first-class tmux-management feature.
-- Current focus: Milestones 1-7 complete; Milestone 8 (final integration/regression/docs closure) next.
+- Current focus: Milestones 0-8 complete; plan archival and handoff complete.
 - Completed so far:
   1. Corrected scope to the confirmed feature-request list.
   2. Added a hard prerequisite milestone for tmux-based UI integration/regression testing before terminal work.
@@ -17,10 +17,11 @@
   9. Implemented Milestone 5 with first-run auto-init bootstrap, interactive `buddy init` update/overwrite flow, model-selection persistence, and login guidance in commit `5e3c8cb`.
   10. Implemented Milestone 6 with a curl-style installer (`scripts/install.sh`), idempotent reinstall semantics, post-install init handoff, dedicated install docs, Makefile smoke target, and release-CI installer validation in commit `81d2de6`.
   11. Implemented Milestone 7 with login-auth preflight soft-fail behavior (startup/model-switch warnings instead of exit), profile-specific `/login` guidance, and auth docs updates in commit `a530dec`.
+  12. Closed Milestone 8 with full validation (`fmt`, `clippy`, `test`, UI regression, model regression), docs consistency pass, and final integration fixes in commits `4ca8c5f` and `8edbcf4`.
 - Next steps:
-  1. Start Milestone 8 (final integration/regression/docs closure).
-  2. Keep the UI harness suite as a pre-merge gate for terminal-facing rendering changes.
-  3. Move this plan to `docs/plans/completed/` after Milestone 8 validation and final commit.
+  1. Keep the UI harness suite as a pre-merge gate for terminal-facing rendering changes.
+  2. Keep model regression as an explicit opt-in release-candidate gate.
+  3. Track any new feature requests in a new active plan file under `docs/plans/`.
 
 ## Scope (Locked)
 
@@ -85,7 +86,7 @@ Required prerequisite before terminal feature work:
 - [x] Milestone 5: Interactive `buddy init` + First-Run Bootstrap
 - [x] Milestone 6: Packaging + Curl Installer + Init Handoff
 - [x] Milestone 7: `auth=login` Soft-Fail UX
-- [ ] Milestone 8: Final Integration, Regression, and Docs Closure
+- [x] Milestone 8: Final Integration, Regression, and Docs Closure
 
 ## Goal
 
@@ -573,11 +574,11 @@ Run final validation across all milestones and close documentation/workflow upda
 
 ### Tasks
 
-1. Execute full quality gates.
-2. Run opt-in UI regression suite and model regression suite.
-3. Verify release workflow and make targets after integration.
-4. Update docs for final consistency.
-5. Move plan to `docs/plans/completed/` once done.
+1. [x] Execute full quality gates.
+2. [x] Run opt-in UI regression suite and model regression suite.
+3. [x] Verify release workflow and make targets after integration.
+4. [x] Update docs for final consistency.
+5. [x] Move plan to `docs/plans/completed/` once done.
 
 ### Acceptance Gate
 
@@ -602,6 +603,17 @@ Run final validation across all milestones and close documentation/workflow upda
 
 1. `docs: finalize feature-request delivery and archive plan`
 
+### Milestone 8 Validation Snapshot (2026-03-01)
+
+1. `cargo fmt --check`: PASS.
+2. `cargo clippy --all-targets -- -D warnings`: PASS.
+3. `cargo test`: PASS.
+4. `make test-ui-regression`: PASS (2 ignored tmux integration scenarios).
+5. `make test-model-regression`: PASS (ignored model regression suite, 1 test validating configured default profiles).
+6. Integration follow-up fixes landed in:
+   - `4ca8c5f` (docs layout + tool-delay clarification),
+   - `8edbcf4` (hermetic runtime switch-model test + default/tool alignment).
+
 ## Execution Log
 
 - 2026-03-01: Initial feature-request plan created.
@@ -616,3 +628,4 @@ Run final validation across all milestones and close documentation/workflow upda
 - 2026-03-01: Milestone 5 implementation complete: added first-run auto-init bootstrap (`buddy` now starts guided setup when no config exists), interactive `buddy init` existing-config actions (update/overwrite/cancel), safe `agent.model` persistence support, and login guidance prompts for login-auth profiles. Updated docs (`README.md`, `docs/developer/REFERENCE.md`, `docs/design/DESIGN.md`). Validation: `cargo test -q` PASS, `cargo clippy --all-targets -- -D warnings` PASS. Commit: `5e3c8cb`.
 - 2026-03-01: Milestone 6 implementation complete: added `scripts/install.sh` curl-style installer (platform detection, explicit/latest version installs, checksum verification, `--force` idempotent reinstall semantics, offline `--from-dist` mode, and post-install `buddy init` handoff), added `docs/developer/install.md`, wired Makefile installer targets/smoke test, and added installer smoke validation in release CI. Validation: `bash -n scripts/install.sh` PASS, `make test-installer-smoke` PASS, `cargo test -q` PASS, `cargo clippy --all-targets -- -D warnings` PASS, `cargo fmt --check` PASS. Commit: `81d2de6`.
 - 2026-03-01: Milestone 7 implementation complete: preflight now treats missing login credentials as non-fatal warnings (startup/model-switch continue), warning text includes profile-specific recovery commands (`/login <profile>` and `buddy login <profile>`), runtime model switch surfaces preflight warnings, and auth docs updated (`README.md`, `docs/developer/REFERENCE.md`, `docs/design/DESIGN.md`). Validation: `cargo test -q` PASS, `cargo clippy --all-targets -- -D warnings` PASS, `cargo fmt --check` PASS. Commit: `a530dec`.
+- 2026-03-01: Milestone 8 closed: executed final integration gates (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `make test-ui-regression`, `make test-model-regression`) with all PASS; verified release/make workflow consistency and finalized docs alignment. Follow-up commits included docs/tooling alignment (`4ca8c5f`) and hermetic CI/runtime default-model fixes (`8edbcf4`).
