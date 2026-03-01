@@ -9,7 +9,7 @@
   1. Corrected scope to the confirmed feature-request list.
   2. Added a hard prerequisite milestone for tmux-based UI integration/regression testing before terminal work.
   3. Structured milestones with acceptance gates, explicit tests, docs, and commit slices.
-  4. Closed Milestone 0 with module-boundary freeze, config-schema decisions, docs pointers, and baseline validation (`cargo test`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`).
+  4. Closed Milestone 0 with module-boundary freeze, config-schema decisions, docs pointers, and baseline validation (`cargo test`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`) in commit `f218ec2`.
 - Next steps:
   1. Execute Milestone 1 (tmux UI harness + on-demand regression suite).
   2. Begin terminal feature work only after Milestone 1 is closed.
@@ -113,6 +113,7 @@ Finalize architecture and test strategy for all scoped features, including the t
 ### Commit
 
 1. `docs(plan): freeze feature-request scope and baseline gates`
+2. Completed as `f218ec2`.
 
 ### Design Freeze Decisions (Milestone 0)
 
@@ -460,4 +461,4 @@ Run final validation across all milestones and close documentation/workflow upda
 - 2026-03-01: Initial feature-request plan created.
 - 2026-03-01: Re-scoped to exact confirmed requests.
 - 2026-03-01: Added Milestone 1 as a hard prerequisite for tmux/asciinema UI integration regression before terminal/UI feature work.
-- 2026-03-01: Milestone 0 completed. Captured module boundaries, planned config schema deltas, and baseline validation results (`cargo test`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`), then updated docs pointers for the upcoming UI harness.
+- 2026-03-01: Milestone 0 completed. Captured module boundaries, planned config schema deltas, and baseline validation results (`cargo test`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`), then updated docs pointers for the upcoming UI harness. Commit: `f218ec2`.
