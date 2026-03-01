@@ -478,4 +478,4 @@ Close the loop with analysis tooling, cost metrics, and regression confidence.
    - added regression coverage in `src/agent/history.rs` + `src/agent/normalization.rs` for pair integrity, failure retention, structured summaries, and orphan repair,
    - added `docs/design/context-management.md` and refreshed design/feature docs for new guarantees,
    - validated with `cargo fmt` and `cargo test` (full suite).
-   - commit: `TBD`.
+   - commit: `37a4d82`.
