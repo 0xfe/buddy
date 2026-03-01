@@ -287,6 +287,10 @@ All tool outputs are wrapped as JSON:
 - Heuristic preflight estimate drives warnings and hard-limit checks.
 - Hard-limit guard attempts automatic compaction before failing.
 - Manual `/compact` triggers stronger compaction target.
+- Compaction units keep assistant tool-calls and matching tool results atomic.
+- Compaction repair pass removes orphan tool-result messages and unmatched assistant tool-call declarations.
+- Compaction summary format is structured (`op`, `status`, `detail`) instead of free-form prose.
+- The three most-recent failed tool operations are retained verbatim during compaction for debugging continuity.
 - Context limits come from embedded `templates/models.toml` rule catalog with legacy fallback heuristics.
 
 ## API Protocol and Compatibility Behaviors

@@ -86,6 +86,9 @@ History normally grows with each turn, but it is compacted under pressure:
 
 Compaction inserts a synthetic system summary so older context remains available
 in compressed form.
+The compactor keeps assistant tool-call + tool-result pairs atomic, repairs
+orphaned tool history before/after compaction, and retains recent failed tool
+operations verbatim for debugging continuity.
 
 ---
 

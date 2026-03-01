@@ -4,7 +4,7 @@
 
 - Program status: Active
 - Scope status: Locked to actionable items from `docs/plans/review-2026-03-01-claude-feedback.md`, sequenced for lowest-risk delivery.
-- Current focus: Milestone 4 (compaction integrity and error-preserving memory) is next.
+- Current focus: Milestone 5 (prompt/tooling reliability hardening) is next.
 - Completed so far:
   1. Reviewed `docs/plans/review-2026-03-01-claude-feedback.md` end-to-end.
   2. Mapped priority recommendations into an execution board with validation gates.
@@ -12,9 +12,10 @@
   4. Completed Milestone 1 event completeness: phase durations, task metadata threading (session/iteration/correlation), request/response summaries, and compaction stats in runtime events.
   5. Completed Milestone 2: `-v/-vv/-vvv`, structured logging subscriber wiring, and span instrumentation for runtime commands, turns, model requests/responses, tool calls, and compaction paths.
   6. Completed Milestone 3: static system prompt + request-scoped tmux snapshot context injection with non-default target labeling and prompt-architecture docs updates.
+  7. Completed Milestone 4: pair-safe compaction units, orphan tool-call/result repair passes, structured compaction summaries, and failed-tool retention guarantees.
 - Next steps:
-  1. Start Milestone 4 (tool-call/result-safe compaction + failure-preserving memory).
-  2. Keep Milestone 1/2/3 observability and prompt-context behavior stable during compaction changes.
+  1. Start Milestone 5 (prompt structure + tool description hardening).
+  2. Keep Milestone 1-4 observability/context/compaction guarantees stable while prompt/tool guidance changes land.
 
 ## Goal
 
@@ -72,7 +73,7 @@ Out of scope for this plan:
 - [x] Milestone 1: Tracing Foundation (`--trace`, JSONL sink, event completeness)
 - [x] Milestone 2: Logging/Verbosity and Span Model
 - [x] Milestone 3: Prompt Context Architecture (static system + dynamic snapshot as turn context)
-- [ ] Milestone 4: Compaction Integrity and Error-Preserving Memory
+- [x] Milestone 4: Compaction Integrity and Error-Preserving Memory
 - [ ] Milestone 5: Prompt and Tooling Reliability Hardening
 - [ ] Milestone 6: Provider/Model Compatibility and Token Accuracy
 - [ ] Milestone 7: Evaluation, Trace Tooling, Cost Visibility, and Closure
@@ -469,3 +470,12 @@ Close the loop with analysis tooling, cost metrics, and regression confidence.
    - updated prompt architecture documentation (`docs/design/prompt.md`) and related design docs,
    - validated with `cargo fmt`, `cargo test`, and `cargo test --test ui_tmux_regression -- --ignored --nocapture`.
    - commit: `d00838d`.
+6. 2026-03-01: Finished Milestone 4:
+   - compaction now operates on atomic units that keep assistant tool-call/result pairs together,
+   - added pre/post compaction tool-history repair to remove orphan tool results and unmatched assistant tool calls,
+   - replaced free-form compaction prose with structured summary entries (`op`, `status`, `detail`) including tool success/failure outcomes,
+   - preserved last three failed tool operations verbatim across compaction passes for debugging continuity,
+   - added regression coverage in `src/agent/history.rs` + `src/agent/normalization.rs` for pair integrity, failure retention, structured summaries, and orphan repair,
+   - added `docs/design/context-management.md` and refreshed design/feature docs for new guarantees,
+   - validated with `cargo fmt` and `cargo test` (full suite).
+   - commit: `TBD`.

@@ -7,6 +7,7 @@
 - Architecture index: `docs/design/architecture.md`.
 - Runtime + REPL usage/operator docs: `docs/design/terminal-repl.md`, `docs/design/tools.md`, `docs/design/remote-execution.md`.
 - Observability docs: `docs/design/observability.md` (`--trace`, `BUDDY_TRACE_FILE`, JSONL runtime-event traces).
+- Context + compaction behavior: `docs/design/context-management.md`.
 
 ## Fast local commands
 ```bash
@@ -20,6 +21,7 @@ cargo run -- --trace /tmp/buddy.trace.jsonl
 ## High-value file map
 - CLI/startup wiring: `src/main.rs`, `src/cli.rs`.
 - Agent/runtime orchestration: `src/agent/`, `src/runtime/`, `src/app/`.
+- History compaction + tool-pair repair: `src/agent/history.rs`, `src/agent/normalization.rs`.
 - API/auth/config: `src/api/`, `src/auth/`, `src/config/`.
 - Tooling: `src/tools/` (+ execution backends under `src/tools/execution/`).
 - Terminal UI layers: `src/ui/`, `src/repl/`, `src/tui/`.

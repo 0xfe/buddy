@@ -330,7 +330,7 @@ impl Agent {
         debug!(parent: &turn_span, "starting agent turn");
         // Normalize history before appending a new turn so malformed provider
         // responses do not accumulate across requests.
-        sanitize_conversation_history(&mut self.messages);
+        let _ = sanitize_conversation_history(&mut self.messages);
         self.messages.push(Message::user(user_input));
         if let Some(task) = self.current_task_ref() {
             let _ = self.emit_runtime_event(RuntimeEvent::Task(TaskEvent::Started { task }));
