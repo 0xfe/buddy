@@ -38,6 +38,31 @@ fn ui_tmux_prompt_spinner_approval_and_output_flow() {
     }
 }
 
+/// Managed tmux lifecycle flow regression: create pane, run command on that pane, and finish.
+#[test]
+#[ignore = "on-demand tmux/asciinema ui regression suite"]
+fn ui_tmux_managed_pane_create_and_targeted_shell_flow() {
+    let scenario = "tmux-management-targeted-shell";
+    let artifacts = ScenarioArtifacts::create(scenario).expect("artifacts");
+    let mut assertions = Vec::<AssertionRecord>::new();
+    let mut error_text: Option<String> = None;
+
+    if let Err(err) = run_tmux_management_scenario(&artifacts, &mut assertions) {
+        error_text = Some(err);
+    }
+
+    let report = assertion_report_json(scenario, error_text.is_none(), &assertions, &artifacts);
+    artifacts.write_report(&report).expect("write report");
+
+    if let Some(err) = error_text {
+        panic!(
+            "ui regression scenario failed: {err}\nartifacts: {}\nreport: {}",
+            artifacts.root.display(),
+            artifacts.report_path.display()
+        );
+    }
+}
+
 fn run_scenario(
     artifacts: &ScenarioArtifacts,
     assertions: &mut Vec<AssertionRecord>,
@@ -73,7 +98,7 @@ fn run_scenario(
         assertions,
         "startup attach line",
         &startup_plain,
-        &format!("attach with: tmux attach -t {session_name}"),
+        "attach with: tmux attach -t buddy-",
     )?;
 
     let startup_ansi = tmux.capture_pane(true)?;
@@ -160,6 +185,183 @@ fn run_scenario(
     }
 
     Ok(())
+}
+
+fn run_tmux_management_scenario(
+    artifacts: &ScenarioArtifacts,
+    assertions: &mut Vec<AssertionRecord>,
+) -> Result<(), String> {
+    verify_tooling_prereqs()?;
+    let binary = built_buddy_binary()?;
+    let server = MockModelServer::start_with_responses(vec![
+        scripted_tool_call_response(
+            "call_ui_mgmt_1",
+            "tmux-create-pane",
+            json!({
+                "pane": "worker",
+                "risk": "low",
+                "mutation": true,
+                "privesc": false,
+                "why": "Create a dedicated managed pane for this UI regression run."
+            }),
+        ),
+        scripted_tool_call_response(
+            "call_ui_mgmt_2",
+            "run_shell",
+            json!({
+                "command": "printf 'UI_TMUX_MGMT_OK\\n'",
+                "pane": "worker",
+                "risk": "low",
+                "mutation": false,
+                "privesc": false,
+                "why": "Validate targeted run_shell dispatch to a managed non-default pane."
+            }),
+        ),
+        scripted_final_response("Tmux management complete."),
+    ])?;
+    write_ui_regression_config(artifacts, &server.base_url_v1())?;
+
+    let session_name = format!("buddy-ui-mgmt-test-{}", std::process::id());
+    let mut tmux = TmuxHarness::start(&session_name)?;
+    tmux.enable_pipe_logging(&artifacts.pipe_log_path)?;
+
+    let launch = tmux.launch_buddy_command(&binary, artifacts, "ui-test");
+    tmux.send_line(&launch)?;
+
+    let startup_plain = checkpoint_contains(
+        &tmux,
+        artifacts,
+        "mgmt-startup-ready",
+        "used)>",
+        Duration::from_secs(45),
+        false,
+    )?;
+    artifacts.save_snapshot("mgmt-startup-plain", &startup_plain)?;
+    record_contains_assertion(
+        assertions,
+        "mgmt startup banner",
+        &startup_plain,
+        "buddy running on localhost with model ui-test-model",
+    )?;
+
+    tmux.send_line("create a worker pane and run a command there")?;
+
+    let approval_create = checkpoint_contains(
+        &tmux,
+        artifacts,
+        "mgmt-approval-create-pane",
+        "tmux create-pane",
+        Duration::from_secs(45),
+        false,
+    )?;
+    artifacts.save_snapshot("mgmt-approval-create-pane", &approval_create)?;
+    record_contains_assertion(
+        assertions,
+        "create-pane approval is rendered",
+        &approval_create,
+        "tmux create-pane",
+    )?;
+    tmux.send_line("y")?;
+
+    let approval_shell = checkpoint_contains(
+        &tmux,
+        artifacts,
+        "mgmt-approval-shell",
+        "$ printf 'UI_TMUX_MGMT_OK",
+        Duration::from_secs(45),
+        false,
+    )?;
+    artifacts.save_snapshot("mgmt-approval-shell", &approval_shell)?;
+    record_contains_assertion(
+        assertions,
+        "targeted shell approval is rendered",
+        &approval_shell,
+        "UI_TMUX_MGMT_OK",
+    )?;
+    tmux.send_line("y")?;
+
+    let completion = checkpoint_contains(
+        &tmux,
+        artifacts,
+        "mgmt-completion-ready",
+        "Tmux management complete.",
+        Duration::from_secs(60),
+        false,
+    )?;
+    artifacts.save_snapshot("mgmt-completion", &completion)?;
+    record_contains_assertion(
+        assertions,
+        "targeted shell output present",
+        &completion,
+        "UI_TMUX_MGMT_OK",
+    )?;
+
+    tmux.send_line("/quit")?;
+    let _command =
+        tmux.wait_until_command_exits(&["asciinema", "buddy"], Duration::from_secs(30))?;
+    tmux.disable_pipe_logging();
+
+    let request_count = server.request_count();
+    let request_expect = json!({ "expected_requests": 3, "actual_requests": request_count });
+    artifacts.save_snapshot("mgmt-mock-server-requests", &request_expect.to_string())?;
+    if request_count != 3 {
+        return Err(format!(
+            "mock server request count mismatch: expected 3, got {request_count}"
+        ));
+    }
+
+    Ok(())
+}
+
+fn scripted_tool_call_response(
+    call_id: &str,
+    tool_name: &str,
+    args: serde_json::Value,
+) -> serde_json::Value {
+    json!({
+        "id": format!("chatcmpl-{call_id}"),
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": tool_name,
+                        "arguments": args.to_string()
+                    }
+                }]
+            },
+            "finish_reason": "tool_calls"
+        }],
+        "usage": {
+            "prompt_tokens": 18,
+            "completion_tokens": 22,
+            "total_tokens": 40
+        }
+    })
+}
+
+fn scripted_final_response(text: &str) -> serde_json::Value {
+    json!({
+        "id": "chatcmpl-ui-final",
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": text,
+                "tool_calls": null
+            },
+            "finish_reason": "stop"
+        }],
+        "usage": {
+            "prompt_tokens": 20,
+            "completion_tokens": 8,
+            "total_tokens": 28
+        }
+    })
 }
 
 fn checkpoint_contains(

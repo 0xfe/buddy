@@ -4,6 +4,7 @@
 //! operate on higher-level capture/send/run primitives.
 
 pub(crate) mod capture;
+pub(crate) mod management;
 pub(crate) mod pane;
 pub(crate) mod prompt;
 pub(crate) mod run;

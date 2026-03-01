@@ -69,6 +69,7 @@ where
         tools: parsed.tools,
         network: parsed.network,
         display: parsed.display,
+        tmux: parsed.tmux,
     };
 
     // Resolve `config.api` from selected profile and key source rules.

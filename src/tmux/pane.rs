@@ -59,36 +59,70 @@ printf '%s\n%s' \"$PANE\" \"$CREATED\"\n"
     )
 }
 
+/// Build script that marks a tmux session and pane as buddy-managed.
+fn mark_managed_tmux_entities_script(
+    tmux_session: &str,
+    pane_id: &str,
+    owner_prefix: &str,
+) -> String {
+    let session_q = shell_quote(tmux_session);
+    let pane_q = shell_quote(pane_id);
+    let owner_q = shell_quote(owner_prefix);
+    format!(
+        "set -e\n\
+SESSION={session_q}\n\
+PANE={pane_q}\n\
+OWNER={owner_q}\n\
+tmux set-option -q -t \"$SESSION\" @buddy_managed 1\n\
+tmux set-option -q -t \"$SESSION\" @buddy_owner \"$OWNER\"\n\
+tmux set-option -q -p -t \"$PANE\" @buddy_managed 1\n\
+tmux set-option -q -p -t \"$PANE\" @buddy_owner \"$OWNER\"\n"
+    )
+}
+
 /// Ensure shared pane exists on ssh target.
 pub(crate) async fn ensure_tmux_pane(
     target: &str,
     control_path: &std::path::Path,
     tmux_session: &str,
+    owner_prefix: &str,
 ) -> Result<EnsuredTmuxPane, ToolError> {
     // Run provisioning script remotely and parse `<pane>\n<created>`.
     let script = ensure_tmux_pane_script(tmux_session);
     let output = run_ssh_raw_process(target, control_path, &script, None).await?;
     let output = ensure_success(output, "failed to prepare tmux session pane".into())?;
-    parse_ensured_tmux_pane(&output.stdout)
-        .ok_or_else(|| ToolError::ExecutionFailed("failed to resolve tmux pane target".into()))
+    let ensured = parse_ensured_tmux_pane(&output.stdout)
+        .ok_or_else(|| ToolError::ExecutionFailed("failed to resolve tmux pane target".into()))?;
+    let mark_script =
+        mark_managed_tmux_entities_script(tmux_session, &ensured.pane_id, owner_prefix);
+    let marked = run_ssh_raw_process(target, control_path, &mark_script, None).await?;
+    ensure_success(marked, "failed to mark managed tmux session/pane".into())?;
+    Ok(ensured)
 }
 
 /// Ensure shared pane exists on local target.
 pub(crate) async fn ensure_local_tmux_pane(
     tmux_session: &str,
+    owner_prefix: &str,
 ) -> Result<EnsuredTmuxPane, ToolError> {
     // Run provisioning script locally and parse `<pane>\n<created>`.
     let script = ensure_tmux_pane_script(tmux_session);
     let output = run_sh_process("sh", &script, None).await?;
     let output = ensure_success(output, "failed to prepare local tmux session pane".into())?;
-    parse_ensured_tmux_pane(&output.stdout)
-        .ok_or_else(|| ToolError::ExecutionFailed("failed to resolve tmux pane target".into()))
+    let ensured = parse_ensured_tmux_pane(&output.stdout)
+        .ok_or_else(|| ToolError::ExecutionFailed("failed to resolve tmux pane target".into()))?;
+    let mark_script =
+        mark_managed_tmux_entities_script(tmux_session, &ensured.pane_id, owner_prefix);
+    let marked = run_sh_process("sh", &mark_script, None).await?;
+    ensure_success(marked, "failed to mark managed tmux session/pane".into())?;
+    Ok(ensured)
 }
 
 /// Ensure shared pane exists inside container target.
 pub(crate) async fn ensure_container_tmux_pane(
     ctx: &ContainerTmuxContext,
     tmux_session: &str,
+    owner_prefix: &str,
 ) -> Result<EnsuredTmuxPane, ToolError> {
     // Run provisioning script in container and parse `<pane>\n<created>`.
     let script = ensure_tmux_pane_script(tmux_session);
@@ -97,8 +131,13 @@ pub(crate) async fn ensure_container_tmux_pane(
         output,
         "failed to prepare container tmux session pane".into(),
     )?;
-    parse_ensured_tmux_pane(&output.stdout)
-        .ok_or_else(|| ToolError::ExecutionFailed("failed to resolve tmux pane target".into()))
+    let ensured = parse_ensured_tmux_pane(&output.stdout)
+        .ok_or_else(|| ToolError::ExecutionFailed("failed to resolve tmux pane target".into()))?;
+    let mark_script =
+        mark_managed_tmux_entities_script(tmux_session, &ensured.pane_id, owner_prefix);
+    let marked = run_container_tmux_sh_process(ctx, &mark_script, None).await?;
+    ensure_success(marked, "failed to mark managed tmux session/pane".into())?;
+    Ok(ensured)
 }
 
 /// Parse pane ID and created flag returned by `ensure_tmux_pane_script`.

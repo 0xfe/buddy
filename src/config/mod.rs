@@ -30,7 +30,7 @@ use defaults::{
 use types::FileConfig;
 pub use types::{
     AgentConfig, ApiConfig, ApiProtocol, AuthMode, Config, ConfigDiagnostics, DisplayConfig,
-    GlobalConfigInitResult, LoadedConfig, ModelConfig, NetworkConfig, ToolsConfig,
+    GlobalConfigInitResult, LoadedConfig, ModelConfig, NetworkConfig, TmuxConfig, ToolsConfig,
 };
 
 /// Load configuration from disk and environment.
@@ -187,6 +187,8 @@ mod tests {
         assert!(!c.tools.shell_denylist.is_empty());
         assert_eq!(c.network.api_timeout_secs, DEFAULT_API_TIMEOUT_SECS);
         assert_eq!(c.network.fetch_timeout_secs, DEFAULT_FETCH_TIMEOUT_SECS);
+        assert_eq!(c.tmux.max_sessions, 1);
+        assert_eq!(c.tmux.max_panes, 5);
     }
 
     // Verifies partial TOML merges with defaults and activates selected profile.
@@ -268,6 +270,19 @@ mod tests {
         let c = parse_file_config_for_test(toml).unwrap();
         assert_eq!(c.network.api_timeout_secs, 45);
         assert_eq!(c.network.fetch_timeout_secs, 12);
+    }
+
+    // Verifies managed tmux limit settings deserialize from TOML.
+    #[test]
+    fn parse_tmux_limits() {
+        let toml = r#"
+            [tmux]
+            max_sessions = 2
+            max_panes = 8
+        "#;
+        let c = parse_file_config_for_test(toml).unwrap();
+        assert_eq!(c.tmux.max_sessions, 2);
+        assert_eq!(c.tmux.max_panes, 8);
     }
 
     // Verifies legacy `[model.*]` alias table is still accepted.

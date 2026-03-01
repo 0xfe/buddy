@@ -59,6 +59,8 @@ Detailed inventory: [docs/design/feature-catalog.md](docs/design/feature-catalog
 - Profile-based config with per-profile protocol/auth mode (`completions` vs `responses`; `api-key` vs `login`).
 - Built-in tools:
   - `run_shell`, `read_file`, `write_file`, `fetch_url`, `web_search`, `capture-pane`, `send-keys`, `time`
+  - tmux lifecycle tools: `tmux-create-session`, `tmux-kill-session`, `tmux-create-pane`, `tmux-kill-pane`
+  - tmux-aware selectors on shell/capture/send-keys (`session`, `pane`) with shared-pane defaulting
 - Multi-target execution for shell/file workflows:
   - local
   - local tmux-managed session
@@ -110,7 +112,8 @@ High-level sequence:
 
 1. Freeze architecture/test gates (Milestone 0).
 2. Build tmux-based UI regression harness as a prerequisite for terminal UX changes (Milestone 1).
-3. Deliver requested feature slices (theme system, build metadata/release flow, init UX, packaging, login soft-fail).
+3. Deliver first-class tmux management and targeted tmux routing (Milestone 2).
+4. Deliver remaining requested feature slices (theme system, build metadata/release flow, init UX, packaging, login soft-fail).
 
 ## High-Level Data Flow
 

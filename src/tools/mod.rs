@@ -13,6 +13,7 @@ pub mod search;
 pub mod send_keys;
 pub mod shell;
 pub mod time;
+pub mod tmux_manage;
 
 use crate::error::ToolError;
 use crate::types::ToolDefinition;

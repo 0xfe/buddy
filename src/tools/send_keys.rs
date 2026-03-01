@@ -24,6 +24,10 @@ pub struct SendKeysTool {
 struct Args {
     /// Optional explicit tmux target (`tmux -t` syntax).
     target: Option<String>,
+    /// Optional managed tmux session selector.
+    session: Option<String>,
+    /// Optional managed tmux pane selector.
+    pane: Option<String>,
     /// Optional list of tmux key names to send.
     keys: Option<Vec<String>>,
     /// Optional literal text payload (`tmux send-keys -l`).
@@ -63,6 +67,14 @@ impl Tool for SendKeysTool {
                         "target": {
                             "type": "string",
                             "description": "Optional tmux target pane/session (same syntax as tmux -t). Defaults to the active agent pane."
+                        },
+                        "session": {
+                            "type": "string",
+                            "description": "Optional managed tmux session selector. When omitted, uses the default shared session."
+                        },
+                        "pane": {
+                            "type": "string",
+                            "description": "Optional managed tmux pane selector. When omitted, uses the shared pane."
                         },
                         "keys": {
                             "type": "array",
@@ -125,6 +137,8 @@ impl Tool for SendKeysTool {
         // Convert tool args into backend-agnostic execution options.
         let options = SendKeysOptions {
             target: args.target,
+            session: args.session,
+            pane: args.pane,
             keys: args.keys.unwrap_or_default(),
             literal_text: args.literal_text,
             press_enter: args.enter.unwrap_or(false),

@@ -170,6 +170,28 @@ command snippet. Actor labels vary by execution target:
 The user types `y` or `yes` to approve, or leaves blank / types `n` to deny.
 The tool's `ShellApprovalRequest` oneshot channel is resolved immediately.
 
+### Managed tmux targeting
+
+In tmux-backed execution contexts, these tools support optional managed
+selectors:
+
+- `run_shell` (`session`, `pane`)
+- `capture-pane` (`session`, `pane`)
+- `send-keys` (`session`, `pane`)
+
+Selector behavior:
+
+- If selectors are omitted, tooling defaults to the managed shared pane.
+- Explicit selectors are validated against buddy-managed ownership metadata.
+- First-class lifecycle tools (`tmux-create-session`, `tmux-kill-session`,
+  `tmux-create-pane`, `tmux-kill-pane`) are available and require approval
+  metadata (`risk`, `mutation`, `privesc`, `why`).
+
+For model guidance, the dynamic system prompt injects the latest screenshot of
+the **default shared pane** before each request. If the latest tmux-targeted
+tool call explicitly selected a non-default session/pane, default-pane
+screenshot injection is skipped for that request.
+
 ---
 
 ## Slash Commands — `src/tui/commands.rs`

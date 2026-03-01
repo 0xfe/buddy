@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 
-use super::execution::{ExecutionContext, ShellWait};
+use super::execution::{ExecutionContext, ShellWait, TmuxTargetSelector};
 use super::result_envelope::wrap_result;
 use super::{Tool, ToolContext, ToolStreamEvent};
 use crate::error::ToolError;
@@ -37,6 +37,10 @@ pub struct ShellTool {
 struct Args {
     /// Shell snippet to execute via configured backend.
     command: String,
+    /// Optional managed tmux session selector.
+    session: Option<String>,
+    /// Optional managed tmux pane selector.
+    pane: Option<String>,
     /// Optional wait behavior override.
     wait: Option<WaitArg>,
     /// Declared risk classification.
@@ -92,6 +96,27 @@ pub struct ShellApprovalMetadata {
 }
 
 impl ShellApprovalMetadata {
+    /// Construct approval metadata shared by run_shell and tmux management tools.
+    pub fn new(
+        risk: RiskLevel,
+        mutation: bool,
+        privesc: bool,
+        why: impl Into<String>,
+    ) -> Result<Self, ToolError> {
+        let why = why.into();
+        if why.trim().is_empty() {
+            return Err(ToolError::InvalidArguments(
+                "approval metadata requires non-empty why".to_string(),
+            ));
+        }
+        Ok(Self {
+            risk,
+            mutation,
+            privesc,
+            why,
+        })
+    }
+
     /// Risk level requested by caller.
     pub fn risk(&self) -> RiskLevel {
         self.risk
@@ -235,6 +260,14 @@ impl Tool for ShellTool {
                             "type": "string",
                             "description": "Short reason for running the command, including risk justification and what is being mutated when mutation=true."
                         },
+                        "session": {
+                            "type": "string",
+                            "description": "Optional managed tmux session selector. When omitted, uses the default shared session."
+                        },
+                        "pane": {
+                            "type": "string",
+                            "description": "Optional managed tmux pane selector. When omitted, uses the shared pane."
+                        },
                         "wait": {
                             "description": "Waiting mode: true (default) waits to completion; false dispatches and returns immediately (tmux targets only); or duration string like '30s', '10m', '1h' to wait with timeout.",
                             "oneOf": [
@@ -273,12 +306,12 @@ impl Tool for ShellTool {
         // Prompt for confirmation if enabled.
         if self.confirm {
             // Bubble argument metadata into confirmation surfaces.
-            let metadata = ShellApprovalMetadata {
-                risk: args.risk,
-                mutation: args.mutation,
-                privesc: args.privesc,
-                why: args.why.clone(),
-            };
+            let metadata = ShellApprovalMetadata::new(
+                args.risk,
+                args.mutation,
+                args.privesc,
+                args.why.clone(),
+            )?;
             let approved = if let Some(approval) = &self.approval {
                 approval
                     .request(args.command.clone(), Some(metadata))
@@ -307,10 +340,20 @@ impl Tool for ShellTool {
         let _progress =
             (!context.has_stream()).then(|| renderer.progress("running tool run_shell"));
         // Execute using configured backend and wait semantics.
-        let output = self
-            .execution
-            .run_shell_command(&args.command, wait)
-            .await?;
+        let selector = TmuxTargetSelector {
+            target: None,
+            session: args.session.clone(),
+            pane: args.pane.clone(),
+        };
+        let output = if selector.is_explicit() {
+            self.execution
+                .run_shell_command_targeted(&args.command, wait, selector)
+                .await?
+        } else {
+            self.execution
+                .run_shell_command(&args.command, wait)
+                .await?
+        };
         if matches!(wait, ShellWait::NoWait) {
             if !output.stdout.trim().is_empty() {
                 context.emit(ToolStreamEvent::Info {

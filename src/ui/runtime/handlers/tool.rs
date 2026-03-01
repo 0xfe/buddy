@@ -157,7 +157,18 @@ fn render_tool_result(
         }
         "capture-pane" => {
             // capture-pane payloads are already formatted terminal text.
-            let target = parse_tool_arg(args, "target").unwrap_or_else(|| "<default>".to_string());
+            let target = parse_tool_arg(args, "target")
+                .or_else(|| {
+                    let session = parse_tool_arg(args, "session");
+                    let pane = parse_tool_arg(args, "pane");
+                    match (session, pane) {
+                        (Some(session), Some(pane)) => Some(format!("{session}:{pane}")),
+                        (Some(session), None) => Some(format!("{session}:shared")),
+                        (None, Some(pane)) => Some(format!("<default>:{pane}")),
+                        (None, None) => None,
+                    }
+                })
+                .unwrap_or_else(|| "<default>".to_string());
             renderer.activity(&format!("task #{task_id} captured pane {target}"));
             renderer.command_output_block(&display_result);
             return;
@@ -173,6 +184,14 @@ fn render_tool_result(
         "send-keys" => {
             renderer.activity(&format!(
                 "task #{task_id} send-keys: {}",
+                truncate_preview(&display_result, 120)
+            ));
+            eprintln!();
+            return;
+        }
+        "tmux-create-session" | "tmux-kill-session" | "tmux-create-pane" | "tmux-kill-pane" => {
+            renderer.activity(&format!(
+                "task #{task_id} {name}: {}",
                 truncate_preview(&display_result, 120)
             ));
             eprintln!();

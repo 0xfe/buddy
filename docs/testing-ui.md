@@ -19,13 +19,19 @@ Harness utilities:
 
 - `tests/ui_tmux/mod.rs`
 
-Current scenario:
+Current scenarios:
 
-1. Start buddy inside an isolated tmux pane through asciinema.
-2. Run one prompt that produces a deterministic `run_shell` tool call via a fake model server.
-3. Approve the command.
-4. Verify spinner/liveness lines, approval formatting, command output, and final assistant reply.
-5. Exit cleanly and assert expected mock request count.
+1. Baseline shell approval/rendering flow:
+   - Start buddy inside an isolated tmux pane through asciinema.
+   - Run one prompt that produces a deterministic `run_shell` tool call via a fake model server.
+   - Approve the command.
+   - Verify spinner/liveness lines, approval formatting, command output, and final assistant reply.
+   - Exit cleanly and assert expected mock request count.
+2. Managed tmux pane + targeted shell flow:
+   - Run scripted tool calls that create a managed pane (`tmux-create-pane`) and then run `run_shell` targeted to that pane.
+   - Approve both operations.
+   - Verify targeted approval and output rendering.
+   - Assert expected mock request count and clean shutdown.
 
 ## Runtime Dependencies
 

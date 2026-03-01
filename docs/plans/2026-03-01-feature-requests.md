@@ -3,18 +3,19 @@
 ## Status
 
 - Program status: Active
-- Scope status: Locked to the confirmed feature requests plus a required UI-test prerequisite.
-- Current focus: Milestone 1 complete; Milestone 2 (theme system) next.
+- Scope status: Locked to the confirmed feature requests plus a required UI-test prerequisite and first-class tmux-management feature.
+- Current focus: Milestones 1-2 complete; Milestone 3 (theme library) next.
 - Completed so far:
   1. Corrected scope to the confirmed feature-request list.
   2. Added a hard prerequisite milestone for tmux-based UI integration/regression testing before terminal work.
   3. Structured milestones with acceptance gates, explicit tests, docs, and commit slices.
   4. Closed Milestone 0 with module-boundary freeze, config-schema decisions, docs pointers, and baseline validation (`cargo test`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`) in commit `f218ec2`.
   5. Closed Milestone 1 with an opt-in tmux/asciinema UI harness, deterministic fake-model integration scenario, artifactized failure reporting, docs, and make targets in commit `892ca5d`.
+  6. Implemented Milestone 2 with first-class tmux lifecycle tools, ownership boundaries, tmux target selectors on existing tools, session/pane limits, target-aware default-pane snapshot logic, and extended opt-in UI regression coverage.
 - Next steps:
-  1. Start Milestone 2 (theme library, tokenized palette migration, `/theme`, explorer).
+  1. Start Milestone 3 (theme library, tokenized palette migration, `/theme`, explorer).
   2. Keep the UI harness suite as a pre-merge gate for terminal-facing rendering changes.
-  3. Add additional Milestone 1 UI scenarios as new dynamic behavior is introduced.
+  3. Continue with Milestone 4 (build metadata, Makefile-first release workflow) after M3 acceptance.
 
 ## Scope (Locked)
 
@@ -43,10 +44,18 @@ Primary requested features:
 5. Login UX:
    - `auth=login` missing credentials should not exit buddy,
    - show clear instruction to run `/login`.
+6. First-class tmux management:
+   - model-accessible tmux tools for create/kill session, create/kill pane, send keys, and capture pane,
+   - buddy may manage only sessions/panes it created,
+   - all managed tmux entities must use buddy/name-prefixed naming,
+   - shell/capture-pane/send-keys accept optional tmux session/pane selectors (defaulting to shared pane),
+   - clear logging/approval UX for tmux session/pane management operations,
+   - system prompt must clearly mark default-pane snapshot and avoid injecting it when operating against non-default capture target,
+   - configurable `max_sessions` and `max_panes` limits (defaults: `1` session, `5` panes; including default shared resources).
 
 Required prerequisite before terminal feature work:
 
-6. Robust tmux UI integration/regression harness:
+7. Robust tmux UI integration/regression harness:
    - launches buddy in isolated tmux session/pane with mock/fake models,
    - validates UI flow/colors/dynamic elements,
    - uses `capture-pane` and `pipe-pane`,
@@ -65,16 +74,17 @@ Required prerequisite before terminal feature work:
 
 - [x] Milestone 0: Design Freeze + Baseline Validation
 - [x] Milestone 1: Tmux UI Integration/Regression Harness (Prerequisite)
-- [ ] Milestone 2: Theme Library + `/theme` + Theme Explorer
-- [ ] Milestone 3: Build Metadata + Makefile-First + Release CI
-- [ ] Milestone 4: Interactive `buddy init` + First-Run Bootstrap
-- [ ] Milestone 5: Packaging + Curl Installer + Init Handoff
-- [ ] Milestone 6: `auth=login` Soft-Fail UX
-- [ ] Milestone 7: Final Integration, Regression, and Docs Closure
+- [x] Milestone 2: First-Class Tmux Management + Targeted Tmux Tooling
+- [ ] Milestone 3: Theme Library + `/theme` + Theme Explorer
+- [ ] Milestone 4: Build Metadata + Makefile-First + Release CI
+- [ ] Milestone 5: Interactive `buddy init` + First-Run Bootstrap
+- [ ] Milestone 6: Packaging + Curl Installer + Init Handoff
+- [ ] Milestone 7: `auth=login` Soft-Fail UX
+- [ ] Milestone 8: Final Integration, Regression, and Docs Closure
 
 ## Goal
 
-Ship the confirmed feature requests in incremental, testable slices with UI reliability protected by a tmux-based regression harness before terminal-facing changes.
+Ship the confirmed feature requests in incremental, testable slices with UI reliability protected by a tmux-based regression harness before terminal-facing changes, and with first-class safe tmux management as a foundational capability.
 
 ## Milestone 0: Design Freeze + Baseline Validation
 
@@ -236,7 +246,89 @@ Build an on-demand, high-signal UI test system that drives buddy inside tmux and
    - `make test-ui-regression`
    - `make test-model-regression`
 
-## Milestone 2: Theme Library + `/theme` + Theme Explorer
+## Milestone 2: First-Class Tmux Management + Targeted Tmux Tooling
+
+### Scope
+
+Add first-class tmux management tools and tmux-target routing with strict ownership/safety constraints, while preserving the shared-pane default workflow.
+
+### Tasks
+
+1. Add dedicated tmux management tools for:
+   - create session,
+   - kill session,
+   - create pane,
+   - kill pane,
+   - send keys (tmux-target aware),
+   - capture pane (tmux-target aware).
+2. Implement ownership boundaries:
+   - buddy can only manage sessions and panes it created,
+   - maintain an internal registry/metadata store of managed tmux entities,
+   - reject unmanaged targets with explicit error messaging.
+3. Enforce naming constraints:
+   - all managed sessions and panes must use the buddy/name prefix system,
+   - shared default pane naming remains deterministic and discoverable.
+4. Extend existing tools (`run_shell`, `capture_pane`, `send_keys`) with optional `session`/`pane` target parameters:
+   - default target remains the shared pane when unset,
+   - explicit target resolution and validation for all execution paths.
+5. Add configurable limits:
+   - `max_sessions` and `max_panes` in config,
+   - defaults `1` session and `5` panes,
+   - limits include default shared session/pane.
+6. Add approvals/logging for tmux management operations:
+   - clear target + action details in approval prompts,
+   - mutation/risk context included for create/kill operations,
+   - structured logs for auditability.
+7. System prompt snapshot behavior:
+   - when default shared pane is the active execution target, inject snapshot and label it clearly as default shared pane state,
+   - when command routing/capture targets a non-default pane, do not inject the default-pane snapshot for that request.
+8. Extend opt-in UI harness scenarios (post-M1 enhancement):
+   - managed session/pane create/kill flows,
+   - target-specific shell/send-keys/capture behavior,
+   - limit enforcement and unmanaged-target rejection.
+
+### Acceptance Gate
+
+1. Model can manage tmux sessions/panes through dedicated tools with explicit approvals.
+2. No tmux operation can mutate unmanaged (non-buddy-created) sessions/panes.
+3. Target-aware `run_shell`/`capture_pane`/`send_keys` work with explicit session/pane and correct shared-pane default behavior.
+4. `max_sessions`/`max_panes` are enforced with clear errors.
+5. System prompt snapshot logic is default-pane explicit and target-sensitive.
+6. New tmux scenarios pass in opt-in UI regression suite.
+
+### Tests
+
+1. Unit tests:
+   - tmux ownership registry and name validation,
+   - target resolution/defaulting,
+   - session/pane limit enforcement.
+2. Integration tests:
+   - tmux tool execution against managed/unmanaged targets,
+   - system prompt snapshot injection/omission rules by target.
+3. Opt-in UI regression updates:
+   - multi-pane/session flows using `tests/ui_tmux_regression.rs` ignored scenarios.
+
+### Docs
+
+1. `DESIGN.md` features + tmux-ownership constraints.
+2. `docs/testing-ui.md` scenario catalog update for tmux management coverage.
+3. `docs/terminal-repl.md` tmux targeting semantics and snapshot rules.
+
+### Commits
+
+1. `feat(tmux): add managed session and pane lifecycle tools with ownership boundaries`
+2. `feat(tools): add optional tmux target parameters for shell send-keys and capture-pane`
+3. `test(ui): add tmux-management regression scenarios and target-routing assertions`
+4. Status: complete (commit id recorded in execution log).
+
+### Milestone 2 Validation Snapshot (2026-03-01)
+
+1. `cargo fmt --check`: PASS
+2. `cargo test`: PASS
+3. `cargo clippy --all-targets -- -D warnings`: PASS
+4. `make test-ui-regression`: PASS (2 scenarios, 0 failures)
+
+## Milestone 3: Theme Library + `/theme` + Theme Explorer
 
 ### Scope
 
@@ -279,7 +371,7 @@ Implement composable semantic theming after harness baseline is in place.
 2. `feat(repl): add /theme selector and persisted theme selection`
 3. `feat(ui): add theme explorer with sample repl blocks`
 
-## Milestone 3: Build Metadata + Makefile-First + Release CI
+## Milestone 4: Build Metadata + Makefile-First + Release CI
 
 ### Scope
 
@@ -321,7 +413,7 @@ Embed build metadata in the binary and standardize make targets + tagged release
 2. `build(make): make makefile the primary build and release interface`
 3. `ci(release): add release-tag artifact workflow`
 
-## Milestone 4: Interactive `buddy init` + First-Run Bootstrap
+## Milestone 5: Interactive `buddy init` + First-Run Bootstrap
 
 ### Scope
 
@@ -360,7 +452,7 @@ Upgrade init into an interactive TUI flow for setup and config updates.
 2. `feat(init): support existing config update and overwrite prompts`
 3. `feat(cli): auto-run init when config is missing`
 
-## Milestone 5: Packaging + Curl Installer + Init Handoff
+## Milestone 6: Packaging + Curl Installer + Init Handoff
 
 ### Scope
 
@@ -398,7 +490,7 @@ Add cross-platform packaging/distribution and installer flow to `~/.local/bin`.
 1. `feat(dist): add packaging and curl installer for macos and linux`
 2. `feat(installer): add post-install init handoff and idempotent behavior`
 
-## Milestone 6: `auth=login` Soft-Fail UX
+## Milestone 7: `auth=login` Soft-Fail UX
 
 ### Scope
 
@@ -433,7 +525,7 @@ Do not abort startup when login credentials are missing; provide clear recovery 
 
 1. `fix(auth): soft-fail missing login credentials with /login guidance`
 
-## Milestone 7: Final Integration, Regression, and Docs Closure
+## Milestone 8: Final Integration, Regression, and Docs Closure
 
 ### Scope
 
@@ -477,3 +569,5 @@ Run final validation across all milestones and close documentation/workflow upda
 - 2026-03-01: Added Milestone 1 as a hard prerequisite for tmux/asciinema UI integration regression before terminal/UI feature work.
 - 2026-03-01: Milestone 0 completed. Captured module boundaries, planned config schema deltas, and baseline validation results (`cargo test`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`), then updated docs pointers for the upcoming UI harness. Commit: `f218ec2`.
 - 2026-03-01: Milestone 1 implementation landed: added `tests/ui_tmux/` harness helpers, `tests/ui_tmux_regression.rs` ignored scenario, fake-model server, tmux `capture-pane`/`pipe-pane` checkpoints, asciinema recording, structured `report.json`, docs (`docs/testing-ui.md`), README integration notes, and Makefile test targets. Validation: opt-in suite PASS + full local gates PASS. Commit: `892ca5d`.
+- 2026-03-01: Scope expanded to include first-class tmux management (managed session/pane lifecycle, tmux-targeted tool routing, ownership boundaries, and session/pane limits). Inserted new Milestone 2 and shifted prior Milestones 2-7 to 3-8.
+- 2026-03-01: Milestone 2 implementation complete: added managed tmux lifecycle tools (`tmux-create-session`, `tmux-kill-session`, `tmux-create-pane`, `tmux-kill-pane`), optional `session`/`pane` selectors for `run_shell`/`capture-pane`/`send-keys`, managed ownership markers and canonical naming, `[tmux]` limits (`max_sessions`, `max_panes`), target-aware default-pane snapshot injection rules, and extended ignored UI regression coverage for targeted managed-pane execution. Validation: `cargo fmt --check` PASS, `cargo test` PASS, `cargo clippy --all-targets -- -D warnings` PASS, `make test-ui-regression` PASS. Commit: pending.

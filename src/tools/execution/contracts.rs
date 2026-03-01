@@ -3,7 +3,10 @@
 use crate::error::ToolError;
 use async_trait::async_trait;
 
-use super::types::{CapturePaneOptions, ExecOutput, SendKeysOptions, ShellWait, TmuxAttachInfo};
+use super::types::{
+    CapturePaneOptions, CreatedTmuxPane, CreatedTmuxSession, ExecOutput, ResolvedTmuxTarget,
+    SendKeysOptions, ShellWait, TmuxAttachInfo, TmuxTargetSelector,
+};
 
 /// Internal backend trait used to decouple `ExecutionContext` from concrete
 /// local/container/ssh implementations.
@@ -27,10 +30,41 @@ pub(super) trait ExecutionBackendOps: Send + Sync {
         command: &str,
         wait: ShellWait,
     ) -> Result<ExecOutput, ToolError>;
+    /// Run a shell command in an explicitly resolved tmux pane target.
+    async fn run_shell_command_targeted(
+        &self,
+        command: &str,
+        wait: ShellWait,
+        target: ResolvedTmuxTarget,
+    ) -> Result<ExecOutput, ToolError>;
     /// Read file contents.
     async fn read_file(&self, path: &str) -> Result<String, ToolError>;
     /// Write file contents.
     async fn write_file(&self, path: &str, content: &str) -> Result<(), ToolError>;
+    /// True when first-class managed tmux controls are available.
+    fn tmux_management_available(&self) -> bool;
+    /// Resolve a managed tmux selector into a concrete pane id.
+    async fn resolve_tmux_target(
+        &self,
+        selector: TmuxTargetSelector,
+        ensure_default_shared: bool,
+    ) -> Result<ResolvedTmuxTarget, ToolError>;
+    /// Create or reuse a managed tmux session.
+    async fn create_tmux_session(&self, session: String) -> Result<CreatedTmuxSession, ToolError>;
+    /// Kill a managed tmux session.
+    async fn kill_tmux_session(&self, session: String) -> Result<String, ToolError>;
+    /// Create or reuse a managed tmux pane in a session.
+    async fn create_tmux_pane(
+        &self,
+        session: Option<String>,
+        pane: String,
+    ) -> Result<CreatedTmuxPane, ToolError>;
+    /// Kill a managed tmux pane.
+    async fn kill_tmux_pane(
+        &self,
+        session: Option<String>,
+        pane: String,
+    ) -> Result<String, ToolError>;
 }
 
 /// Shared contract for backends that can execute shell snippets.

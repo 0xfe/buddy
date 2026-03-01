@@ -84,7 +84,7 @@ If `definitions()` is called with no tools registered, the agent omits the
 
 ## Built-in Tools
 
-Eight tools ship with the agent. Each is conditionally registered based on
+Twelve tools ship with the agent. Each is conditionally registered based on
 config flags (`[tools].shell_enabled`, `fetch_enabled`, etc.).
 
 ---
@@ -98,6 +98,8 @@ Run a shell command and capture its output.
 ```json
 {
   "command": "du -sh /var",
+  "session": "ops",
+  "pane": "worker",
   "risk": "low",
   "mutation": false,
   "privesc": false,
@@ -113,6 +115,8 @@ Run a shell command and capture its output.
 | `mutation` | bool | required | Whether command mutates system state |
 | `privesc` | bool | required | Whether command uses privilege escalation |
 | `why` | string | required | Short reason and risk justification |
+| `session` | string | shared default session | Optional managed tmux session selector |
+| `pane` | string | `shared` | Optional managed tmux pane selector |
 | `wait` | bool \| string \| int | `true` | Waiting behaviour (see below) |
 
 **Wait modes:**
@@ -257,7 +261,9 @@ SSH target with a tmux session).
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `target` | active pane | tmux pane/session target (`-t` syntax) |
+| `target` | active pane | Legacy raw tmux pane/session target (`-t` syntax) |
+| `session` | shared default session | Optional managed tmux session selector |
+| `pane` | `shared` | Optional managed tmux pane selector |
 | `start` | tmux default | Start line (`-S`); `"-"` = beginning of history |
 | `end` | tmux default | End line (`-E`); `"-"` = end of visible area |
 | `join_wrapped_lines` | `true` | tmux `-J` flag — join soft-wrapped lines |
@@ -306,7 +312,9 @@ Inject keystrokes into a tmux pane. Only available with a tmux backend.
 
 | Field | Description |
 |-------|-------------|
-| `target` | tmux pane/session target; defaults to active pane |
+| `target` | Legacy raw tmux pane/session target; defaults to active pane |
+| `session` | Optional managed tmux session selector |
+| `pane` | Optional managed tmux pane selector |
 | `keys` | tmux key names: `"C-c"`, `"C-z"`, `"Enter"`, `"Up"`, `"Down"`, etc. |
 | `literal_text` | Literal text to type (uses `tmux send-keys -l`) |
 | `enter` | Press Enter after other keys |
@@ -334,7 +342,54 @@ if requested.
 
 ---
 
-### 8. `time` — `src/tools/time.rs`
+### 8. `tmux-create-session` — `src/tools/tmux_manage.rs`
+
+Create or reuse a buddy-managed tmux session and ensure its shared pane is
+ready.
+
+Required fields: `session`, `risk`, `mutation`, `privesc`, `why`.
+
+Session names are canonicalized to the buddy owner prefix
+(`buddy-<agent.name>-...`) and are bounded by `[tmux].max_sessions`.
+
+---
+
+### 9. `tmux-kill-session` — `src/tools/tmux_manage.rs`
+
+Kill one buddy-managed tmux session.
+
+- Cannot kill the default shared session.
+- Fails for unmanaged sessions.
+
+Required fields: `session`, `risk`, `mutation`, `privesc`, `why`.
+
+---
+
+### 10. `tmux-create-pane` — `src/tools/tmux_manage.rs`
+
+Create or reuse a buddy-managed pane in a managed session.
+
+Required fields: `pane`, `risk`, `mutation`, `privesc`, `why`.
+Optional: `session`.
+
+Pane names are canonicalized to buddy-managed names (except reserved
+`shared`) and are bounded by `[tmux].max_panes`.
+
+---
+
+### 11. `tmux-kill-pane` — `src/tools/tmux_manage.rs`
+
+Kill one buddy-managed pane in a managed session.
+
+- Default shared pane is protected from deletion.
+- Fails for unmanaged panes.
+
+Required fields: `pane`, `risk`, `mutation`, `privesc`, `why`.
+Optional: `session`.
+
+---
+
+### 12. `time` — `src/tools/time.rs`
 
 Return the current wall-clock time snapshot from the harness.
 

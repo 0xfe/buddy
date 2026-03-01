@@ -268,6 +268,8 @@ mod tests {
             "%11",
             &CapturePaneOptions {
                 target: None,
+                session: None,
+                pane: None,
                 start: Some("-40".to_string()),
                 end: Some("20".to_string()),
                 join_wrapped_lines: false,

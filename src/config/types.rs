@@ -49,6 +49,8 @@ pub struct Config {
     pub network: NetworkConfig,
     /// Output/UI display preferences.
     pub display: DisplayConfig,
+    /// Managed tmux session/pane limits and policy knobs.
+    pub tmux: TmuxConfig,
 }
 
 impl Default for Config {
@@ -75,6 +77,7 @@ impl Default for Config {
             tools: ToolsConfig::default(),
             network: NetworkConfig::default(),
             display: DisplayConfig::default(),
+            tmux: TmuxConfig::default(),
         }
     }
 }
@@ -276,6 +279,25 @@ impl Default for DisplayConfig {
     }
 }
 
+/// Managed tmux lifecycle constraints.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct TmuxConfig {
+    /// Maximum number of managed tmux sessions for this agent identity.
+    pub max_sessions: usize,
+    /// Maximum number of managed tmux panes per managed session.
+    pub max_panes: usize,
+}
+
+impl Default for TmuxConfig {
+    fn default() -> Self {
+        Self {
+            max_sessions: 1,
+            max_panes: 5,
+        }
+    }
+}
+
 /// Network/HTTP timeout policy.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -312,6 +334,8 @@ pub(super) struct FileConfig {
     pub(super) network: NetworkConfig,
     /// Display section from config file.
     pub(super) display: DisplayConfig,
+    /// Tmux section from config file.
+    pub(super) tmux: TmuxConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]

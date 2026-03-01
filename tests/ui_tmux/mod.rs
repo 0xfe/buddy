@@ -286,6 +286,11 @@ pub struct MockModelServer {
 impl MockModelServer {
     /// Start a local scripted server bound to `127.0.0.1:*`.
     pub fn start() -> HarnessResult<Self> {
+        Self::start_with_responses(default_mock_responses())
+    }
+
+    /// Start a local scripted server with custom response sequence.
+    pub fn start_with_responses(responses: Vec<serde_json::Value>) -> HarnessResult<Self> {
         let listener = TcpListener::bind("127.0.0.1:0")
             .map_err(|e| format!("failed binding mock server: {e}"))?;
         listener
@@ -297,14 +302,16 @@ impl MockModelServer {
 
         let shutdown = Arc::new(AtomicBool::new(false));
         let requests = Arc::new(AtomicUsize::new(0));
+        let responses = Arc::new(responses);
         let shutdown_flag = Arc::clone(&shutdown);
         let request_count = Arc::clone(&requests);
+        let scripted_responses = Arc::clone(&responses);
         let thread = thread::spawn(move || {
             while !shutdown_flag.load(Ordering::Relaxed) {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
                         let idx = request_count.fetch_add(1, Ordering::Relaxed);
-                        let _ = handle_mock_request(&mut stream, idx);
+                        let _ = handle_mock_request(&mut stream, idx, &scripted_responses);
                     }
                     Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(20));
@@ -516,18 +523,19 @@ where
     }
 }
 
-fn handle_mock_request(stream: &mut TcpStream, request_index: usize) -> HarnessResult<()> {
+fn handle_mock_request(
+    stream: &mut TcpStream,
+    request_index: usize,
+    responses: &[serde_json::Value],
+) -> HarnessResult<()> {
     let _request = read_http_json_body(stream)?;
-    match request_index {
-        0 => {
-            thread::sleep(Duration::from_millis(1400));
-            write_http_json(stream, &mock_tool_call_response())?;
-        }
-        _ => {
-            thread::sleep(Duration::from_millis(800));
-            write_http_json(stream, &mock_final_response())?;
-        }
-    }
+    let response = responses
+        .get(request_index)
+        .or_else(|| responses.last())
+        .ok_or_else(|| "mock response script is empty".to_string())?;
+    let delay = if request_index == 0 { 1400 } else { 800 };
+    thread::sleep(Duration::from_millis(delay));
+    write_http_json(stream, response)?;
     Ok(())
 }
 
@@ -651,6 +659,10 @@ fn mock_final_response() -> serde_json::Value {
             "total_tokens": 28
         }
     })
+}
+
+fn default_mock_responses() -> Vec<serde_json::Value> {
+    vec![mock_tool_call_response(), mock_final_response()]
 }
 
 fn unique_suffix() -> String {

@@ -81,3 +81,7 @@ color = true
 show_tokens = false
 show_tool_calls = true
 persist_history = true                     # save REPL input history to ~/.config/buddy/history
+
+[tmux]
+max_sessions = 1                           # includes the default shared session
+max_panes = 5                              # per-session managed pane cap, includes shared pane

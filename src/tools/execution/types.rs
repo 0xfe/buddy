@@ -1,5 +1,6 @@
 //! Shared execution data structures and backend-local context types.
 
+use serde::Serialize;
 use std::path::PathBuf;
 use tokio::sync::Mutex;
 use tokio::time::Duration;
@@ -33,6 +34,10 @@ pub enum ShellWait {
 pub struct CapturePaneOptions {
     /// Optional explicit pane/session target (`tmux -t` syntax).
     pub target: Option<String>,
+    /// Optional managed tmux session selector.
+    pub session: Option<String>,
+    /// Optional managed tmux pane selector.
+    pub pane: Option<String>,
     /// Optional `tmux capture-pane -S` start bound.
     pub start: Option<String>,
     /// Optional `tmux capture-pane -E` end bound.
@@ -55,6 +60,8 @@ impl Default for CapturePaneOptions {
     fn default() -> Self {
         Self {
             target: None,
+            session: None,
+            pane: None,
             start: None,
             end: None,
             join_wrapped_lines: true,
@@ -72,6 +79,10 @@ impl Default for CapturePaneOptions {
 pub struct SendKeysOptions {
     /// Optional explicit pane/session target (`tmux -t` syntax).
     pub target: Option<String>,
+    /// Optional managed tmux session selector.
+    pub session: Option<String>,
+    /// Optional managed tmux pane selector.
+    pub pane: Option<String>,
     /// Named tmux keys to send.
     pub keys: Vec<String>,
     /// Literal text payload (`tmux send-keys -l`).
@@ -86,6 +97,8 @@ impl Default for SendKeysOptions {
     fn default() -> Self {
         Self {
             target: None,
+            session: None,
+            pane: None,
             keys: Vec::new(),
             literal_text: None,
             press_enter: false,
@@ -103,6 +116,61 @@ pub struct TmuxAttachInfo {
     pub window: &'static str,
     /// Concrete attach target details.
     pub target: TmuxAttachTarget,
+}
+
+/// Selector used to resolve a managed tmux pane target.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TmuxTargetSelector {
+    /// Optional raw tmux target syntax (`-t`) for backward compatibility.
+    pub target: Option<String>,
+    /// Optional managed session selector.
+    pub session: Option<String>,
+    /// Optional managed pane selector.
+    pub pane: Option<String>,
+}
+
+impl TmuxTargetSelector {
+    /// True when at least one explicit selector field is present.
+    pub fn is_explicit(&self) -> bool {
+        self.target.is_some() || self.session.is_some() || self.pane.is_some()
+    }
+}
+
+/// Fully resolved tmux pane target after ownership/limit checks.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ResolvedTmuxTarget {
+    /// Managed tmux session name containing the pane.
+    pub session: String,
+    /// Concrete tmux pane id (for example `%7`).
+    pub pane_id: String,
+    /// Pane title associated with `pane_id`.
+    pub pane_title: String,
+    /// True when this target is the default shared pane.
+    pub is_default_shared: bool,
+}
+
+/// Output returned by tmux session-creation operations.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CreatedTmuxSession {
+    /// Managed tmux session name.
+    pub session: String,
+    /// Shared pane id in the session.
+    pub pane_id: String,
+    /// Whether a new session was created (`false` when reused).
+    pub created: bool,
+}
+
+/// Output returned by tmux pane-creation operations.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CreatedTmuxPane {
+    /// Managed tmux session name containing the pane.
+    pub session: String,
+    /// New (or existing) pane id.
+    pub pane_id: String,
+    /// Managed pane title.
+    pub pane_title: String,
+    /// Whether a new pane was created (`false` when reused by title).
+    pub created: bool,
 }
 
 /// Concrete execution target for tmux attach instructions.
@@ -130,6 +198,9 @@ pub(crate) struct ContainerTmuxContext {
     pub(crate) engine: ContainerEngine,
     pub(crate) container: String,
     pub(crate) tmux_session: String,
+    pub(crate) owner_prefix: String,
+    pub(crate) max_sessions: usize,
+    pub(crate) max_panes: usize,
     pub(crate) configured_tmux_pane: Mutex<Option<String>>,
     pub(crate) startup_existing_tmux_pane: Option<String>,
 }
@@ -158,6 +229,9 @@ pub(crate) const TMUX_PANE_TITLE: &str = "shared";
 /// Local execution backend backed by a managed tmux pane.
 pub(crate) struct LocalTmuxContext {
     pub(crate) tmux_session: String,
+    pub(crate) owner_prefix: String,
+    pub(crate) max_sessions: usize,
+    pub(crate) max_panes: usize,
     pub(crate) configured_tmux_pane: Mutex<Option<String>>,
     pub(crate) startup_existing_tmux_pane: Option<String>,
 }
@@ -167,6 +241,9 @@ pub(crate) struct SshContext {
     pub(crate) target: String,
     pub(crate) control_path: PathBuf,
     pub(crate) tmux_session: Option<String>,
+    pub(crate) owner_prefix: String,
+    pub(crate) max_sessions: usize,
+    pub(crate) max_panes: usize,
     pub(crate) configured_tmux_pane: Mutex<Option<String>>,
     pub(crate) startup_existing_tmux_pane: Option<String>,
 }

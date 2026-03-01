@@ -13,6 +13,7 @@ pub(crate) mod process;
 pub(crate) mod types;
 
 use crate::error::ToolError;
+use crate::tmux::management::canonical_session_name;
 use crate::tmux::pane::{ensure_container_tmux_pane, ensure_local_tmux_pane, ensure_tmux_pane};
 use crate::tmux::prompt::{
     ensure_container_tmux_prompt_setup, ensure_local_tmux_prompt_setup, ensure_tmux_prompt_setup,
@@ -40,7 +41,10 @@ use types::{
     TMUX_WINDOW_NAME,
 };
 
-pub use types::{CapturePaneOptions, SendKeysOptions, ShellWait, TmuxAttachInfo, TmuxAttachTarget};
+pub use types::{
+    CapturePaneOptions, CreatedTmuxPane, CreatedTmuxSession, ResolvedTmuxTarget, SendKeysOptions,
+    ShellWait, TmuxAttachInfo, TmuxAttachTarget, TmuxTargetSelector,
+};
 
 /// Runtime-execution backend shared across tool instances.
 #[derive(Clone)]
@@ -64,6 +68,8 @@ impl ExecutionContext {
     pub async fn local_tmux(
         requested_tmux_session: Option<String>,
         agent_name: &str,
+        max_sessions: usize,
+        max_panes: usize,
     ) -> Result<Self, ToolError> {
         // Reject empty session names early for clearer user feedback.
         if requested_tmux_session
@@ -83,10 +89,14 @@ impl ExecutionContext {
         }
 
         // Reuse or create the managed pane and ensure prompt markers are installed.
-        let tmux_session = requested_tmux_session
-            .unwrap_or_else(|| default_tmux_session_name_for_agent(agent_name));
+        let owner_prefix = default_tmux_session_name_for_agent(agent_name);
+        let tmux_session = canonical_session_name(
+            &owner_prefix,
+            &owner_prefix,
+            requested_tmux_session.as_deref(),
+        )?;
         ensure_not_in_managed_local_tmux_pane().await?;
-        let ensured = ensure_local_tmux_pane(&tmux_session).await?;
+        let ensured = ensure_local_tmux_pane(&tmux_session, &owner_prefix).await?;
         if ensured.created {
             ensure_local_tmux_prompt_setup(&ensured.pane_id).await?;
         }
@@ -95,6 +105,9 @@ impl ExecutionContext {
         Ok(Self {
             inner: Arc::new(LocalTmuxContext {
                 tmux_session,
+                owner_prefix,
+                max_sessions: max_sessions.max(1),
+                max_panes: max_panes.max(1),
                 configured_tmux_pane: Mutex::new(Some(ensured.pane_id)),
                 startup_existing_tmux_pane,
             }),
@@ -121,6 +134,8 @@ impl ExecutionContext {
         container: impl Into<String>,
         requested_tmux_session: Option<String>,
         agent_name: &str,
+        max_sessions: usize,
+        max_panes: usize,
     ) -> Result<Self, ToolError> {
         // Validate user-provided identifiers before probing backend capabilities.
         let container = container.into();
@@ -139,11 +154,20 @@ impl ExecutionContext {
         }
 
         let engine = detect_container_engine().await?;
-        let default_tmux_session = default_tmux_session_name_for_agent(agent_name);
+        let owner_prefix = default_tmux_session_name_for_agent(agent_name);
+        let default_tmux_session = owner_prefix.clone();
+        let tmux_session = canonical_session_name(
+            &owner_prefix,
+            &default_tmux_session,
+            requested_tmux_session.as_deref(),
+        )?;
         let context = ContainerTmuxContext {
             engine,
             container,
-            tmux_session: requested_tmux_session.unwrap_or(default_tmux_session),
+            tmux_session,
+            owner_prefix,
+            max_sessions: max_sessions.max(1),
+            max_panes: max_panes.max(1),
             configured_tmux_pane: Mutex::new(None),
             startup_existing_tmux_pane: None,
         };
@@ -157,7 +181,9 @@ impl ExecutionContext {
                 context.container
             )));
         }
-        let ensured = ensure_container_tmux_pane(&context, &context.tmux_session).await?;
+        let ensured =
+            ensure_container_tmux_pane(&context, &context.tmux_session, &context.owner_prefix)
+                .await?;
         if ensured.created {
             ensure_container_tmux_prompt_setup(&context, &ensured.pane_id).await?;
         }
@@ -182,6 +208,8 @@ impl ExecutionContext {
         target: impl Into<String>,
         requested_tmux_session: Option<String>,
         agent_name: &str,
+        max_sessions: usize,
+        max_panes: usize,
     ) -> Result<Self, ToolError> {
         // Validate basic SSH/tmux arguments before opening control sockets.
         let target = target.into();
@@ -222,6 +250,7 @@ impl ExecutionContext {
         )?;
 
         // Probe remote tmux and create managed session when available/required.
+        let owner_prefix = default_tmux_session_name_for_agent(agent_name);
         let tmux_session_result: Result<Option<String>, ToolError> = async {
             let tmux_probe = run_ssh_raw_process(
                 &target,
@@ -231,8 +260,11 @@ impl ExecutionContext {
             )
             .await?;
             if tmux_probe.exit_code == 0 {
-                let session_name = requested_tmux_session
-                    .unwrap_or_else(|| default_tmux_session_name_for_agent(agent_name));
+                let session_name = canonical_session_name(
+                    &owner_prefix,
+                    &owner_prefix,
+                    requested_tmux_session.as_deref(),
+                )?;
                 let session_q = shell_quote(&session_name);
                 let window_q = shell_quote(TMUX_WINDOW_NAME);
                 let script = format!(
@@ -267,7 +299,7 @@ impl ExecutionContext {
         let (configured_tmux_pane, startup_existing_tmux_pane) = if let Some(session) =
             tmux_session.as_deref()
         {
-            match ensure_tmux_pane(&target, &control_path, session).await {
+            match ensure_tmux_pane(&target, &control_path, session, &owner_prefix).await {
                 Ok(ensured) => {
                     if ensured.created {
                         if let Err(err) =
@@ -295,6 +327,9 @@ impl ExecutionContext {
                 target,
                 control_path,
                 tmux_session,
+                owner_prefix,
+                max_sessions: max_sessions.max(1),
+                max_panes: max_panes.max(1),
                 configured_tmux_pane: Mutex::new(configured_tmux_pane),
                 startup_existing_tmux_pane,
             }),
@@ -373,6 +408,19 @@ impl ExecutionContext {
         self.inner.run_shell_command(command, wait).await
     }
 
+    /// Run a shell command against an explicitly selected managed tmux target.
+    pub async fn run_shell_command_targeted(
+        &self,
+        command: &str,
+        wait: ShellWait,
+        selector: TmuxTargetSelector,
+    ) -> Result<ExecOutput, ToolError> {
+        let resolved = self.resolve_tmux_target(selector, true).await?;
+        self.inner
+            .run_shell_command_targeted(command, wait, resolved)
+            .await
+    }
+
     /// Read a text file through the configured backend.
     pub async fn read_file(&self, path: &str) -> Result<String, ToolError> {
         self.inner.read_file(path).await
@@ -381,6 +429,53 @@ impl ExecutionContext {
     /// Write a text file through the configured backend.
     pub async fn write_file(&self, path: &str, content: &str) -> Result<(), ToolError> {
         self.inner.write_file(path, content).await
+    }
+
+    /// True when first-class managed tmux controls are available.
+    pub fn tmux_management_available(&self) -> bool {
+        self.inner.tmux_management_available()
+    }
+
+    /// Resolve a tmux selector into a concrete managed pane id.
+    pub async fn resolve_tmux_target(
+        &self,
+        selector: TmuxTargetSelector,
+        ensure_default_shared: bool,
+    ) -> Result<ResolvedTmuxTarget, ToolError> {
+        self.inner
+            .resolve_tmux_target(selector, ensure_default_shared)
+            .await
+    }
+
+    /// Create or reuse a managed tmux session.
+    pub async fn create_tmux_session(
+        &self,
+        session: String,
+    ) -> Result<CreatedTmuxSession, ToolError> {
+        self.inner.create_tmux_session(session).await
+    }
+
+    /// Kill a managed tmux session.
+    pub async fn kill_tmux_session(&self, session: String) -> Result<String, ToolError> {
+        self.inner.kill_tmux_session(session).await
+    }
+
+    /// Create or reuse a managed tmux pane.
+    pub async fn create_tmux_pane(
+        &self,
+        session: Option<String>,
+        pane: String,
+    ) -> Result<CreatedTmuxPane, ToolError> {
+        self.inner.create_tmux_pane(session, pane).await
+    }
+
+    /// Kill a managed tmux pane.
+    pub async fn kill_tmux_pane(
+        &self,
+        session: Option<String>,
+        pane: String,
+    ) -> Result<String, ToolError> {
+        self.inner.kill_tmux_pane(session, pane).await
     }
 }
 
@@ -394,6 +489,9 @@ mod tests {
         let ctx = ExecutionContext {
             inner: Arc::new(LocalTmuxContext {
                 tmux_session: "buddy-dev".to_string(),
+                owner_prefix: "buddy-agent-mo".to_string(),
+                max_sessions: 1,
+                max_panes: 5,
                 configured_tmux_pane: Mutex::new(None),
                 startup_existing_tmux_pane: Some("%7".to_string()),
             }),
@@ -425,6 +523,9 @@ mod tests {
                 },
                 container: "devbox".to_string(),
                 tmux_session: "buddy-dev".to_string(),
+                owner_prefix: "buddy-agent-mo".to_string(),
+                max_sessions: 1,
+                max_panes: 5,
                 configured_tmux_pane: Mutex::new(None),
                 startup_existing_tmux_pane: None,
             }),
@@ -455,6 +556,9 @@ mod tests {
                 target: "dev@host".to_string(),
                 control_path: PathBuf::from("/tmp/buddy-ssh.sock"),
                 tmux_session: Some("buddy-4a2f".to_string()),
+                owner_prefix: "buddy-agent-mo".to_string(),
+                max_sessions: 1,
+                max_panes: 5,
                 configured_tmux_pane: Mutex::new(None),
                 startup_existing_tmux_pane: None,
             }),

@@ -50,6 +50,10 @@ use buddy::tools::search::WebSearchTool;
 use buddy::tools::send_keys::SendKeysTool;
 use buddy::tools::shell::{ShellApprovalBroker, ShellTool};
 use buddy::tools::time::TimeTool;
+use buddy::tools::tmux_manage::{
+    TmuxCreatePaneTool, TmuxCreateSessionTool, TmuxKillPaneTool, TmuxKillSessionTool,
+    TmuxToolShared,
+};
 use buddy::tools::ToolRegistry;
 use buddy::ui::render::{RenderSink, Renderer};
 use std::time::Duration;
@@ -276,7 +280,13 @@ async fn prepare_runtime_setup(
 
     let execution = initialize_execution_context(args, &loaded.config).await?;
     let capture_pane_enabled = execution.capture_pane_available();
-    configure_system_prompt(&mut loaded.config, args, capture_pane_enabled);
+    let tmux_management_enabled = execution.tmux_management_available();
+    configure_system_prompt(
+        &mut loaded.config,
+        args,
+        capture_pane_enabled,
+        tmux_management_enabled,
+    );
     let tool_setup = build_tools(
         &loaded.config,
         &execution,
@@ -325,20 +335,33 @@ async fn initialize_execution_context(
             container.clone(),
             requested_tmux_session,
             &config.agent.name,
+            config.tmux.max_sessions,
+            config.tmux.max_panes,
         )
         .await
         .map_err(|err| format!("failed to initialize container execution: {err}"));
     }
 
     if let Some(target) = &args.ssh {
-        return ExecutionContext::ssh(target.clone(), requested_tmux_session, &config.agent.name)
-            .await
-            .map_err(|err| format!("failed to initialize ssh execution: {err}"));
+        return ExecutionContext::ssh(
+            target.clone(),
+            requested_tmux_session,
+            &config.agent.name,
+            config.tmux.max_sessions,
+            config.tmux.max_panes,
+        )
+        .await
+        .map_err(|err| format!("failed to initialize ssh execution: {err}"));
     }
 
-    ExecutionContext::local_tmux(requested_tmux_session, &config.agent.name)
-        .await
-        .map_err(|err| format!("failed to initialize local tmux execution: {err}"))
+    ExecutionContext::local_tmux(
+        requested_tmux_session,
+        &config.agent.name,
+        config.tmux.max_sessions,
+        config.tmux.max_panes,
+    )
+    .await
+    .map_err(|err| format!("failed to initialize local tmux execution: {err}"))
 }
 
 /// Render and install the final system prompt string for this invocation.
@@ -346,8 +369,10 @@ fn configure_system_prompt(
     config: &mut Config,
     args: &crate::cli::Args,
     capture_pane_enabled: bool,
+    tmux_management_enabled: bool,
 ) {
-    let prompt_tool_names = enabled_tool_names(config, capture_pane_enabled);
+    let prompt_tool_names =
+        enabled_tool_names(config, capture_pane_enabled, tmux_management_enabled);
     let custom_prompt = config.agent.system_prompt.trim().to_string();
     config.agent.system_prompt = render_system_prompt(SystemPromptParams {
         execution_target: if let Some(container) = args.container.as_deref() {
@@ -370,9 +395,12 @@ fn build_tools(
     capture_pane_enabled: bool,
 ) -> ToolSetup {
     let mut tools = ToolRegistry::new();
+    let needs_tmux_management_approval =
+        capture_pane_enabled && interactive_mode && execution.tmux_management_available();
     let needs_approval_broker = interactive_mode
         && ((config.tools.shell_enabled && config.tools.shell_confirm)
-            || (config.tools.fetch_enabled && config.tools.fetch_confirm));
+            || (config.tools.fetch_enabled && config.tools.fetch_confirm)
+            || needs_tmux_management_approval);
     let (shell_approval_broker, shell_approval_rx) = if needs_approval_broker {
         let (broker, rx) = ShellApprovalBroker::channel();
         (Some(broker), Some(rx))
@@ -396,6 +424,23 @@ fn build_tools(
         tools.register(SendKeysTool {
             execution: execution.clone(),
         });
+        if execution.tmux_management_available() {
+            let shared = TmuxToolShared {
+                execution: execution.clone(),
+                confirm: true,
+                approval: shell_approval_broker.clone(),
+            };
+            tools.register(TmuxCreateSessionTool {
+                shared: shared.clone(),
+            });
+            tools.register(TmuxKillSessionTool {
+                shared: shared.clone(),
+            });
+            tools.register(TmuxCreatePaneTool {
+                shared: shared.clone(),
+            });
+            tools.register(TmuxKillPaneTool { shared });
+        }
     }
     if config.tools.fetch_enabled {
         tools.register(FetchTool::new(
@@ -572,7 +617,11 @@ pub(crate) async fn run_login_flow(
 }
 
 /// Return enabled tool identifiers for prompt rendering.
-fn enabled_tool_names(config: &Config, capture_pane_enabled: bool) -> Vec<&'static str> {
+fn enabled_tool_names(
+    config: &Config,
+    capture_pane_enabled: bool,
+    tmux_management_enabled: bool,
+) -> Vec<&'static str> {
     let mut tools = Vec::new();
     if config.tools.shell_enabled {
         tools.push("run_shell");
@@ -580,6 +629,12 @@ fn enabled_tool_names(config: &Config, capture_pane_enabled: bool) -> Vec<&'stat
     if capture_pane_enabled {
         tools.push("capture-pane");
         tools.push("send-keys");
+        if tmux_management_enabled {
+            tools.push("tmux-create-session");
+            tools.push("tmux-kill-session");
+            tools.push("tmux-create-pane");
+            tools.push("tmux-kill-pane");
+        }
     }
     if config.tools.fetch_enabled {
         tools.push("fetch_url");

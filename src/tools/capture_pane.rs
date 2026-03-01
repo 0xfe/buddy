@@ -27,6 +27,10 @@ pub struct CapturePaneTool {
 struct Args {
     /// Optional explicit pane/session target (`tmux -t` syntax).
     target: Option<String>,
+    /// Optional managed session selector.
+    session: Option<String>,
+    /// Optional managed pane selector.
+    pane: Option<String>,
     /// Optional tmux `-S` capture start boundary.
     start: Option<String>,
     /// Optional tmux `-E` capture end boundary.
@@ -76,6 +80,14 @@ impl Tool for CapturePaneTool {
                         "target": {
                             "type": "string",
                             "description": "Optional tmux target pane/session (same syntax as tmux -t). Defaults to the active agent pane."
+                        },
+                        "session": {
+                            "type": "string",
+                            "description": "Optional managed tmux session selector. When omitted, uses the default shared session."
+                        },
+                        "pane": {
+                            "type": "string",
+                            "description": "Optional managed tmux pane selector. When omitted, uses the shared pane."
                         },
                         "start": {
                             "type": "string",
@@ -130,6 +142,12 @@ impl Tool for CapturePaneTool {
         let mut options = CapturePaneOptions::default();
         if let Some(target) = args.target {
             options.target = Some(target);
+        }
+        if let Some(session) = args.session {
+            options.session = Some(session);
+        }
+        if let Some(pane) = args.pane {
+            options.pane = Some(pane);
         }
         if let Some(start) = args.start {
             options.start = Some(start);

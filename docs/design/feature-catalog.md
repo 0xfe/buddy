@@ -125,6 +125,7 @@ All tool outputs are wrapped as JSON:
 - `run_shell`
   - required metadata: `risk`, `mutation`, `privesc`, `why`
   - optional `wait`: `true`, `false`, duration (`"10m"`) or integer seconds
+  - optional managed tmux selectors: `session`, `pane`
   - denylist enforcement via `tools.shell_denylist`
   - optional confirmation flow (`tools.shell_confirm`)
   - streaming tool events in runtime mode
@@ -147,11 +148,29 @@ All tool outputs are wrapped as JSON:
   - max 8 results
 - `capture-pane`
   - tmux pane snapshot tool with delay and capture options
+  - optional managed tmux selectors: `session`, `pane`
   - defaults to visible screenshot behavior
   - alternate-screen fallback when unavailable
   - output tail truncation
 - `send-keys`
   - tmux key injection (`keys`, `literal_text`, `enter`, delay)
+  - optional managed tmux selectors: `session`, `pane`
+  - required metadata: `risk`, `mutation`, `privesc`, `why`
+- `tmux-create-session`
+  - create/reuse buddy-managed tmux session and shared pane
+  - enforced managed ownership + `tmux.max_sessions` limit
+  - required metadata: `risk`, `mutation`, `privesc`, `why`
+- `tmux-kill-session`
+  - kill one buddy-managed tmux session (default shared session protected)
+  - required metadata: `risk`, `mutation`, `privesc`, `why`
+- `tmux-create-pane`
+  - create/reuse buddy-managed pane in managed session
+  - optional `session` selector, required `pane`
+  - enforced managed ownership + `tmux.max_panes` limit
+  - required metadata: `risk`, `mutation`, `privesc`, `why`
+- `tmux-kill-pane`
+  - kill one buddy-managed pane (default shared pane protected)
+  - optional `session` selector, required `pane`
   - required metadata: `risk`, `mutation`, `privesc`, `why`
 - `time`
   - harness wall-clock snapshot in unix and UTC text formats
@@ -180,6 +199,11 @@ All tool outputs are wrapped as JSON:
 - It refuses to launch from the managed local shared pane to avoid self-injection loops.
 - Startup prints attach instructions for local/SSH/container tmux targets.
 - Prompt markers are installed and parsed for deterministic command completion in tmux-backed `run_shell`.
+- Managed ownership is enforced via tmux options (`@buddy_managed`, `@buddy_owner`).
+- Managed naming is canonicalized to the buddy owner prefix (`buddy-<agent.name>-...`).
+- Configurable tmux limits:
+  - `[tmux].max_sessions` (default `1`)
+  - `[tmux].max_panes` (default `5`, per managed session, including shared pane)
 
 ## REPL UX
 
@@ -236,6 +260,8 @@ All tool outputs are wrapped as JSON:
   - execution target note (local/container/ssh)
   - optional custom operator instructions
 - When `capture-pane` is available, Buddy refreshes a tmux snapshot block before each model request.
+- Snapshot text is explicitly labeled as the default shared-pane screenshot.
+- When the most recent tmux tool call targets a non-default session/pane, default-pane snapshot injection is skipped for that request.
 - Snapshot block is replaced in-place in the primary system message (not accumulated across turns).
 
 ## Rendering and Output Behavior

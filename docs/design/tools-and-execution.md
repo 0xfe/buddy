@@ -59,6 +59,10 @@ Purpose:
   - `true`: wait for completion
   - `false`: dispatch and return immediately (tmux-backed contexts)
   - duration string / integer seconds: bounded wait with timeout
+- Optional tmux selectors:
+  - `session`: managed session selector
+  - `pane`: managed pane selector
+  - when omitted, defaults to the managed shared pane
 - Enforces `tools.shell_denylist` patterns.
 - Optional confirmations (`tools.shell_confirm`), mediated by runtime broker in interactive mode.
 - Output truncation: 4K for stdout/stderr payload text.
@@ -96,7 +100,7 @@ Purpose:
 ### `capture-pane`
 
 - Captures tmux pane output with options close to native `tmux capture-pane` flags:
-  - `target`, `start`, `end`
+  - `target`, `session`, `pane`, `start`, `end`
   - `join_wrapped_lines`, `preserve_trailing_spaces`
   - `include_escape_sequences`, `escape_non_printable`
   - `include_alternate_screen`
@@ -108,6 +112,8 @@ Purpose:
 
 - Injects tmux key events/literal text.
 - Inputs:
+  - optional `target` (legacy raw tmux `-t`)
+  - optional managed `session` / `pane` selectors
   - `keys`
   - `literal_text`
   - `enter`
@@ -115,6 +121,31 @@ Purpose:
 - Required metadata fields:
   - `risk`, `mutation`, `privesc`, `why`
 - Requires at least one actionable input (`keys`, `literal_text`, or `enter=true`).
+
+### `tmux-create-session`
+
+- Creates or reuses a buddy-managed tmux session.
+- Ensures the shared pane exists and is prompt-initialized.
+- Enforces ownership and `[tmux].max_sessions` limits.
+- Requires shell-style metadata fields: `risk`, `mutation`, `privesc`, `why`.
+
+### `tmux-kill-session`
+
+- Kills one buddy-managed tmux session.
+- Rejects unmanaged sessions and protects the default managed session.
+- Requires shell-style metadata fields: `risk`, `mutation`, `privesc`, `why`.
+
+### `tmux-create-pane`
+
+- Creates or reuses a buddy-managed pane in a managed session.
+- Enforces ownership and per-session `[tmux].max_panes` limits.
+- Requires `pane` plus shell-style metadata fields; optional `session`.
+
+### `tmux-kill-pane`
+
+- Kills one buddy-managed pane in a managed session.
+- Rejects unmanaged panes and protects the default shared pane.
+- Requires `pane` plus shell-style metadata fields; optional `session`.
 
 ### `time`
 
@@ -181,6 +212,15 @@ Buddy standardizes managed tmux behavior across local/SSH/container:
 - session name default: `buddy-<sanitized agent.name>`
 - managed window name: `shared`
 - managed pane title: `shared`
+- ownership markers:
+  - session/pane `@buddy_managed=1`
+  - session/pane `@buddy_owner=<buddy-prefix>`
+- naming constraints:
+  - managed sessions and panes are canonicalized to the buddy owner prefix
+  - unmanaged names cannot be mutated
+- limits:
+  - `[tmux].max_sessions` (default `1`)
+  - `[tmux].max_panes` (default `5`, per managed session, includes shared pane)
 - pane ensure script:
   - create session/window if absent
   - prefer existing titled pane
@@ -218,6 +258,7 @@ Tool registration in app wiring is conditional:
 - `read_file` + `write_file` when `tools.files_enabled`
 - `web_search` when `tools.search_enabled`
 - `capture-pane` + `send-keys` only when execution context reports capture support
+- tmux lifecycle tools only when execution context supports managed tmux operations
 - `time` always registered
 
 ## Safety and Policy Notes

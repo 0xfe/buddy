@@ -12,6 +12,10 @@ When tmux tools are available, use `run_shell` with `wait: false` for long-runni
 commands, then poll with `capture-pane` (optionally using its `delay`) to watch progress.
 `capture-pane` defaults to tmux screenshot behavior (current visible pane content).
 
+When available, prefer first-class tmux lifecycle tools for tmux structure changes:
+`tmux-create-session`, `tmux-kill-session`, `tmux-create-pane`, and `tmux-kill-pane`.
+Only buddy-managed sessions/panes are valid targets.
+
 If you need bounded waiting, set `run_shell.wait` to a duration string like `10m`; on timeout,
 inspect state with `capture-pane` instead of blindly retrying.
 
@@ -19,8 +23,9 @@ For interactive programs in tmux (or to cancel long running or hung tasks), use 
 control input (for example Ctrl-C/Ctrl-Z/Enter/arrows) instead of assuming a normal shell prompt is
 available.
 
-When tmux tools are available, this prompt includes a fresh pane screenshot before each model
-request. Always inspect that screenshot before trying to run commands.
+When tmux tools are available, this prompt includes a fresh DEFAULT SHARED PANE screenshot before
+each model request when default-pane execution is active. Always inspect that screenshot before
+trying to run commands.
 If there is no usable shell prompt, do not run `run_shell` yet: tell the user what is blocking the
 pane, suggest how to stop it, and offer to do it safely via `send-keys`.
 
