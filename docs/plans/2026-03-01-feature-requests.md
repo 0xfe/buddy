@@ -10,7 +10,7 @@
   2. Added a hard prerequisite milestone for tmux-based UI integration/regression testing before terminal work.
   3. Structured milestones with acceptance gates, explicit tests, docs, and commit slices.
   4. Closed Milestone 0 with module-boundary freeze, config-schema decisions, docs pointers, and baseline validation (`cargo test`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`) in commit `f218ec2`.
-  5. Closed Milestone 1 with an opt-in tmux/asciinema UI harness, deterministic fake-model integration scenario, artifactized failure reporting, docs, and make targets.
+  5. Closed Milestone 1 with an opt-in tmux/asciinema UI harness, deterministic fake-model integration scenario, artifactized failure reporting, docs, and make targets in commit `892ca5d`.
 - Next steps:
   1. Start Milestone 2 (theme library, tokenized palette migration, `/theme`, explorer).
   2. Keep the UI harness suite as a pre-merge gate for terminal-facing rendering changes.
@@ -222,6 +222,7 @@ Build an on-demand, high-signal UI test system that drives buddy inside tmux and
 1. `test(ui): add tmux harness runner with capture-pane and pipe-pane collection`
 2. `test(ui): add asciinema artifact recording and failure-reporting`
 3. `test(ui): add opt-in regression scenarios for spinner prompt approval and output`
+4. Completed as `892ca5d`.
 
 ### Milestone 1 Validation Snapshot (2026-03-01)
 
@@ -475,4 +476,4 @@ Run final validation across all milestones and close documentation/workflow upda
 - 2026-03-01: Re-scoped to exact confirmed requests.
 - 2026-03-01: Added Milestone 1 as a hard prerequisite for tmux/asciinema UI integration regression before terminal/UI feature work.
 - 2026-03-01: Milestone 0 completed. Captured module boundaries, planned config schema deltas, and baseline validation results (`cargo test`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`), then updated docs pointers for the upcoming UI harness. Commit: `f218ec2`.
-- 2026-03-01: Milestone 1 implementation landed: added `tests/ui_tmux/` harness helpers, `tests/ui_tmux_regression.rs` ignored scenario, fake-model server, tmux `capture-pane`/`pipe-pane` checkpoints, asciinema recording, structured `report.json`, docs (`docs/testing-ui.md`), README integration notes, and Makefile test targets. Validation: opt-in suite PASS + full local gates PASS.
+- 2026-03-01: Milestone 1 implementation landed: added `tests/ui_tmux/` harness helpers, `tests/ui_tmux_regression.rs` ignored scenario, fake-model server, tmux `capture-pane`/`pipe-pane` checkpoints, asciinema recording, structured `report.json`, docs (`docs/testing-ui.md`), README integration notes, and Makefile test targets. Validation: opt-in suite PASS + full local gates PASS. Commit: `892ca5d`.
