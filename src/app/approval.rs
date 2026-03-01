@@ -6,6 +6,7 @@ use buddy::runtime::{
 };
 use buddy::tools::execution::TmuxAttachInfo;
 use buddy::ui::render::RenderSink;
+use buddy::ui::theme::{self, ThemeToken};
 use crossterm::style::{Color, Stylize};
 
 /// Build the target label used in approval prompts.
@@ -42,16 +43,16 @@ pub(crate) fn render_shell_approval_request(
     if color {
         eprintln!(
             "{} {} risk shell command on {}",
-            "•".with(Color::DarkGrey),
+            "•".with(theme::color(ThemeToken::SectionBullet)),
             risk_label.with(risk_color).bold(),
-            actor.with(Color::White)
+            actor.with(theme::color(ThemeToken::FieldValue))
         );
     } else {
         eprintln!("• {risk_label} risk shell command on {actor}");
     }
     if let Some(reason) = why.map(str::trim).filter(|value| !value.is_empty()) {
         if color {
-            eprintln!("  {}", reason.with(Color::DarkGrey));
+            eprintln!("  {}", reason.with(theme::color(ThemeToken::FieldKey)));
         } else {
             eprintln!("  {reason}");
         }
@@ -66,9 +67,9 @@ pub(crate) fn approval_risk_style(risk: Option<&str>) -> (&'static str, Color) {
         .as_deref()
         .unwrap_or("low")
     {
-        "high" => ("high", Color::Red),
-        "medium" => ("medium", Color::Yellow),
-        _ => ("low", Color::Green),
+        "high" => ("high", theme::color(ThemeToken::RiskHigh)),
+        "medium" => ("medium", theme::color(ThemeToken::RiskMedium)),
+        _ => ("low", theme::color(ThemeToken::RiskLow)),
     }
 }
 

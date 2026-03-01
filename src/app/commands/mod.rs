@@ -4,3 +4,5 @@
 pub(crate) mod model;
 /// `/session` command helpers.
 pub(crate) mod session;
+/// `/theme` command helpers.
+pub(crate) mod theme;

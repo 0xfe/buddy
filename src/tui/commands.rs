@@ -13,7 +13,7 @@ pub struct SlashCommand {
 }
 
 /// Built-in slash commands for interactive mode.
-pub const SLASH_COMMANDS: [SlashCommand; 14] = [
+pub const SLASH_COMMANDS: [SlashCommand; 15] = [
     SlashCommand {
         name: "/status",
         description: "Show model, endpoint, tools, and session details.",
@@ -49,6 +49,10 @@ pub const SLASH_COMMANDS: [SlashCommand; 14] = [
     SlashCommand {
         name: "/model",
         description: "Switch active model profile: /model [name|index].",
+    },
+    SlashCommand {
+        name: "/theme",
+        description: "Switch active terminal theme: /theme [name|index].",
     },
     SlashCommand {
         name: "/login",
@@ -105,6 +109,8 @@ pub enum SlashCommandAction {
     Compact,
     /// Switch the active model profile.
     Model(Option<String>),
+    /// Switch the active terminal theme.
+    Theme(Option<String>),
     /// Start login flow for a model profile.
     Login(Option<String>),
     /// Show slash-command help.
@@ -149,6 +155,9 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommandAction> {
         "/compact" => SlashCommandAction::Compact,
         "/model" => {
             SlashCommandAction::Model(trimmed.split_whitespace().nth(1).map(str::to_string))
+        }
+        "/theme" => {
+            SlashCommandAction::Theme(trimmed.split_whitespace().nth(1).map(str::to_string))
         }
         "/login" => {
             SlashCommandAction::Login(trimmed.split_whitespace().nth(1).map(str::to_string))
@@ -235,6 +244,10 @@ mod tests {
         assert_eq!(
             parse_slash_command("/model kimi"),
             Some(SlashCommandAction::Model(Some("kimi".to_string())))
+        );
+        assert_eq!(
+            parse_slash_command("/theme light"),
+            Some(SlashCommandAction::Theme(Some("light".to_string())))
         );
         assert_eq!(
             parse_slash_command("/login"),

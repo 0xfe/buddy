@@ -5,6 +5,7 @@
 
 use std::sync::OnceLock;
 
+use crate::ui::theme::{self, ThemeToken};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{FontStyle, Theme, ThemeSet};
 use syntect::parsing::SyntaxSet;
@@ -75,7 +76,9 @@ pub fn highlight_lines_for_path(path: &str, lines: &[&str]) -> Option<Vec<Vec<St
             }
             tokens.push(StyledToken {
                 text: fragment.to_string(),
-                rgb: (style.foreground.r, style.foreground.g, style.foreground.b),
+                // Keep syntax emphasis via font attributes while routing colors
+                // through semantic theme tokens only.
+                rgb: theme::rgb(ThemeToken::BlockToolText),
                 bold: style.font_style.contains(FontStyle::BOLD),
                 italic: style.font_style.contains(FontStyle::ITALIC),
                 underline: style.font_style.contains(FontStyle::UNDERLINE),

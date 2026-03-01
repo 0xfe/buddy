@@ -2,7 +2,8 @@
 
 use buddy::repl::SessionStartupState;
 use buddy::tools::execution::{TmuxAttachInfo, TmuxAttachTarget};
-use crossterm::style::{Color, Stylize};
+use buddy::ui::theme::{self, ThemeToken};
+use crossterm::style::Stylize;
 
 /// Build startup line describing session reuse/new session.
 pub(crate) fn session_startup_message(
@@ -61,10 +62,13 @@ pub(crate) fn render_startup_banner(color: bool, model: &str, tmux_info: Option<
     if color {
         eprintln!(
             "{} {} running on {} with model {}",
-            "•".with(Color::DarkGrey),
-            "buddy".with(Color::Green).bold(),
-            target.as_str().with(Color::White).bold(),
-            model.with(Color::Yellow).bold(),
+            "•".with(theme::color(ThemeToken::SectionBullet)),
+            "buddy".with(theme::color(ThemeToken::StartupBuddy)).bold(),
+            target
+                .as_str()
+                .with(theme::color(ThemeToken::StartupTarget))
+                .bold(),
+            model.with(theme::color(ThemeToken::StartupModel)).bold(),
         );
     } else {
         eprintln!("• buddy running on {target} with model {model}");
@@ -75,7 +79,10 @@ pub(crate) fn render_startup_banner(color: bool, model: &str, tmux_info: Option<
         if color {
             eprintln!(
                 "  attach with: {}",
-                attach.as_str().with(Color::White).bold()
+                attach
+                    .as_str()
+                    .with(theme::color(ThemeToken::StartupAttach))
+                    .bold()
             );
         } else {
             eprintln!("  attach with: {attach}");
@@ -93,7 +100,11 @@ pub(crate) fn render_session_startup_line(
 ) {
     let message = session_startup_message(state, session_id, context_used);
     if color {
-        eprintln!("{} {}", "•".with(Color::DarkGrey), message);
+        eprintln!(
+            "{} {}",
+            "•".with(theme::color(ThemeToken::SectionBullet)),
+            message
+        );
     } else {
         eprintln!("• {message}");
     }

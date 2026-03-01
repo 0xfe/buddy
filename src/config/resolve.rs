@@ -60,6 +60,10 @@ where
     } else if let Some(name) = normalized_string(&parsed.agent.name) {
         parsed.agent.name = name;
     }
+    // Theme defaults to `dark` and is normalized for case-insensitive lookup.
+    parsed.display.theme = normalized_string(&parsed.display.theme)
+        .unwrap_or_else(|| "dark".to_string())
+        .to_ascii_lowercase();
 
     // Build runtime config shell first, then resolve active API profile below.
     let mut config = Config {
@@ -69,6 +73,7 @@ where
         tools: parsed.tools,
         network: parsed.network,
         display: parsed.display,
+        themes: parsed.themes,
         tmux: parsed.tmux,
     };
 

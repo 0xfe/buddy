@@ -78,9 +78,15 @@ fetch_timeout_secs = 20
 
 [display]
 color = true
+theme = "dark"                              # built-ins: dark, light (plus any [themes.<name>] custom entries)
 show_tokens = false
 show_tool_calls = true
 persist_history = true                     # save REPL input history to ~/.config/buddy/history
+
+# Optional custom theme override example:
+# [themes.my-theme]
+# warning = "#ffb454"
+# block_assistant_bg = "#13302a"
 
 [tmux]
 max_sessions = 1                           # includes the default shared session

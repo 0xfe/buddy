@@ -203,6 +203,7 @@ are processed by the REPL loop before being sent to the agent.
 |---------|-------------|
 | `/status` | Show model name, base URL, enabled tools, and session token counts |
 | `/model [name\|index]` | Switch active configured model profile (`/model` with no args opens arrow-key picker); warns when API/auth mode changes |
+| `/theme [name\|index]` | Switch active terminal theme (`/theme` with no args opens arrow-key picker), persist config, and render preview |
 | `/login [name\|index]` | Start login flow for a profile (opens browser when available) |
 | `/context` | Show estimated context window fill % and message counts |
 | `/compact` | Compact older turns to reclaim context budget |
@@ -216,7 +217,7 @@ are processed by the REPL loop before being sent to the agent.
 | `/help` | Print all slash commands with descriptions |
 | `/quit`, `/exit`, `/q` | Exit interactive mode |
 
-Commands blocked while tasks are running: `/help`, `/quit`, `/exit`, `/q`, `/model`, `/login`, `/session`, `/compact`.
+Commands blocked while tasks are running: `/help`, `/quit`, `/exit`, `/q`, `/model`, `/theme`, `/login`, `/session`, `/compact`.
 The REPL prints a message asking the user to `/kill` tasks first.
 
 Buddy continuously tracks context usage. As the history grows, it warns before the hard limit, attempts automatic compaction, and if still over budget fails the prompt with guidance to run `/compact` or `/session new`.

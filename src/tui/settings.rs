@@ -3,6 +3,7 @@
 //! This is the single place to tweak prompt strings, glyphs, colors,
 //! indentation, and spinner behavior.
 
+use crate::ui::theme::{self, ThemeToken};
 use crossterm::style::Color;
 
 // ---------------------------------------------------------------------------
@@ -74,103 +75,163 @@ pub const PROGRESS_TICK_MS: u64 = 100;
 pub const REPL_EVENT_POLL_MS: u64 = 80;
 
 // ---------------------------------------------------------------------------
-// Colors
+// Theme tokens
 // ---------------------------------------------------------------------------
 
-pub const COLOR_PROMPT_HOST: Color = Color::Grey;
-pub const COLOR_PROMPT_SYMBOL: Color = Color::White;
-pub const COLOR_PROMPT_APPROVAL_QUERY: Color = Color::Yellow;
-pub const COLOR_PROMPT_APPROVAL_COMMAND: Color = Color::White;
-pub const COLOR_PROMPT_APPROVAL_PRIVILEGED: Color = Color::Red;
-pub const COLOR_PROMPT_APPROVAL_MUTATION: Color = Color::Yellow;
-pub const COLOR_PROMPT_APPROVAL_BG: Color = Color::Rgb {
-    r: 58,
-    g: 26,
-    b: 26,
-};
-pub const COLOR_PROMPT_APPROVAL_SEPARATOR: Color = Color::DarkRed;
-pub const COLOR_STATUS_LINE: Color = Color::DarkGrey;
-pub const COLOR_CONTINUATION_PROMPT: Color = Color::DarkGrey;
+/// Resolve one semantic color token from the active theme.
+fn theme_color(token: ThemeToken) -> Color {
+    theme::color(token)
+}
 
-pub const COLOR_AGENT_LABEL: Color = Color::Green;
-pub const COLOR_MODEL_NAME: Color = Color::DarkGrey;
+/// Resolve one semantic RGB token from the active theme.
+fn theme_rgb(token: ThemeToken) -> (u8, u8, u8) {
+    theme::rgb(token)
+}
 
-pub const COLOR_TOOL_CALL_GLYPH: Color = Color::DarkYellow;
-pub const COLOR_TOOL_CALL_NAME: Color = Color::Yellow;
-pub const COLOR_TOOL_CALL_ARGS: Color = Color::DarkGrey;
-
-pub const COLOR_TOOL_RESULT_GLYPH: Color = Color::DarkGrey;
-pub const COLOR_TOOL_RESULT_TEXT: Color = Color::DarkGrey;
-
-pub const COLOR_TOKEN_LABEL: Color = Color::DarkGrey;
-pub const COLOR_TOKEN_VALUE: Color = Color::DarkCyan;
-pub const COLOR_TOKEN_SESSION: Color = Color::Cyan;
-
-pub const COLOR_REASONING_LABEL: Color = Color::Magenta;
-pub const COLOR_REASONING_META: Color = Color::DarkGrey;
-pub const COLOR_REASONING_TEXT: Color = Color::DarkGrey;
-pub const COLOR_ACTIVITY_TEXT: Color = Color::DarkGrey;
-
-pub const COLOR_WARNING: Color = Color::Yellow;
-pub const COLOR_ERROR: Color = Color::Red;
-
-pub const COLOR_SECTION_BULLET: Color = Color::DarkGrey;
-pub const COLOR_SECTION_TITLE: Color = Color::Cyan;
-pub const COLOR_FIELD_KEY: Color = Color::DarkGrey;
-pub const COLOR_FIELD_VALUE: Color = Color::White;
-
-pub const COLOR_PROGRESS_FRAME: Color = Color::Cyan;
-pub const COLOR_PROGRESS_LABEL: Color = Color::DarkGrey;
-pub const COLOR_PROGRESS_ELAPSED: Color = Color::DarkGrey;
-
-pub const COLOR_AUTOCOMPLETE_SELECTED: Color = Color::DarkYellow;
-pub const COLOR_AUTOCOMPLETE_UNSELECTED: Color = Color::DarkGrey;
-pub const COLOR_AUTOCOMPLETE_COMMAND: Color = Color::Yellow;
-pub const COLOR_AUTOCOMPLETE_DESCRIPTION: Color = Color::DarkGrey;
-
-pub const COLOR_SNIPPET_TOOL_BG: Color = Color::Rgb {
-    r: 34,
-    g: 56,
-    b: 44,
-};
-pub const COLOR_SNIPPET_TOOL_TEXT: Color = Color::Rgb {
-    r: 242,
-    g: 248,
-    b: 244,
-};
-pub const COLOR_SNIPPET_REASONING_BG: Color = Color::Rgb {
-    r: 30,
-    g: 50,
-    b: 39,
-};
-pub const COLOR_SNIPPET_REASONING_TEXT: Color = Color::Rgb {
-    r: 184,
-    g: 191,
-    b: 186,
-};
-pub const COLOR_SNIPPET_APPROVAL_BG: Color = Color::Rgb {
-    r: 60,
-    g: 24,
-    b: 24,
-};
-pub const COLOR_SNIPPET_APPROVAL_TEXT: Color = Color::Rgb {
-    r: 244,
-    g: 208,
-    b: 208,
-};
-
-pub const COLOR_SNIPPET_ASSISTANT_BG: Color = Color::Rgb {
-    r: 34,
-    g: 56,
-    b: 44,
-};
-pub const COLOR_SNIPPET_ASSISTANT_TEXT: Color = Color::White;
-pub const COLOR_SNIPPET_TRUNCATED: Color = Color::Grey;
-pub const RGB_SNIPPET_ASSISTANT_TEXT: (u8, u8, u8) = (242, 248, 244);
-pub const RGB_SNIPPET_ASSISTANT_MD_HEADING: (u8, u8, u8) = (210, 236, 190);
-pub const RGB_SNIPPET_ASSISTANT_MD_MARKER: (u8, u8, u8) = (166, 206, 172);
-pub const RGB_SNIPPET_ASSISTANT_MD_QUOTE: (u8, u8, u8) = (184, 210, 196);
-pub const RGB_SNIPPET_ASSISTANT_MD_CODE: (u8, u8, u8) = (238, 224, 188);
+pub fn color_prompt_host() -> Color {
+    theme_color(ThemeToken::PromptHost)
+}
+pub fn color_prompt_symbol() -> Color {
+    theme_color(ThemeToken::PromptSymbol)
+}
+pub fn color_prompt_approval_query() -> Color {
+    theme_color(ThemeToken::PromptApprovalQuery)
+}
+pub fn color_prompt_approval_command() -> Color {
+    theme_color(ThemeToken::PromptApprovalCommand)
+}
+pub fn color_prompt_approval_privileged() -> Color {
+    theme_color(ThemeToken::PromptApprovalPrivileged)
+}
+pub fn color_prompt_approval_mutation() -> Color {
+    theme_color(ThemeToken::PromptApprovalMutation)
+}
+pub fn color_status_line() -> Color {
+    theme_color(ThemeToken::StatusLine)
+}
+pub fn color_continuation_prompt() -> Color {
+    theme_color(ThemeToken::ContinuationPrompt)
+}
+pub fn color_agent_label() -> Color {
+    theme_color(ThemeToken::AgentLabel)
+}
+pub fn color_model_name() -> Color {
+    theme_color(ThemeToken::ModelName)
+}
+pub fn color_tool_call_glyph() -> Color {
+    theme_color(ThemeToken::ToolCallGlyph)
+}
+pub fn color_tool_call_name() -> Color {
+    theme_color(ThemeToken::ToolCallName)
+}
+pub fn color_tool_call_args() -> Color {
+    theme_color(ThemeToken::ToolCallArgs)
+}
+pub fn color_tool_result_glyph() -> Color {
+    theme_color(ThemeToken::ToolResultGlyph)
+}
+pub fn color_tool_result_text() -> Color {
+    theme_color(ThemeToken::ToolResultText)
+}
+pub fn color_token_label() -> Color {
+    theme_color(ThemeToken::TokenLabel)
+}
+pub fn color_token_value() -> Color {
+    theme_color(ThemeToken::TokenValue)
+}
+pub fn color_token_session() -> Color {
+    theme_color(ThemeToken::TokenSession)
+}
+pub fn color_reasoning_label() -> Color {
+    theme_color(ThemeToken::ReasoningLabel)
+}
+pub fn color_reasoning_meta() -> Color {
+    theme_color(ThemeToken::ReasoningMeta)
+}
+pub fn color_activity_text() -> Color {
+    theme_color(ThemeToken::ActivityText)
+}
+pub fn color_warning() -> Color {
+    theme_color(ThemeToken::Warning)
+}
+pub fn color_error() -> Color {
+    theme_color(ThemeToken::Error)
+}
+pub fn color_section_bullet() -> Color {
+    theme_color(ThemeToken::SectionBullet)
+}
+pub fn color_section_title() -> Color {
+    theme_color(ThemeToken::SectionTitle)
+}
+pub fn color_field_key() -> Color {
+    theme_color(ThemeToken::FieldKey)
+}
+pub fn color_field_value() -> Color {
+    theme_color(ThemeToken::FieldValue)
+}
+pub fn color_progress_frame() -> Color {
+    theme_color(ThemeToken::ProgressFrame)
+}
+pub fn color_progress_label() -> Color {
+    theme_color(ThemeToken::ProgressLabel)
+}
+pub fn color_progress_elapsed() -> Color {
+    theme_color(ThemeToken::ProgressElapsed)
+}
+pub fn color_autocomplete_selected() -> Color {
+    theme_color(ThemeToken::AutocompleteSelected)
+}
+pub fn color_autocomplete_unselected() -> Color {
+    theme_color(ThemeToken::AutocompleteUnselected)
+}
+pub fn color_autocomplete_command() -> Color {
+    theme_color(ThemeToken::AutocompleteCommand)
+}
+pub fn color_autocomplete_description() -> Color {
+    theme_color(ThemeToken::AutocompleteDescription)
+}
+pub fn color_snippet_tool_bg() -> Color {
+    theme_color(ThemeToken::BlockToolBg)
+}
+pub fn color_snippet_tool_text() -> Color {
+    theme_color(ThemeToken::BlockToolText)
+}
+pub fn color_snippet_reasoning_bg() -> Color {
+    theme_color(ThemeToken::BlockReasoningBg)
+}
+pub fn color_snippet_reasoning_text() -> Color {
+    theme_color(ThemeToken::BlockReasoningText)
+}
+pub fn color_snippet_approval_bg() -> Color {
+    theme_color(ThemeToken::BlockApprovalBg)
+}
+pub fn color_snippet_approval_text() -> Color {
+    theme_color(ThemeToken::BlockApprovalText)
+}
+pub fn color_snippet_assistant_bg() -> Color {
+    theme_color(ThemeToken::BlockAssistantBg)
+}
+pub fn color_snippet_assistant_text() -> Color {
+    theme_color(ThemeToken::BlockAssistantText)
+}
+pub fn color_snippet_truncated() -> Color {
+    theme_color(ThemeToken::BlockTruncated)
+}
+pub fn rgb_snippet_assistant_text() -> (u8, u8, u8) {
+    theme_rgb(ThemeToken::BlockAssistantText)
+}
+pub fn rgb_snippet_assistant_md_heading() -> (u8, u8, u8) {
+    theme_rgb(ThemeToken::MarkdownHeading)
+}
+pub fn rgb_snippet_assistant_md_marker() -> (u8, u8, u8) {
+    theme_rgb(ThemeToken::MarkdownMarker)
+}
+pub fn rgb_snippet_assistant_md_quote() -> (u8, u8, u8) {
+    theme_rgb(ThemeToken::MarkdownQuote)
+}
+pub fn rgb_snippet_assistant_md_code() -> (u8, u8, u8) {
+    theme_rgb(ThemeToken::MarkdownCode)
+}
 
 // ---------------------------------------------------------------------------
 // Small helpers

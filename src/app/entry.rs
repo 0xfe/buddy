@@ -56,6 +56,7 @@ use buddy::tools::tmux_manage::{
 };
 use buddy::tools::ToolRegistry;
 use buddy::ui::render::{RenderSink, Renderer};
+use buddy::ui::theme as ui_theme;
 use std::time::Duration;
 #[cfg(test)]
 use std::time::Instant;
@@ -108,6 +109,9 @@ pub(crate) async fn run(args: crate::cli::Args) -> i32 {
             return 1;
         }
     };
+    if let Err(msg) = initialize_ui_theme(&loaded.config) {
+        bootstrap_renderer.warn(&msg);
+    }
     let renderer = Renderer::new(loaded.config.display.color);
     for warning in &loaded.warnings {
         renderer.warn(warning);
@@ -157,6 +161,21 @@ pub(crate) async fn run(args: crate::cli::Args) -> i32 {
         shell_approval_rx: runtime_setup.shell_approval_rx,
     })
     .await
+}
+
+/// Initialize global UI theme state from runtime config.
+fn initialize_ui_theme(config: &Config) -> Result<(), String> {
+    let custom = config
+        .themes
+        .iter()
+        .map(|(name, table)| (name.clone(), table.values.clone()))
+        .collect();
+    ui_theme::initialize(&config.display.theme, &custom).map_err(|err| {
+        format!(
+            "failed to initialize theme `{}`: {err}",
+            config.display.theme
+        )
+    })
 }
 
 /// Loaded config plus derived warnings/startup resume request.

@@ -13,6 +13,7 @@ mod defaults;
 mod env;
 mod init;
 mod loader;
+mod persist;
 mod resolve;
 mod selector;
 mod sources;
@@ -30,7 +31,8 @@ use defaults::{
 use types::FileConfig;
 pub use types::{
     AgentConfig, ApiConfig, ApiProtocol, AuthMode, Config, ConfigDiagnostics, DisplayConfig,
-    GlobalConfigInitResult, LoadedConfig, ModelConfig, NetworkConfig, TmuxConfig, ToolsConfig,
+    GlobalConfigInitResult, LoadedConfig, ModelConfig, NetworkConfig, ThemeOverrideConfig,
+    TmuxConfig, ToolsConfig,
 };
 
 /// Load configuration from disk and environment.
@@ -118,6 +120,14 @@ pub fn ensure_default_global_config() -> Result<Option<PathBuf>, ConfigError> {
     init::ensure_default_global_config()
 }
 
+/// Persist display theme selection to the effective config file.
+pub fn persist_display_theme(
+    path_override: Option<&str>,
+    theme: &str,
+) -> Result<PathBuf, ConfigError> {
+    persist::persist_display_theme(path_override, theme)
+}
+
 /// Switch the active profile to a configured `[models.<name>]` entry.
 pub fn select_model_profile(config: &mut Config, profile_name: &str) -> Result<(), ConfigError> {
     selector::select_model_profile(config, profile_name)
@@ -179,6 +189,8 @@ mod tests {
         assert!(c.tools.shell_enabled);
         assert!(c.display.color);
         assert!(c.display.persist_history);
+        assert_eq!(c.display.theme, "dark");
+        assert!(c.themes.is_empty());
         assert!(c.models.contains_key("gpt-codex"));
         assert!(c.models.contains_key("gpt-spark"));
         assert!(c.models.contains_key("openrouter-deepseek"));
@@ -213,6 +225,43 @@ mod tests {
         assert!(!c.tools.shell_confirm);
         assert!(c.display.color);
         assert!(c.display.persist_history);
+        assert_eq!(c.display.theme, "dark");
+    }
+
+    // Verifies display theme selection and custom token overrides parse correctly.
+    #[test]
+    fn parse_theme_configuration() {
+        let toml = r##"
+            [models.local]
+            api_base_url = "https://api.example.com/v1"
+            api_key = "k"
+
+            [agent]
+            model = "local"
+
+            [display]
+            theme = "light"
+
+            [themes.night-ops]
+            warning = "#ffaa33"
+            block_assistant_bg = "#112233"
+        "##;
+        let c = parse_file_config_for_test(toml).unwrap();
+        assert_eq!(c.display.theme, "light");
+        assert_eq!(
+            c.themes
+                .get("night-ops")
+                .and_then(|table| table.values.get("warning"))
+                .map(String::as_str),
+            Some("#ffaa33")
+        );
+        assert_eq!(
+            c.themes
+                .get("night-ops")
+                .and_then(|table| table.values.get("block_assistant_bg"))
+                .map(String::as_str),
+            Some("#112233")
+        );
     }
 
     // Verifies tool security policy fields deserialize correctly from TOML.

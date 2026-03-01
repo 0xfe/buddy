@@ -9,6 +9,7 @@ use crate::app::approval::{
 };
 use crate::app::commands::model::handle_model_command;
 use crate::app::commands::session::{handle_session_command, initialize_active_session};
+use crate::app::commands::theme::handle_theme_command;
 use crate::app::repl_loop::{
     dispatch_shared_slash_action, SharedSlashDispatchContext, SharedSlashDispatchMode,
     SharedSlashDispatchOutcome,
@@ -440,6 +441,18 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
                             .await;
                     }
                 }
+                term_ui::SlashCommandAction::Theme(selector) => {
+                    if has_background_tasks {
+                        renderer.warn(BACKGROUND_TASK_WARNING);
+                    } else {
+                        handle_theme_command(
+                            renderer,
+                            &mut config,
+                            cli_args.config.as_deref(),
+                            selector.as_deref(),
+                        );
+                    }
+                }
                 term_ui::SlashCommandAction::Login(selector) => {
                     if has_background_tasks {
                         renderer.warn(BACKGROUND_TASK_WARNING);
@@ -536,6 +549,7 @@ fn render_status(
     renderer.field("base_url", &config.api.base_url);
     renderer.field("api", &format!("{:?}", config.api.protocol));
     renderer.field("auth", &format!("{:?}", config.api.auth));
+    renderer.field("theme", &config.display.theme);
     renderer.field("max_iterations", &config.agent.max_iterations.to_string());
     renderer.field("tools", &enabled_tools(config, capture_pane_enabled));
     renderer.field("background_tasks", &background_tasks.len().to_string());

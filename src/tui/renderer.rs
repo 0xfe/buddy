@@ -29,20 +29,20 @@ impl SnippetTone {
     /// Background color assigned to this tone.
     fn bg(self) -> Color {
         match self {
-            Self::Tool => settings::COLOR_SNIPPET_TOOL_BG,
-            Self::Reasoning => settings::COLOR_SNIPPET_REASONING_BG,
-            Self::Approval => settings::COLOR_SNIPPET_APPROVAL_BG,
-            Self::Assistant => settings::COLOR_SNIPPET_ASSISTANT_BG,
+            Self::Tool => settings::color_snippet_tool_bg(),
+            Self::Reasoning => settings::color_snippet_reasoning_bg(),
+            Self::Approval => settings::color_snippet_approval_bg(),
+            Self::Assistant => settings::color_snippet_assistant_bg(),
         }
     }
 
     /// Foreground color assigned to this tone.
     fn fg(self) -> Color {
         match self {
-            Self::Tool => settings::COLOR_SNIPPET_TOOL_TEXT,
-            Self::Reasoning => settings::COLOR_SNIPPET_REASONING_TEXT,
-            Self::Approval => settings::COLOR_SNIPPET_APPROVAL_TEXT,
-            Self::Assistant => settings::COLOR_SNIPPET_ASSISTANT_TEXT,
+            Self::Tool => settings::color_snippet_tool_text(),
+            Self::Reasoning => settings::color_snippet_reasoning_text(),
+            Self::Approval => settings::color_snippet_approval_text(),
+            Self::Assistant => settings::color_snippet_assistant_text(),
         }
     }
 }
@@ -188,7 +188,7 @@ impl Renderer {
             eprint!(
                 "{} ",
                 settings::PROMPT_SYMBOL
-                    .with(settings::COLOR_AGENT_LABEL)
+                    .with(settings::color_agent_label())
                     .bold()
             );
         } else {
@@ -227,9 +227,9 @@ impl Renderer {
             eprintln!(
                 "\r{} {}",
                 settings::LABEL_AGENT
-                    .with(settings::COLOR_AGENT_LABEL)
+                    .with(settings::color_agent_label())
                     .bold(),
-                model.with(settings::COLOR_MODEL_NAME),
+                model.with(settings::color_model_name()),
             );
         } else {
             eprintln!("\r{} ({model})", settings::LABEL_AGENT);
@@ -244,9 +244,9 @@ impl Renderer {
             eprintln!(
                 "\r{}{} {}({})",
                 settings::INDENT_1,
-                settings::GLYPH_TOOL_CALL.with(settings::COLOR_TOOL_CALL_GLYPH),
-                name.with(settings::COLOR_TOOL_CALL_NAME).bold(),
-                preview.with(settings::COLOR_TOOL_CALL_ARGS),
+                settings::GLYPH_TOOL_CALL.with(settings::color_tool_call_glyph()),
+                name.with(settings::color_tool_call_name()).bold(),
+                preview.with(settings::color_tool_call_args()),
             );
         } else {
             eprintln!(
@@ -265,8 +265,8 @@ impl Renderer {
             eprintln!(
                 "\r{}{} {}",
                 settings::INDENT_1,
-                settings::GLYPH_TOOL_RESULT.with(settings::COLOR_TOOL_RESULT_GLYPH),
-                preview.with(settings::COLOR_TOOL_RESULT_TEXT),
+                settings::GLYPH_TOOL_RESULT.with(settings::color_tool_result_glyph()),
+                preview.with(settings::color_tool_result_text()),
             );
         } else {
             eprintln!(
@@ -297,12 +297,12 @@ impl Renderer {
             eprintln!(
                 "\r{}{} prompt:{} completion:{} session:{}",
                 settings::INDENT_1,
-                settings::LABEL_TOKENS.with(settings::COLOR_TOKEN_LABEL),
-                prompt.to_string().with(settings::COLOR_TOKEN_VALUE),
-                completion.to_string().with(settings::COLOR_TOKEN_VALUE),
+                settings::LABEL_TOKENS.with(settings::color_token_label()),
+                prompt.to_string().with(settings::color_token_value()),
+                completion.to_string().with(settings::color_token_value()),
                 session_total
                     .to_string()
-                    .with(settings::COLOR_TOKEN_SESSION),
+                    .with(settings::color_token_session()),
             );
         } else {
             eprintln!(
@@ -325,9 +325,9 @@ impl Renderer {
                 "\r{}{} {}",
                 settings::INDENT_1,
                 settings::LABEL_THINKING
-                    .with(settings::COLOR_REASONING_LABEL)
+                    .with(settings::color_reasoning_label())
                     .bold(),
-                format!("({field})").with(settings::COLOR_REASONING_META),
+                format!("({field})").with(settings::color_reasoning_meta()),
             );
         } else {
             eprintln!(
@@ -345,7 +345,9 @@ impl Renderer {
         if self.color {
             eprintln!(
                 "\r{} {msg}",
-                settings::LABEL_WARNING.with(settings::COLOR_WARNING).bold()
+                settings::LABEL_WARNING
+                    .with(settings::color_warning())
+                    .bold()
             );
         } else {
             eprintln!("\r{} {msg}", settings::LABEL_WARNING);
@@ -358,8 +360,8 @@ impl Renderer {
         if self.color {
             eprintln!(
                 "\r{} {}",
-                settings::GLYPH_SECTION_BULLET.with(settings::COLOR_SECTION_BULLET),
-                title.with(settings::COLOR_SECTION_TITLE).bold()
+                settings::GLYPH_SECTION_BULLET.with(settings::color_section_bullet()),
+                title.with(settings::color_section_title()).bold()
             );
         } else {
             eprintln!("\r{title}:");
@@ -372,8 +374,8 @@ impl Renderer {
         if self.color {
             eprintln!(
                 "\r{} {}",
-                settings::GLYPH_SECTION_BULLET.with(settings::COLOR_SECTION_BULLET),
-                text.with(settings::COLOR_ACTIVITY_TEXT).bold()
+                settings::GLYPH_SECTION_BULLET.with(settings::color_section_bullet()),
+                text.with(settings::color_activity_text()).bold()
             );
         } else {
             eprintln!("\r{text}");
@@ -387,8 +389,8 @@ impl Renderer {
             eprintln!(
                 "\r{}{} {}",
                 settings::INDENT_1,
-                format!("{key}:").with(settings::COLOR_FIELD_KEY),
-                value.with(settings::COLOR_FIELD_VALUE),
+                format!("{key}:").with(settings::color_field_key()),
+                value.with(settings::color_field_value()),
             );
         } else {
             eprintln!("\r{}{key}: {value}", settings::INDENT_1);
@@ -402,7 +404,7 @@ impl Renderer {
             eprintln!(
                 "\r{}{}",
                 settings::INDENT_1,
-                text.with(settings::COLOR_FIELD_VALUE)
+                text.with(settings::color_field_value())
             );
         } else {
             eprintln!("\r{}{text}", settings::INDENT_1);
@@ -415,7 +417,7 @@ impl Renderer {
         if self.color {
             eprintln!(
                 "\r{} {msg}",
-                settings::LABEL_ERROR.with(settings::COLOR_ERROR).bold()
+                settings::LABEL_ERROR.with(settings::color_error()).bold()
             );
         } else {
             eprintln!("\r{} {msg}", settings::LABEL_ERROR);
@@ -600,7 +602,7 @@ impl Renderer {
                         let clipped = clip_to_width(text, block_width);
                         used = visible_width(&clipped);
                         let fg = if row.muted {
-                            settings::COLOR_SNIPPET_TRUNCATED
+                            settings::color_snippet_truncated()
                         } else {
                             default_fg
                         };
@@ -714,7 +716,7 @@ fn style_assistant_markdown_line(line: &str) -> Option<Vec<StyledToken>> {
     if !indent.is_empty() {
         tokens.push(styled_token(
             indent,
-            settings::RGB_SNIPPET_ASSISTANT_TEXT,
+            settings::rgb_snippet_assistant_text(),
             false,
             false,
             false,
@@ -724,7 +726,7 @@ fn style_assistant_markdown_line(line: &str) -> Option<Vec<StyledToken>> {
     if trimmed.starts_with("```") {
         tokens.push(styled_token(
             trimmed,
-            settings::RGB_SNIPPET_ASSISTANT_MD_CODE,
+            settings::rgb_snippet_assistant_md_code(),
             false,
             false,
             false,
@@ -735,7 +737,7 @@ fn style_assistant_markdown_line(line: &str) -> Option<Vec<StyledToken>> {
     if is_markdown_heading(trimmed) {
         tokens.push(styled_token(
             trimmed,
-            settings::RGB_SNIPPET_ASSISTANT_MD_HEADING,
+            settings::rgb_snippet_assistant_md_heading(),
             true,
             false,
             false,
@@ -746,14 +748,14 @@ fn style_assistant_markdown_line(line: &str) -> Option<Vec<StyledToken>> {
     if let Some(rest) = trimmed.strip_prefix("> ") {
         tokens.push(styled_token(
             "> ",
-            settings::RGB_SNIPPET_ASSISTANT_MD_MARKER,
+            settings::rgb_snippet_assistant_md_marker(),
             true,
             false,
             false,
         ));
         tokens.extend(style_inline_code(
             rest,
-            settings::RGB_SNIPPET_ASSISTANT_MD_QUOTE,
+            settings::rgb_snippet_assistant_md_quote(),
         ));
         return Some(tokens);
     }
@@ -764,14 +766,14 @@ fn style_assistant_markdown_line(line: &str) -> Option<Vec<StyledToken>> {
     {
         tokens.push(styled_token(
             &trimmed[..2],
-            settings::RGB_SNIPPET_ASSISTANT_MD_MARKER,
+            settings::rgb_snippet_assistant_md_marker(),
             true,
             false,
             false,
         ));
         tokens.extend(style_inline_code(
             rest,
-            settings::RGB_SNIPPET_ASSISTANT_TEXT,
+            settings::rgb_snippet_assistant_text(),
         ));
         return Some(tokens);
     }
@@ -779,14 +781,14 @@ fn style_assistant_markdown_line(line: &str) -> Option<Vec<StyledToken>> {
     if let Some((prefix, rest)) = split_ordered_list_prefix(trimmed) {
         tokens.push(styled_token(
             prefix,
-            settings::RGB_SNIPPET_ASSISTANT_MD_MARKER,
+            settings::rgb_snippet_assistant_md_marker(),
             true,
             false,
             false,
         ));
         tokens.extend(style_inline_code(
             rest,
-            settings::RGB_SNIPPET_ASSISTANT_TEXT,
+            settings::rgb_snippet_assistant_text(),
         ));
         return Some(tokens);
     }
@@ -794,7 +796,7 @@ fn style_assistant_markdown_line(line: &str) -> Option<Vec<StyledToken>> {
     if trimmed.contains('`') {
         tokens.extend(style_inline_code(
             trimmed,
-            settings::RGB_SNIPPET_ASSISTANT_TEXT,
+            settings::rgb_snippet_assistant_text(),
         ));
         return Some(tokens);
     }
@@ -840,7 +842,7 @@ fn style_inline_code(line: &str, base_rgb: (u8, u8, u8)) -> Vec<StyledToken> {
             return;
         }
         let rgb = if in_code {
-            settings::RGB_SNIPPET_ASSISTANT_MD_CODE
+            settings::rgb_snippet_assistant_md_code()
         } else {
             base_rgb
         };
@@ -853,7 +855,7 @@ fn style_inline_code(line: &str, base_rgb: (u8, u8, u8)) -> Vec<StyledToken> {
             flush_current(&mut tokens, &mut current, in_code);
             tokens.push(styled_token(
                 "`",
-                settings::RGB_SNIPPET_ASSISTANT_MD_CODE,
+                settings::rgb_snippet_assistant_md_code(),
                 false,
                 false,
                 false,
@@ -979,7 +981,7 @@ mod tests {
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0].text, "## Heading");
         assert!(tokens[0].bold);
-        assert_eq!(tokens[0].rgb, settings::RGB_SNIPPET_ASSISTANT_MD_HEADING);
+        assert_eq!(tokens[0].rgb, settings::rgb_snippet_assistant_md_heading());
     }
 
     #[test]
@@ -999,6 +1001,6 @@ mod tests {
         assert_eq!(rendered, "Use `ls -la` now");
         assert!(tokens
             .iter()
-            .any(|token| token.rgb == settings::RGB_SNIPPET_ASSISTANT_MD_CODE));
+            .any(|token| token.rgb == settings::rgb_snippet_assistant_md_code()));
     }
 }

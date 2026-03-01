@@ -79,9 +79,13 @@ Effective behavior is:
   - `fetch_timeout_secs`
 - `[display]`
   - `color`
+  - `theme`
   - `show_tokens`
   - `show_tool_calls`
   - `persist_history`
+- `[themes.<name>]`
+  - semantic token overrides (`warning`, `block_assistant_bg`, etc.)
+  - supports named terminal colors and `#RRGGBB` values
 
 ### Initialization behavior
 
@@ -226,6 +230,7 @@ All tool outputs are wrapped as JSON:
 - `/session [list|resume <id|last>|new]`
 - `/compact`
 - `/model [name|index]`
+- `/theme [name|index]`
 - `/login [name|index]`
 - `/help`
 - `/quit`, `/exit`, `/q`

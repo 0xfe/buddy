@@ -69,6 +69,7 @@ Detailed inventory: [docs/design/feature-catalog.md](docs/design/feature-catalog
   - SSH with persistent control socket and optional tmux management
 - REPL interaction model:
   - slash commands, autocomplete, multiline editing, history persistence
+  - `/theme` command with interactive picker, persisted selection, and live preview blocks
   - background prompt tasks with `/ps`, `/kill`, `/timeout`
   - interactive approval flow and `/approve` policy modes
   - session control (`/session ...`) and context compaction (`/compact`)
@@ -76,6 +77,7 @@ Detailed inventory: [docs/design/feature-catalog.md](docs/design/feature-catalog
   - one template render path with runtime tool/target context
   - dynamic tmux screenshot block refresh before each model request when available
 - Output/rendering behavior:
+  - semantic theme-token rendering with built-in `dark`/`light` palettes and optional `[themes.<name>]` overrides
   - assistant response on stdout
   - status/chrome on stderr
   - progress/liveness indicators and structured tool/result rendering
@@ -113,7 +115,7 @@ High-level sequence:
 1. Freeze architecture/test gates (Milestone 0).
 2. Build tmux-based UI regression harness as a prerequisite for terminal UX changes (Milestone 1).
 3. Deliver first-class tmux management and targeted tmux routing (Milestone 2).
-4. Deliver remaining requested feature slices (theme system, build metadata/release flow, init UX, packaging, login soft-fail).
+4. Deliver remaining requested feature slices (build metadata/release flow, init UX, packaging, login soft-fail).
 
 ## High-Level Data Flow
 

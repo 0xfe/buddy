@@ -7,3 +7,4 @@
 pub mod render;
 pub mod runtime;
 pub mod terminal;
+pub mod theme;

@@ -543,10 +543,12 @@ fn render_picker(
     let title_plain = format!("• {title}");
     total_rows += wrapped_rows(&title_plain, cols);
     if color {
-        stderr.queue(PrintStyledContent("•".with(settings::COLOR_SECTION_BULLET)))?;
+        stderr.queue(PrintStyledContent(
+            "•".with(settings::color_section_bullet()),
+        ))?;
         stderr.queue(Print(" "))?;
         stderr.queue(PrintStyledContent(
-            title.with(settings::COLOR_SECTION_TITLE).bold(),
+            title.with(settings::color_section_title()).bold(),
         ))?;
     } else {
         stderr.queue(Print(&title_plain))?;
@@ -556,7 +558,7 @@ fn render_picker(
     total_rows += wrapped_rows(&help_plain, cols);
     if color {
         stderr.queue(PrintStyledContent(
-            help_plain.as_str().with(settings::COLOR_FIELD_KEY),
+            help_plain.as_str().with(settings::color_field_key()),
         ))?;
     } else {
         stderr.queue(Print(&help_plain))?;
@@ -570,14 +572,14 @@ fn render_picker(
         total_rows += wrapped_rows(&line_plain, cols);
         if color {
             let marker_color = if active {
-                settings::COLOR_AUTOCOMPLETE_SELECTED
+                settings::color_autocomplete_selected()
             } else {
-                settings::COLOR_AUTOCOMPLETE_UNSELECTED
+                settings::color_autocomplete_unselected()
             };
             let text_color = if active {
-                settings::COLOR_AUTOCOMPLETE_COMMAND
+                settings::color_autocomplete_command()
             } else {
-                settings::COLOR_FIELD_VALUE
+                settings::color_field_value()
             };
             stderr.queue(Print("  "))?;
             stderr.queue(PrintStyledContent(marker.with(marker_color)))?;
@@ -701,20 +703,20 @@ fn render_editor(
         let marker = settings::suggestion_marker(idx == selected, color);
         if color {
             let marker_color = if idx == selected {
-                settings::COLOR_AUTOCOMPLETE_SELECTED
+                settings::color_autocomplete_selected()
             } else {
-                settings::COLOR_AUTOCOMPLETE_UNSELECTED
+                settings::color_autocomplete_unselected()
             };
             stderr.queue(Print(settings::AUTOCOMPLETE_PREFIX))?;
             stderr.queue(PrintStyledContent(marker.with(marker_color)))?;
             stderr.queue(Print(" "))?;
             stderr.queue(PrintStyledContent(
-                cmd.name.with(settings::COLOR_AUTOCOMPLETE_COMMAND).bold(),
+                cmd.name.with(settings::color_autocomplete_command()).bold(),
             ))?;
             stderr.queue(Print(" "))?;
             stderr.queue(PrintStyledContent(
                 cmd.description
-                    .with(settings::COLOR_AUTOCOMPLETE_DESCRIPTION),
+                    .with(settings::color_autocomplete_description()),
             ))?;
         } else {
             stderr.queue(Print(format!(

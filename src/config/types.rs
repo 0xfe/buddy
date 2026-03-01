@@ -49,6 +49,8 @@ pub struct Config {
     pub network: NetworkConfig,
     /// Output/UI display preferences.
     pub display: DisplayConfig,
+    /// Optional named theme override tables (`[themes.<name>]`).
+    pub themes: BTreeMap<String, ThemeOverrideConfig>,
     /// Managed tmux session/pane limits and policy knobs.
     pub tmux: TmuxConfig,
 }
@@ -77,6 +79,7 @@ impl Default for Config {
             tools: ToolsConfig::default(),
             network: NetworkConfig::default(),
             display: DisplayConfig::default(),
+            themes: BTreeMap::new(),
             tmux: TmuxConfig::default(),
         }
     }
@@ -266,6 +269,8 @@ pub struct DisplayConfig {
     pub show_tool_calls: bool,
     /// Persist REPL input history under `~/.config/buddy/history`.
     pub persist_history: bool,
+    /// Active terminal theme name (`dark`, `light`, or custom from `[themes.*]`).
+    pub theme: String,
 }
 
 impl Default for DisplayConfig {
@@ -275,8 +280,21 @@ impl Default for DisplayConfig {
             show_tokens: false,
             show_tool_calls: true,
             persist_history: true,
+            theme: "dark".to_string(),
         }
     }
+}
+
+/// Raw theme-override table for one named theme.
+///
+/// Example:
+/// `[themes.my-theme]`
+/// `warning = "#ffaa00"`
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(transparent)]
+pub struct ThemeOverrideConfig {
+    /// Semantic token -> color value string mapping.
+    pub values: BTreeMap<String, String>,
 }
 
 /// Managed tmux lifecycle constraints.
@@ -334,6 +352,8 @@ pub(super) struct FileConfig {
     pub(super) network: NetworkConfig,
     /// Display section from config file.
     pub(super) display: DisplayConfig,
+    /// Optional custom theme override tables from config file.
+    pub(super) themes: BTreeMap<String, ThemeOverrideConfig>,
     /// Tmux section from config file.
     pub(super) tmux: TmuxConfig,
 }

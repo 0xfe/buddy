@@ -68,7 +68,7 @@ where
 {
     if color {
         stderr.queue(PrintStyledContent(
-            status_line.with(settings::COLOR_STATUS_LINE),
+            status_line.with(settings::color_status_line()),
         ))?;
     } else {
         stderr.queue(Print(status_line))?;
@@ -96,7 +96,7 @@ where
                 if let Some(target) = ssh_target {
                     stderr.queue(PrintStyledContent(
                         format!("{}{}{}", settings::SSH_PREFIX, target, settings::SSH_SUFFIX)
-                            .with(settings::COLOR_PROMPT_HOST),
+                            .with(settings::color_prompt_host()),
                     ))?;
                 }
                 if let Some(used) = context_used_percent {
@@ -104,12 +104,12 @@ where
                         stderr.queue(Print(settings::PROMPT_SPACER))?;
                     }
                     stderr.queue(PrintStyledContent(
-                        format!("({used}% used)").with(settings::COLOR_PROMPT_HOST),
+                        format!("({used}% used)").with(settings::color_prompt_host()),
                     ))?;
                 }
                 stderr.queue(PrintStyledContent(
                     settings::PROMPT_SYMBOL
-                        .with(settings::COLOR_PROMPT_SYMBOL)
+                        .with(settings::color_prompt_symbol())
                         .bold(),
                 ))?;
                 stderr.queue(Print(settings::PROMPT_SPACER))?;
@@ -123,18 +123,20 @@ where
                 });
                 stderr.queue(PrintStyledContent(
                     settings::GLYPH_SECTION_BULLET
-                        .with(settings::COLOR_SECTION_BULLET)
+                        .with(settings::color_section_bullet())
                         .bold(),
                 ))?;
                 stderr.queue(Print(settings::PROMPT_SPACER))?;
                 stderr.queue(PrintStyledContent(
-                    "approve".with(settings::COLOR_PROMPT_APPROVAL_QUERY).bold(),
+                    "approve"
+                        .with(settings::color_prompt_approval_query())
+                        .bold(),
                 ))?;
                 if prompt.privileged {
                     stderr.queue(Print(settings::PROMPT_SPACER))?;
                     stderr.queue(PrintStyledContent(
                         "(privileged)"
-                            .with(settings::COLOR_PROMPT_APPROVAL_PRIVILEGED)
+                            .with(settings::color_prompt_approval_privileged())
                             .bold(),
                     ))?;
                 }
@@ -142,16 +144,16 @@ where
                     stderr.queue(Print(settings::PROMPT_SPACER))?;
                     stderr.queue(PrintStyledContent(
                         "(mutation)"
-                            .with(settings::COLOR_PROMPT_APPROVAL_MUTATION)
+                            .with(settings::color_prompt_approval_mutation())
                             .bold(),
                     ))?;
                 }
                 stderr.queue(Print(settings::PROMPT_SPACER))?;
                 stderr.queue(PrintStyledContent(
-                    "command ?".with(settings::COLOR_PROMPT_APPROVAL_COMMAND),
+                    "command ?".with(settings::color_prompt_approval_command()),
                 ))?;
                 stderr.queue(PrintStyledContent(
-                    " [y/n]".with(settings::COLOR_PROMPT_APPROVAL_COMMAND),
+                    " [y/n]".with(settings::color_prompt_approval_command()),
                 ))?;
                 stderr.queue(Print(settings::PROMPT_SPACER))?;
             }
@@ -174,7 +176,7 @@ where
 {
     if color {
         stderr.queue(PrintStyledContent(
-            settings::PROMPT_CONTINUATION_LABEL.with(settings::COLOR_CONTINUATION_PROMPT),
+            settings::PROMPT_CONTINUATION_LABEL.with(settings::color_continuation_prompt()),
         ))?;
         stderr.queue(Print(settings::PROMPT_SPACER))?;
     } else {

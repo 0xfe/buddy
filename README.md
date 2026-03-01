@@ -81,6 +81,7 @@ buddy resume --last
 |---------|-------------|
 | `/status` | Show current model, base URL, enabled tools, and session counters. |
 | `/model [name\|index]` | Switch the active configured model profile (`/model` opens arrow-key picker). Warns if API/auth mode changes. |
+| `/theme [name\|index]` | Switch terminal theme (`/theme` opens arrow-key picker), persist it to config, and render a preview block set. |
 | `/login [name\|index]` | Show login health and start login flow for a configured profile. |
 | `/context` | Show estimated context usage (`messages` estimate / context window) and token stats. |
 | `/compact` | Summarize and trim older turns to reclaim context budget. |
@@ -96,6 +97,7 @@ buddy resume --last
 
 Buddy tracks context usage continuously. It warns as usage rises, attempts automatic compaction before hard-limit failures, and if still over budget it refuses the send with guidance to run `/compact` or `/session new`.
 REPL input history is persisted to `~/.config/buddy/history` (disable with `display.persist_history = false`).
+Theme selection is persisted in config (`display.theme`) and supports built-ins (`dark`, `light`) plus custom `[themes.<name>]` overrides.
 
 ## Documentation map
 
@@ -319,9 +321,15 @@ fetch_timeout_secs = 20                    # fetch_url timeout (seconds)
 
 [display]
 color = true                               # ANSI color output
+theme = "dark"                             # terminal theme: dark | light | custom [themes.<name>]
 show_tokens = false                        # show token usage after each turn
 show_tool_calls = true                     # show tool invocations inline
 persist_history = true                     # persist REPL input history to ~/.config/buddy/history
+
+# Optional custom theme overrides:
+# [themes.my-theme]
+# warning = "#ffb454"
+# block_assistant_bg = "#13302a"
 ```
 
 ### CLI flags
