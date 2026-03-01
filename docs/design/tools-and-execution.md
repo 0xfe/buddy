@@ -2,7 +2,7 @@
 
 This document captures tool contracts, execution backends, and tmux operational details.
 
-For the high-level overview, see [DESIGN.md](../../DESIGN.md).
+For the high-level overview, see [docs/DESIGN.md](../DESIGN.md).
 
 ## Tool Contract
 

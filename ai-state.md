@@ -3,7 +3,7 @@
 ## 30-second orientation
 - Project: `buddy` Rust crate (`src/lib.rs`) + CLI (`src/main.rs`) for OpenAI-compatible agent workflows.
 - Core loop ownership: `Agent` orchestrates conversation/tool execution; do not duplicate loop control in other modules.
-- Canonical behavior inventory: `DESIGN.md`.
+- Canonical behavior inventory: `docs/DESIGN.md`.
 - Architecture index: `docs/architecture.md`.
 - Runtime + REPL usage/operator docs: `docs/terminal-repl.md`, `docs/tools.md`, `docs/remote-execution.md`.
 
@@ -37,7 +37,7 @@ cargo run -- exec "prompt"
 - Local execution commonly uses tmux-backed contexts; see `docs/tips/tmux.md` + `docs/remote-execution.md`.
 
 ## Docs map for AI agents
-- Core docs: `README.md`, `DESIGN.md`, `docs/architecture.md`.
+- Core docs: `README.md`, `docs/DESIGN.md`, `docs/architecture.md`.
 - Operational references: `docs/tools.md`, `docs/terminal-repl.md`, `docs/remote-execution.md`, `docs/deprecations.md`.
 - Tactical guidance: `docs/tips/*.md`.
 - Planning/history: `docs/plans/`.

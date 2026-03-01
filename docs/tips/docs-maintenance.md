@@ -1,7 +1,7 @@
 # Docs Maintenance Tips
 
 ## Source of truth split
-- `DESIGN.md`: complete feature behavior inventory.
+- `docs/DESIGN.md`: complete feature behavior inventory.
 - `README.md`: user-facing overview and quickstart.
 - `docs/`: architecture/usage/reference docs.
 - `docs/tips/`: tactical, practical AI-agent notes.
@@ -14,7 +14,7 @@
 
 ## Updating docs with code changes
 1. Update behavior docs in the same change as code.
-2. Update `DESIGN.md` features section when behavior/flags/tools change.
+2. Update `docs/DESIGN.md` features section when behavior/flags/tools change.
 3. Add a tip doc when you uncover non-obvious workflow knowledge.
 4. Keep examples executable and paths current.
 

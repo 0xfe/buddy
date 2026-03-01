@@ -2,7 +2,7 @@
 
 This document captures detailed runtime control-plane behavior and API protocol specifics.
 
-For the high-level architectural summary, see [DESIGN.md](../../DESIGN.md).
+For the high-level architectural summary, see [docs/DESIGN.md](../DESIGN.md).
 
 ## Runtime Actor Model
 

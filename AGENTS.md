@@ -4,7 +4,7 @@ Instructions for AI agents working on this codebase.
 
 ## Project overview
 
-This is a Rust AI agent that works with OpenAI-compatible APIs. It is both a library crate (`src/lib.rs`) and a CLI binary (`src/main.rs`). See `DESIGN.md` for full architectural details.
+This is a Rust AI agent that works with OpenAI-compatible APIs. It is both a library crate (`src/lib.rs`) and a CLI binary (`src/main.rs`). See `docs/DESIGN.md` for full architectural details.
 
 Maintain `ai-state.md` as a compact quick-onboarding handoff for AI agents. Keep it dense, current, and short enough to scan quickly.
 
@@ -14,7 +14,7 @@ Keep a README.md with a high level overview of the system, quickstart instructio
 
 Keep a `docs/` directory with things like architecture.md, playbook.md, etc. which has relevant information on architecture, design, and usage.
 
-Keep `DESIGN.md` up to date. It must include a `## Features` section that lists all currently implemented user-facing and developer-relevant features (tools, CLI flags, execution targets, REPL UX, prompt behavior, output/rendering behavior, token/context behavior, and compatibility behaviors). Any feature addition, removal, or behavior change should update that section in the same change.
+Keep `docs/DESIGN.md` up to date. It must include a `## Features` section that lists all currently implemented user-facing and developer-relevant features (tools, CLI flags, execution targets, REPL UX, prompt behavior, output/rendering behavior, token/context behavior, and compatibility behaviors). Any feature addition, removal, or behavior change should update that section in the same change.
 
 Try to keep docs updated as the system evolves.
 

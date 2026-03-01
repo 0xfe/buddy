@@ -1,5 +1,5 @@
 # Buddy configuration
-# See README for all options. Environment variables override these values:
+# See docs/REFERENCE.md for all options. Environment variables override these values:
 #   BUDDY_API_KEY, BUDDY_BASE_URL, BUDDY_MODEL
 # Legacy AGENT_* variables are still accepted for compatibility.
 #
