@@ -14,7 +14,7 @@
   6. Implemented Milestone 2 with first-class tmux lifecycle tools, ownership boundaries, tmux target selectors on existing tools, session/pane limits, target-aware default-pane snapshot logic, and extended opt-in UI regression coverage in commit `78415e4`.
   7. Implemented Milestone 3 with semantic theme tokens, built-in dark/light palettes, config-driven custom theme overrides, `/theme` picker+persistence+preview flow, and palette-only renderer migration in commit `69fc204`.
   8. Implemented Milestone 4 with compile-time build metadata wiring, startup/version surfaces, Makefile-first build/release/version targets, and release-tag GitHub Actions automation in commits `6f0c5c9`, `2643c59`, `ed04bfd`, and `8a3f447`.
-  9. Implemented Milestone 5 with first-run auto-init bootstrap, interactive `buddy init` update/overwrite flow, model-selection persistence, and login guidance in commit `TBD`.
+  9. Implemented Milestone 5 with first-run auto-init bootstrap, interactive `buddy init` update/overwrite flow, model-selection persistence, and login guidance in commit `5e3c8cb`.
 - Next steps:
   1. Start Milestone 6 (packaging + curl installer + init handoff).
   2. Keep the UI harness suite as a pre-merge gate for terminal-facing rendering changes.
@@ -462,7 +462,7 @@ Upgrade init into an interactive TUI flow for setup and config updates.
 1. `feat(init): add interactive tui onboarding flow`
 2. `feat(init): support existing config update and overwrite prompts`
 3. `feat(cli): auto-run init when config is missing`
-4. Completed as `TBD`.
+4. Completed as `5e3c8cb`.
 
 ### Milestone 5 Validation Snapshot (2026-03-01)
 
@@ -594,4 +594,4 @@ Run final validation across all milestones and close documentation/workflow upda
 - 2026-03-01: Milestone 2 implementation complete: added managed tmux lifecycle tools (`tmux-create-session`, `tmux-kill-session`, `tmux-create-pane`, `tmux-kill-pane`), optional `session`/`pane` selectors for `run_shell`/`capture-pane`/`send-keys`, managed ownership markers and canonical naming, `[tmux]` limits (`max_sessions`, `max_panes`), target-aware default-pane snapshot injection rules, and extended ignored UI regression coverage for targeted managed-pane execution. Validation: `cargo fmt --check` PASS, `cargo test` PASS, `cargo clippy --all-targets -- -D warnings` PASS, `make test-ui-regression` PASS. Commit: `78415e4`.
 - 2026-03-01: Milestone 3 implementation complete: added `ui::theme` semantic token infrastructure with Solarized-inspired dark/light defaults, config-driven `[themes.<name>]` overrides, full renderer/prompt/progress/startup/approval color migration to theme tokens, `/theme [name|index]` picker with persisted `display.theme` updates, and a built-in preview flow to explore theme output blocks. Validation: `cargo test -q` PASS, `cargo clippy --all-targets -- -D warnings` PASS, `make test-ui-regression` PASS. Commit: `69fc204`.
 - 2026-03-01: Milestone 4 implementation complete: added build-time metadata injection (`build.rs`) and `build_info` runtime exposure, surfaced metadata in startup banner + version/help output, promoted Makefile to primary build/check/release/version-bump interface, and added release-tag GitHub Actions workflow with matrix artifact builds + publish job. Validation: `make check` PASS, `make release-artifacts` PASS, `cargo run -- --version`/`--help` metadata checks PASS. Commits: `6f0c5c9`, `2643c59`, `ed04bfd`, `8a3f447`.
-- 2026-03-01: Milestone 5 implementation complete: added first-run auto-init bootstrap (`buddy` now starts guided setup when no config exists), interactive `buddy init` existing-config actions (update/overwrite/cancel), safe `agent.model` persistence support, and login guidance prompts for login-auth profiles. Updated docs (`README.md`, `docs/REFERENCE.md`, `docs/DESIGN.md`). Validation: `cargo test -q` PASS, `cargo clippy --all-targets -- -D warnings` PASS. Commit: `TBD`.
+- 2026-03-01: Milestone 5 implementation complete: added first-run auto-init bootstrap (`buddy` now starts guided setup when no config exists), interactive `buddy init` existing-config actions (update/overwrite/cancel), safe `agent.model` persistence support, and login guidance prompts for login-auth profiles. Updated docs (`README.md`, `docs/REFERENCE.md`, `docs/DESIGN.md`). Validation: `cargo test -q` PASS, `cargo clippy --all-targets -- -D warnings` PASS. Commit: `5e3c8cb`.
