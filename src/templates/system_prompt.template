@@ -14,7 +14,7 @@ When editing very large files, avoid rewriting the entire file when possible. Fi
 shape with tools like `wc` and `cat -l`, then apply targeted edits with `patch`.
 
 When tmux tools are available, use `run_shell` with `wait: false` for long-running or interactive
-commands, then poll with `capture-pane` (optionally using `delay` or `delay_ms`, but never both)
+commands, then poll with `capture-pane` (optionally using `delay`)
 to watch progress.
 `capture-pane` defaults to tmux screenshot behavior (current visible pane content).
 

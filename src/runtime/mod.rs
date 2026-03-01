@@ -605,7 +605,7 @@ mod tests {
     use super::*;
     use crate::agent::AgentUiEvent;
     use crate::api::ModelClient;
-    use crate::config::{ApiProtocol, AuthMode, Config};
+    use crate::config::{ApiProtocol, AuthMode, Config, ModelConfig};
     use crate::error::ApiError;
     use crate::tools::shell::ShellApprovalBroker;
     use crate::types::{ChatRequest, ChatResponse, Choice, Message, Role, Usage};
@@ -1134,6 +1134,19 @@ mod tests {
     async fn runtime_actor_switch_model_emits_profile_switched() {
         let mut cfg = Config::default();
         cfg.display.show_tokens = false;
+        cfg.models.insert(
+            "unit-switch-target".to_string(),
+            ModelConfig {
+                api_base_url: "https://example.invalid/v1".to_string(),
+                api: ApiProtocol::Completions,
+                auth: AuthMode::ApiKey,
+                api_key: "unit-test-key".to_string(),
+                api_key_env: None,
+                api_key_file: None,
+                model: Some("unit-test-model".to_string()),
+                context_limit: None,
+            },
+        );
         let agent = Agent::with_client(
             cfg.clone(),
             crate::tools::ToolRegistry::new(),
@@ -1145,7 +1158,7 @@ mod tests {
 
         handle
             .send(RuntimeCommand::SwitchModel {
-                profile: "openrouter-deepseek".to_string(),
+                profile: "unit-switch-target".to_string(),
             })
             .await
             .expect("send switch");
@@ -1157,7 +1170,7 @@ mod tests {
                 RuntimeEvent::Model(ModelEvent::ProfileSwitched {
                     profile, api, auth, ..
                 }) => {
-                    assert_eq!(profile, "openrouter-deepseek");
+                    assert_eq!(profile, "unit-switch-target");
                     assert_eq!(api, ApiProtocol::Completions);
                     assert_eq!(auth, AuthMode::ApiKey);
                     saw_switch = true;

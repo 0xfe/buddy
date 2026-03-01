@@ -49,8 +49,8 @@ For the high-level architecture narrative, see [docs/design/DESIGN.md](DESIGN.md
 
 Built-in profile catalog includes:
 
-- `gpt-codex` (default; OpenAI Responses, login auth)
-- `gpt-spark` (OpenAI Responses, login auth)
+- `gpt-spark` (default; OpenAI Responses, login auth)
+- `gpt-codex` (OpenAI Responses, login auth)
 - `openrouter-deepseek` (OpenRouter Completions, API key)
 - `openrouter-glm` (OpenRouter Completions, API key)
 - `kimi` (Moonshot Completions, API key)

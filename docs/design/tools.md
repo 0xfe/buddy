@@ -271,7 +271,7 @@ SSH target with a tmux session).
 | `include_escape_sequences` | `false` | tmux `-e` flag (ANSI codes) |
 | `escape_non_printable` | `false` | tmux `-C` flag (octal encoding) |
 | `include_alternate_screen` | `false` | tmux `-a` flag |
-| `delay` / `delay_ms` | none | Wait before capturing (for polling). Provide only one, never both. |
+| `delay` | none | Wait before capturing (for polling) |
 
 Output is truncated to 8000 characters, keeping the **tail** (most recent
 content), with `[truncated N chars from start]` prepended if clipped.
@@ -302,7 +302,7 @@ Inject keystrokes into a tmux pane. Only available with a tmux backend.
   "keys": ["C-c"],
   "literal_text": "yes\n",
   "enter": true,
-  "delay_ms": 500,
+  "delay": "500ms",
   "risk": "low",
   "mutation": false,
   "privesc": false,
@@ -318,7 +318,7 @@ Inject keystrokes into a tmux pane. Only available with a tmux backend.
 | `keys` | tmux key names: `"C-c"`, `"C-z"`, `"Enter"`, `"Up"`, `"Down"`, etc. |
 | `literal_text` | Literal text to type (uses `tmux send-keys -l`) |
 | `enter` | Press Enter after other keys |
-| `delay` / `delay_ms` | Wait before sending. Provide only one, never both. |
+| `delay` | Wait before sending |
 | `risk` | Required risk label: `low`, `medium`, `high` |
 | `mutation` | Required mutation flag |
 | `privesc` | Required privilege-escalation flag |

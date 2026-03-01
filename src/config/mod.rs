@@ -188,9 +188,9 @@ mod tests {
     fn defaults_are_sensible() {
         let c = Config::default();
         assert_eq!(c.agent.name, "agent-mo");
-        assert_eq!(c.agent.model, "gpt-codex");
+        assert_eq!(c.agent.model, "gpt-spark");
         assert_eq!(c.api.base_url, "https://api.openai.com/v1");
-        assert_eq!(c.api.model, "gpt-5.3-codex");
+        assert_eq!(c.api.model, "gpt-5.3-codex-spark");
         assert_eq!(c.api.protocol, ApiProtocol::Responses);
         assert_eq!(c.api.auth, AuthMode::Login);
         assert_eq!(c.agent.max_iterations, 20);
@@ -392,8 +392,8 @@ mod tests {
     #[test]
     fn parse_empty_string() {
         let c = parse_file_config_for_test("").unwrap();
-        assert_eq!(c.agent.model, "gpt-codex");
-        assert_eq!(c.api.model, "gpt-5.3-codex");
+        assert_eq!(c.agent.model, "gpt-spark");
+        assert_eq!(c.api.model, "gpt-5.3-codex-spark");
     }
 
     // Ensures mutually exclusive API-key source validation is enforced.

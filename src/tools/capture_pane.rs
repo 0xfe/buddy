@@ -52,8 +52,6 @@ struct Args {
     include_alternate_screen: bool,
     /// Optional string duration before capture.
     delay: Option<String>,
-    /// Optional millisecond duration before capture.
-    delay_ms: Option<u64>,
 }
 
 fn default_join_wrapped_lines() -> bool {
@@ -72,7 +70,7 @@ impl Tool for CapturePaneTool {
             tool_type: "function".into(),
             function: FunctionDefinition {
                 name: self.name().into(),
-                description: "Capture the current tmux pane output. Useful for interactive terminal apps, polling screen state, or checking whether commands are stuck. By default this captures tmux's visible screenshot for the pane. This pairs naturally with `run_shell` using `wait: false`: dispatch first, then poll with this tool (optionally after a delay). IMPORTANT: provide at most one delay field (`delay` OR `delay_ms`), not both."
+                description: "Capture the current tmux pane output. Useful for interactive terminal apps, polling screen state, or checking whether commands are stuck. By default this captures tmux's visible screenshot for the pane. This pairs naturally with `run_shell` using `wait: false`: dispatch first, then poll with this tool (optionally after a delay)."
                     .into(),
                 parameters: serde_json::json!({
                     "type": "object",
@@ -119,12 +117,7 @@ impl Tool for CapturePaneTool {
                         },
                         "delay": {
                             "type": "string",
-                            "description": "Optional delay before capture, like '500ms', '2s', '1m', or '1h'. Useful for polling. Mutually exclusive with `delay_ms`."
-                        },
-                        "delay_ms": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "description": "Optional delay before capture in milliseconds. Mutually exclusive with `delay`."
+                            "description": "Optional delay before capture, like '500ms', '2s', '1m', or '1h'. Useful for polling."
                         }
                     }
                 }),
@@ -168,17 +161,6 @@ impl Tool for CapturePaneTool {
 }
 
 fn resolve_delay(args: &Args) -> Result<Duration, ToolError> {
-    // Disallow ambiguous requests with two delay sources.
-    if args.delay.is_some() && args.delay_ms.is_some() {
-        return Err(ToolError::InvalidArguments(
-            "provide either `delay` or `delay_ms`, not both".into(),
-        ));
-    }
-
-    if let Some(delay_ms) = args.delay_ms {
-        return Ok(Duration::from_millis(delay_ms));
-    }
-
     if let Some(delay) = args.delay.as_deref() {
         return parse_delay_duration(delay).map_err(ToolError::InvalidArguments);
     }

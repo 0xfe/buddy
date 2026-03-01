@@ -1,5 +1,5 @@
 # Buddy configuration
-# See docs/REFERENCE.md for all options. Environment variables override these values:
+# See docs/developer/REFERENCE.md for all options. Environment variables override these values:
 #   BUDDY_API_KEY, BUDDY_BASE_URL, BUDDY_MODEL
 # Legacy AGENT_* variables are still accepted for compatibility.
 #
@@ -48,7 +48,7 @@ model = "kimi-k2.5"
 
 [agent]
 name = "agent-mo"                            # tmux defaults use session name buddy-<name>
-model = "gpt-codex"                           # active profile key from [models.<name>]
+model = "gpt-spark"                           # active profile key from [models.<name>]
 # system_prompt = "Optional override. If unset, uses the built-in prompt template."
 max_iterations = 20
 # temperature = 0.7

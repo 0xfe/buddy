@@ -152,7 +152,7 @@ model = "kimi-k2.5"
 
 [agent]
 name = "agent-mo"                           # tmux session prefix: buddy-<name>
-model = "gpt-codex"                         # active profile key from [models.<name>]
+model = "gpt-spark"                         # active profile key from [models.<name>]
 # system_prompt = "Optional additional operator instructions."
 max_iterations = 20
 # temperature = 0.7

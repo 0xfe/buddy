@@ -35,24 +35,28 @@ where
                 DEFAULT_MODEL_PROFILE_NAME.to_string(),
                 legacy_api.into_model_config(),
             );
-            // Preserve old configs that relied on implicit profile selection.
-            if normalized_string(&parsed.agent.model).is_none() {
-                parsed.agent.model = DEFAULT_MODEL_PROFILE_NAME.to_string();
-            }
+            // Legacy `[api]` maps to exactly one synthetic profile, so always
+            // activate that profile regardless of stale/legacy `agent.model`.
+            parsed.agent.model = DEFAULT_MODEL_PROFILE_NAME.to_string();
         } else {
             // Empty file: bootstrap with built-in profile catalog.
             parsed.models = default_models_map();
         }
     }
 
-    // `agent.model` defaults to the first configured profile when omitted.
+    // `agent.model` defaults to configured default profile when present;
+    // otherwise fallback to the first configured profile.
     if normalized_string(&parsed.agent.model).is_none() {
-        parsed.agent.model = parsed
-            .models
-            .keys()
-            .next()
-            .cloned()
-            .unwrap_or_else(|| DEFAULT_MODEL_PROFILE_NAME.to_string());
+        parsed.agent.model = if parsed.models.contains_key(DEFAULT_MODEL_PROFILE_NAME) {
+            DEFAULT_MODEL_PROFILE_NAME.to_string()
+        } else {
+            parsed
+                .models
+                .keys()
+                .next()
+                .cloned()
+                .unwrap_or_else(|| DEFAULT_MODEL_PROFILE_NAME.to_string())
+        };
     }
     // Normalize/sanitize agent name and ensure non-empty default.
     if normalized_string(&parsed.agent.name).is_none() {

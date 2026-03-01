@@ -10,9 +10,9 @@ use super::{ApiProtocol, AuthMode, ModelConfig};
 /// Embedded default `buddy.toml` template written by `buddy init`.
 pub(super) const DEFAULT_BUDDY_CONFIG_TEMPLATE: &str = include_str!("../templates/buddy.toml");
 /// Default profile key selected when no profile is specified.
-pub(super) const DEFAULT_MODEL_PROFILE_NAME: &str = "gpt-codex";
+pub(super) const DEFAULT_MODEL_PROFILE_NAME: &str = "gpt-spark";
 /// Default provider model ID used by the default profile.
-pub(super) const DEFAULT_MODEL_ID: &str = "gpt-5.3-codex";
+pub(super) const DEFAULT_MODEL_ID: &str = "gpt-5.3-codex-spark";
 /// Default OpenAI-compatible API base URL.
 pub(super) const DEFAULT_API_BASE_URL: &str = "https://api.openai.com/v1";
 /// Default timeout for model API requests.
@@ -39,9 +39,9 @@ pub(super) fn default_models_map() -> BTreeMap<String, ModelConfig> {
             context_limit: None,
         },
     );
-    // Alternate OpenAI profile targeting the `spark` variant.
+    // Alternate OpenAI profile targeting the primary codex variant.
     models.insert(
-        "gpt-spark".to_string(),
+        "gpt-codex".to_string(),
         ModelConfig {
             api_base_url: DEFAULT_API_BASE_URL.to_string(),
             api: ApiProtocol::Responses,
@@ -49,7 +49,7 @@ pub(super) fn default_models_map() -> BTreeMap<String, ModelConfig> {
             api_key: String::new(),
             api_key_env: None,
             api_key_file: None,
-            model: Some("gpt-5.3-codex-spark".to_string()),
+            model: Some("gpt-5.3-codex".to_string()),
             context_limit: None,
         },
     );

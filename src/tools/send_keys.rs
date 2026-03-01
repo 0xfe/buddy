@@ -36,8 +36,6 @@ struct Args {
     enter: Option<bool>,
     /// Optional delay string before key injection.
     delay: Option<String>,
-    /// Optional delay in milliseconds before key injection.
-    delay_ms: Option<u64>,
     /// Declared risk classification for this action.
     risk: RiskLevel,
     /// Whether action mutates state.
@@ -59,7 +57,7 @@ impl Tool for SendKeysTool {
             tool_type: "function".into(),
             function: FunctionDefinition {
                 name: self.name().into(),
-                description: "Send keys directly to a tmux pane (for example Ctrl-C/Ctrl-Z/Enter/arrows) to control interactive or stuck terminal programs. Common flow: run_shell with wait=false, poll with capture-pane, and send keys as needed. IMPORTANT: provide at most one delay field (`delay` OR `delay_ms`), not both."
+                description: "Send keys directly to a tmux pane (for example Ctrl-C/Ctrl-Z/Enter/arrows) to control interactive or stuck terminal programs. Common flow: run_shell with wait=false, poll with capture-pane, and send keys as needed."
                     .into(),
                 parameters: serde_json::json!({
                     "type": "object",
@@ -91,12 +89,7 @@ impl Tool for SendKeysTool {
                         },
                         "delay": {
                             "type": "string",
-                            "description": "Optional delay before sending keys, like '500ms', '2s', '1m', or '1h'. Mutually exclusive with `delay_ms`."
-                        },
-                        "delay_ms": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "description": "Optional delay before sending keys in milliseconds. Mutually exclusive with `delay`."
+                            "description": "Optional delay before sending keys, like '500ms', '2s', '1m', or '1h'."
                         },
                         "risk": {
                             "type": "string",
@@ -133,7 +126,7 @@ impl Tool for SendKeysTool {
         }
         // Risk metadata is currently validated-for-presence and forwarded to policy layers.
         let _ = (args.risk, args.mutation, args.privesc);
-        let delay = resolve_delay(args.delay.as_deref(), args.delay_ms)?;
+        let delay = resolve_delay(args.delay.as_deref())?;
         // Convert tool args into backend-agnostic execution options.
         let options = SendKeysOptions {
             target: args.target,
@@ -148,16 +141,7 @@ impl Tool for SendKeysTool {
     }
 }
 
-fn resolve_delay(delay: Option<&str>, delay_ms: Option<u64>) -> Result<Duration, ToolError> {
-    // Keep input unambiguous: one delay source only.
-    if delay.is_some() && delay_ms.is_some() {
-        return Err(ToolError::InvalidArguments(
-            "provide either `delay` or `delay_ms`, not both".into(),
-        ));
-    }
-    if let Some(ms) = delay_ms {
-        return Ok(Duration::from_millis(ms));
-    }
+fn resolve_delay(delay: Option<&str>) -> Result<Duration, ToolError> {
     if let Some(raw) = delay {
         return parse_delay_duration(raw).map_err(ToolError::InvalidArguments);
     }
