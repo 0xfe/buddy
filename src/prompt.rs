@@ -139,6 +139,8 @@ mod tests {
         });
 
         assert!(prompt.contains("friendly systems engineer"));
+        assert!(prompt.contains("on-call sysadmin"));
+        assert!(prompt.contains("Default to action over suggestion"));
         assert!(prompt.contains("try `rg` before `grep`"));
         assert!(prompt.contains("`wc`"));
         assert!(prompt.contains("`cat -l`"));
