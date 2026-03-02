@@ -488,4 +488,4 @@ Close the loop with analysis tooling, cost metrics, and regression confidence.
    - added prompt snapshot/ordering tests and tool-definition guidance/schema regression tests across tool modules,
    - updated prompt/tools/design docs to match the new behavior,
    - validated with `cargo fmt` and `cargo test` (full suite).
-   - commit: `<pending>`
+   - commit: `b625cba`.
