@@ -753,7 +753,7 @@ fn style_assistant_markdown_line(line: &str) -> Option<Vec<StyledToken>> {
             false,
             false,
         ));
-        tokens.extend(style_inline_code(
+        tokens.extend(style_inline_markdown(
             rest,
             settings::rgb_snippet_assistant_md_quote(),
         ));
@@ -771,7 +771,7 @@ fn style_assistant_markdown_line(line: &str) -> Option<Vec<StyledToken>> {
             false,
             false,
         ));
-        tokens.extend(style_inline_code(
+        tokens.extend(style_inline_markdown(
             rest,
             settings::rgb_snippet_assistant_text(),
         ));
@@ -786,15 +786,15 @@ fn style_assistant_markdown_line(line: &str) -> Option<Vec<StyledToken>> {
             false,
             false,
         ));
-        tokens.extend(style_inline_code(
+        tokens.extend(style_inline_markdown(
             rest,
             settings::rgb_snippet_assistant_text(),
         ));
         return Some(tokens);
     }
 
-    if trimmed.contains('`') {
-        tokens.extend(style_inline_code(
+    if looks_like_inline_markdown(trimmed) {
+        tokens.extend(style_inline_markdown(
             trimmed,
             settings::rgb_snippet_assistant_text(),
         ));
@@ -831,17 +831,33 @@ fn is_markdown_heading(line: &str) -> bool {
     line.chars().nth(hash_chars) == Some(' ')
 }
 
-/// Style backtick-delimited inline code segments inside one line.
-fn style_inline_code(line: &str, base_rgb: (u8, u8, u8)) -> Vec<StyledToken> {
+fn looks_like_inline_markdown(line: &str) -> bool {
+    line.contains('`')
+        || line.contains("**")
+        || line.contains("__")
+        || line.contains('*')
+        || line.contains('_')
+}
+
+/// Style inline markdown emphasis and backtick-delimited code segments.
+///
+/// We keep parsing intentionally lightweight:
+/// - `` `code` `` toggles code style, preserving backticks.
+/// - `**bold**` / `__bold__` emits bold content without markers.
+/// - `*italic*` / `_italic_` emits italic content without markers.
+/// - Invalid/unmatched markers are left as literal characters.
+fn style_inline_markdown(line: &str, base_rgb: (u8, u8, u8)) -> Vec<StyledToken> {
     let mut tokens = Vec::new();
     let mut in_code = false;
-    let mut current = String::new();
+    let mut current_plain = String::new();
+    let chars: Vec<char> = line.chars().collect();
+    let mut idx = 0usize;
 
-    let flush_current = |tokens: &mut Vec<StyledToken>, current: &mut String, in_code: bool| {
+    let flush_plain = |tokens: &mut Vec<StyledToken>, current: &mut String, in_code_span: bool| {
         if current.is_empty() {
             return;
         }
-        let rgb = if in_code {
+        let rgb = if in_code_span {
             settings::rgb_snippet_assistant_md_code()
         } else {
             base_rgb
@@ -850,9 +866,10 @@ fn style_inline_code(line: &str, base_rgb: (u8, u8, u8)) -> Vec<StyledToken> {
         current.clear();
     };
 
-    for ch in line.chars() {
+    while idx < chars.len() {
+        let ch = chars[idx];
         if ch == '`' {
-            flush_current(&mut tokens, &mut current, in_code);
+            flush_plain(&mut tokens, &mut current_plain, in_code);
             tokens.push(styled_token(
                 "`",
                 settings::rgb_snippet_assistant_md_code(),
@@ -861,16 +878,73 @@ fn style_inline_code(line: &str, base_rgb: (u8, u8, u8)) -> Vec<StyledToken> {
                 false,
             ));
             in_code = !in_code;
+            idx += 1;
             continue;
         }
-        current.push(ch);
+
+        if in_code {
+            current_plain.push(ch);
+            idx += 1;
+            continue;
+        }
+
+        if let Some((marker_len, end_idx, bold, italic)) = parse_emphasis_span(&chars, idx) {
+            flush_plain(&mut tokens, &mut current_plain, false);
+            let span_start = idx + marker_len;
+            let span_text: String = chars[span_start..end_idx].iter().collect();
+            tokens.push(styled_token(span_text, base_rgb, bold, italic, false));
+            idx = end_idx + marker_len;
+            continue;
+        }
+
+        current_plain.push(ch);
+        idx += 1;
     }
-    flush_current(&mut tokens, &mut current, in_code);
+    flush_plain(&mut tokens, &mut current_plain, in_code);
 
     if tokens.is_empty() {
         tokens.push(styled_token(line, base_rgb, false, false, false));
     }
     tokens
+}
+
+/// Parse one emphasis span starting at `start` and return marker metadata.
+///
+/// Output is `(marker_len, content_end_idx, bold, italic)` where:
+/// - `marker_len` is `1` for `*`/`_`, `2` for `**`/`__`.
+/// - `content_end_idx` points to the start of the closing marker.
+fn parse_emphasis_span(chars: &[char], start: usize) -> Option<(usize, usize, bool, bool)> {
+    let marker = *chars.get(start)?;
+    if marker != '*' && marker != '_' {
+        return None;
+    }
+
+    let marker_len = if chars.get(start + 1) == Some(&marker) {
+        2
+    } else {
+        1
+    };
+
+    let content_start = start + marker_len;
+    if content_start >= chars.len() {
+        return None;
+    }
+
+    let mut idx = content_start;
+    while idx + marker_len <= chars.len() {
+        let is_close = (0..marker_len).all(|offset| chars.get(idx + offset) == Some(&marker));
+        if is_close {
+            if idx == content_start {
+                // Empty spans like `****` or `__ __` are treated literally.
+                return None;
+            }
+            let bold = marker_len == 2;
+            let italic = marker_len == 1;
+            return Some((marker_len, idx, bold, italic));
+        }
+        idx += 1;
+    }
+    None
 }
 
 /// Convenience constructor for one `StyledToken`.
@@ -1002,5 +1076,34 @@ mod tests {
         assert!(tokens
             .iter()
             .any(|token| token.rgb == settings::rgb_snippet_assistant_md_code()));
+    }
+
+    #[test]
+    fn assistant_inline_emphasis_uses_terminal_bold_and_italic() {
+        // Markdown emphasis should map to terminal style attributes when markers
+        // are well-formed.
+        let tokens = style_assistant_markdown_line("A **bold** and *italic* line").expect("styled");
+        let rendered = tokens
+            .iter()
+            .map(|token| token.text.as_str())
+            .collect::<String>();
+        assert_eq!(rendered, "A bold and italic line");
+        assert!(tokens
+            .iter()
+            .any(|token| token.bold && token.text == "bold"));
+        assert!(tokens
+            .iter()
+            .any(|token| token.italic && token.text == "italic"));
+    }
+
+    #[test]
+    fn assistant_unmatched_emphasis_markers_stay_literal() {
+        // Broken markdown markers should not drop source characters.
+        let tokens = style_assistant_markdown_line("keep *this literal").expect("styled");
+        let rendered = tokens
+            .iter()
+            .map(|token| token.text.as_str())
+            .collect::<String>();
+        assert_eq!(rendered, "keep *this literal");
     }
 }
