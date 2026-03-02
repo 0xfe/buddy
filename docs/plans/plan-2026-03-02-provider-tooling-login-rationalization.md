@@ -338,3 +338,4 @@ Consolidate behavior with robust tests/docs and ensure release readiness.
 - 2026-03-02: Implemented M3 native Anthropic provider support (`api = "anthropic"`), including request/response/tool translation and bundled Claude profiles.
 - 2026-03-02: Completed M4 UX updates for provider-first login/logout and simplified login presentation.
 - 2026-03-02: Verified integrated M3/M4 state with `cargo fmt --check`, `cargo test`, and `cargo clippy --all-targets -- -D warnings`.
+- 2026-03-02: Committed M2+M3+M4 implementation slice as `4b8cf1f` (`feat(api): add anthropic messages support and openai built-in tools`).
