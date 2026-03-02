@@ -424,6 +424,9 @@ async fn handle_runtime_command(
         RuntimeCommand::SwitchModel {
             profile,
             reasoning_effort,
+            auth_override,
+            api_key_env_override,
+            clear_key_sources,
         } => {
             if active_task.is_some() {
                 emit_event(
@@ -440,6 +443,30 @@ async fn handle_runtime_command(
             let previous_protocol = state.config.api.protocol;
             let previous_auth = state.config.api.auth;
             let mut next = state.config.clone();
+            if auth_override.is_some() || api_key_env_override.is_some() || clear_key_sources {
+                let Some(profile_cfg) = next.models.get_mut(&profile) else {
+                    emit_event(
+                        event_tx,
+                        seq,
+                        RuntimeEvent::Error(ErrorEvent {
+                            task: None,
+                            message: format!("failed to patch model profile `{profile}`"),
+                        }),
+                    );
+                    return false;
+                };
+                if clear_key_sources {
+                    profile_cfg.api_key.clear();
+                    profile_cfg.api_key_env = None;
+                    profile_cfg.api_key_file = None;
+                }
+                if let Some(auth) = auth_override {
+                    profile_cfg.auth = auth;
+                }
+                if let Some(env) = api_key_env_override {
+                    profile_cfg.api_key_env = Some(env);
+                }
+            }
             if let Err(err) = select_model_profile(&mut next, &profile) {
                 emit_event(
                     event_tx,
@@ -1329,6 +1356,9 @@ mod tests {
             .send(RuntimeCommand::SwitchModel {
                 profile: "unit-switch-target".to_string(),
                 reasoning_effort: None,
+                auth_override: None,
+                api_key_env_override: None,
+                clear_key_sources: false,
             })
             .await
             .expect("send switch");
@@ -1355,6 +1385,61 @@ mod tests {
         }
         assert!(saw_switch, "missing switched-profile event");
         assert!(saw_mode_warning, "missing mode-switch warning");
+    }
+
+    // Verifies switch command auth override is applied before profile resolution/preflight.
+    #[tokio::test]
+    async fn runtime_actor_switch_model_applies_auth_override() {
+        let mut cfg = Config::default();
+        cfg.models.insert(
+            "unit-auth-target".to_string(),
+            ModelConfig {
+                api_base_url: "https://example.invalid/v1".to_string(),
+                provider: crate::config::ModelProvider::Other,
+                api: ApiProtocol::Completions,
+                auth: AuthMode::Login,
+                api_key: "unit-test-key".to_string(),
+                api_key_env: None,
+                api_key_file: None,
+                model: Some("unit-auth-model".to_string()),
+                context_limit: None,
+                reasoning_effort: None,
+            },
+        );
+        let agent = Agent::with_client(
+            cfg.clone(),
+            crate::tools::ToolRegistry::new(),
+            Box::new(MockClient::new(vec![chat_response_text("r1", "ok")])),
+        );
+        let (handle, mut events) = spawn_runtime_with_agent(agent, cfg, None, None, None);
+        let _ = recv_event(&mut events).await;
+        let _ = recv_event(&mut events).await;
+
+        handle
+            .send(RuntimeCommand::SwitchModel {
+                profile: "unit-auth-target".to_string(),
+                reasoning_effort: None,
+                auth_override: Some(AuthMode::ApiKey),
+                api_key_env_override: None,
+                clear_key_sources: false,
+            })
+            .await
+            .expect("send switch");
+
+        let mut saw_switch = false;
+        for _ in 0..4 {
+            match recv_event(&mut events).await {
+                RuntimeEvent::Model(ModelEvent::ProfileSwitched { profile, auth, .. }) => {
+                    assert_eq!(profile, "unit-auth-target");
+                    assert_eq!(auth, AuthMode::ApiKey);
+                    saw_switch = true;
+                    break;
+                }
+                RuntimeEvent::Warning(_) => {}
+                other => panic!("unexpected event: {other:?}"),
+            }
+        }
+        assert!(saw_switch, "missing switched-profile event");
     }
 
     // Verifies session compact command emits compacted event and summary warning.

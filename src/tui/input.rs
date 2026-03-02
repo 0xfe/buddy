@@ -470,17 +470,21 @@ fn pick_from_list_interactive(
     let mut stderr = io::stderr();
     let mut selected = initial_selection.min(options.len().saturating_sub(1));
     let mut previous_rows = 0usize;
+    let mut needs_render = true;
 
     loop {
-        previous_rows = render_picker(
-            &mut stderr,
-            color,
-            title,
-            help,
-            options,
-            selected,
-            previous_rows,
-        )?;
+        if needs_render {
+            previous_rows = render_picker(
+                &mut stderr,
+                color,
+                title,
+                help,
+                options,
+                selected,
+                previous_rows,
+            )?;
+            needs_render = false;
+        }
 
         if !event::poll(Duration::from_millis(settings::REPL_EVENT_POLL_MS))? {
             continue;
@@ -501,9 +505,11 @@ fn pick_from_list_interactive(
                 } else {
                     selected - 1
                 };
+                needs_render = true;
             }
             KeyCode::Down => {
                 selected = (selected + 1) % options.len();
+                needs_render = true;
             }
             KeyCode::Enter => {
                 clear_editor_surface(&mut stderr, previous_rows)?;

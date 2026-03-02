@@ -148,6 +148,15 @@ pub fn persist_model_profile_auth(
     persist::persist_model_profile_auth(path_override, profile, auth, clear_key_sources)
 }
 
+/// Persist `auth="api-key"` + `api_key_env` for one `[models.<name>]` profile.
+pub fn persist_model_profile_api_key_env(
+    path_override: Option<&str>,
+    profile: &str,
+    env_name: &str,
+) -> Result<PathBuf, ConfigError> {
+    persist::persist_model_profile_api_key_env(path_override, profile, env_name)
+}
+
 /// Switch the active profile to a configured `[models.<name>]` entry.
 pub fn select_model_profile(config: &mut Config, profile_name: &str) -> Result<(), ConfigError> {
     selector::select_model_profile(config, profile_name)
@@ -205,7 +214,7 @@ mod tests {
         assert_eq!(c.api.provider, ModelProvider::Openai);
         assert_eq!(c.api.model, "gpt-5.3-codex-spark");
         assert_eq!(c.api.protocol, ApiProtocol::Responses);
-        assert_eq!(c.api.auth, AuthMode::ApiKey);
+        assert_eq!(c.api.auth, AuthMode::Login);
         assert_eq!(c.agent.max_iterations, 20);
         assert!(c.tools.shell_enabled);
         assert!(c.display.color);

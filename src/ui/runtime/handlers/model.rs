@@ -26,37 +26,17 @@ pub(in crate::ui::runtime) fn handle_model(
         }
         ModelEvent::ProfileSwitched {
             profile,
-            model,
-            base_url,
-            api,
-            auth,
-            reasoning_effort,
+            model: _,
+            base_url: _,
+            api: _,
+            auth: _,
+            reasoning_effort: _,
         } => {
             if let Err(err) = select_model_profile(ctx.config, &profile) {
                 ctx.renderer.warn(&format!(
                     "runtime switched model profile `{profile}`, but local config sync failed: {err}"
                 ));
             }
-            ctx.renderer
-                .section(&format!("switched model profile: {profile}"));
-            ctx.renderer.field("model", &model);
-            ctx.renderer.field("base_url", &base_url);
-            ctx.renderer
-                .field("api", &format!("{api:?}").to_ascii_lowercase());
-            ctx.renderer
-                .field("auth", &format!("{auth:?}").to_ascii_lowercase());
-            if let Some(effort) = reasoning_effort {
-                ctx.renderer.field("reasoning_effort", effort.as_str());
-            }
-            ctx.renderer.field(
-                "context_limit",
-                &ctx.config
-                    .api
-                    .context_limit
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| "auto".to_string()),
-            );
-            eprintln!();
         }
         ModelEvent::RequestStarted { .. }
         | ModelEvent::RequestSummary { .. }

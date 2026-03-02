@@ -25,14 +25,14 @@ pub(super) const DEFAULT_AGENT_NAME: &str = "agent-mo";
 /// Default set of model profiles bundled with Buddy.
 pub(super) fn default_models_map() -> BTreeMap<String, ModelConfig> {
     let mut models = BTreeMap::new();
-    // First-party OpenAI profile. Auth mode is chosen during `buddy init`.
+    // First-party OpenAI profile defaults to login auth.
     models.insert(
         DEFAULT_MODEL_PROFILE_NAME.to_string(),
         ModelConfig {
             api_base_url: DEFAULT_API_BASE_URL.to_string(),
             provider: ModelProvider::Openai,
             api: ApiProtocol::Responses,
-            auth: AuthMode::ApiKey,
+            auth: AuthMode::Login,
             api_key: String::new(),
             api_key_env: None,
             api_key_file: None,

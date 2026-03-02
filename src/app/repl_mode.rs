@@ -7,7 +7,7 @@ use crate::app::approval::{
     approval_prompt_actor, deny_pending_approval, render_shell_approval_request,
     send_approval_decision,
 };
-use crate::app::commands::model::handle_model_command;
+use crate::app::commands::model::{handle_model_command, ModelSwitchSubmission};
 use crate::app::commands::session::{handle_session_command, initialize_active_session};
 use crate::app::commands::theme::handle_theme_command;
 use crate::app::repl_loop::{
@@ -28,20 +28,28 @@ use buddy::repl::{
     task_is_waiting_for_approval, ApprovalPolicy, BackgroundTask, CompletedBackgroundTask,
     PendingApproval, ResumeRequest, RuntimeContextState,
 };
-use buddy::runtime::{spawn_runtime_with_shared_agent, PromptMetadata, RuntimeCommand};
+use buddy::runtime::{
+    spawn_runtime_with_shared_agent, ModelEvent, PromptMetadata, RuntimeCommand, RuntimeEvent,
+    RuntimeEventEnvelope,
+};
 use buddy::session::{default_uses_legacy_root, SessionStore};
 use buddy::tokens::TokenTracker;
 use buddy::tools::execution::ExecutionContext;
 use buddy::tools::shell::ShellApprovalRequest;
 use buddy::ui::render::{set_progress_enabled, RenderSink, Renderer};
 use buddy::ui::terminal as term_ui;
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::terminal;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
+use tokio::time::{sleep, Duration};
 
 /// Warning shown when commands requiring an idle loop are requested during background work.
 const BACKGROUND_TASK_WARNING: &str =
     "Background tasks are in progress. Allowed commands now: /ps, /kill <id>, /timeout <dur> [id], /approve <mode>, /status, /context.";
+/// Poll cadence while waiting for runtime model-switch acknowledgement.
+const MODEL_SWITCH_WAIT_POLL: Duration = Duration::from_millis(50);
 
 /// Inputs required to start interactive REPL mode.
 pub(crate) struct ReplModeInputs<'a> {
@@ -453,8 +461,27 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
                 term_ui::SlashCommandAction::Model(selector) => {
                     if has_background_tasks {
                         renderer.warn(BACKGROUND_TASK_WARNING);
-                    } else {
-                        handle_model_command(renderer, &mut config, &runtime, selector.as_deref())
+                    } else if let Some(submission) = handle_model_command(
+                        renderer,
+                        &mut config,
+                        &runtime,
+                        selector.as_deref(),
+                        cli_args.config.as_deref(),
+                    )
+                    .await
+                    {
+                        let mut wait_context = ModelSwitchWaitContext {
+                            runtime_events: &mut runtime_events,
+                            pending_runtime_events: &mut pending_runtime_events,
+                            background_tasks: &mut background_tasks,
+                            completed_tasks: &mut completed_tasks,
+                            pending_approval: &mut pending_approval,
+                            config: &mut config,
+                            active_session: &mut active_session,
+                            runtime_context: &mut runtime_context,
+                            trace_writer: trace_writer.as_mut(),
+                        };
+                        await_model_switch_application(renderer, &submission, &mut wait_context)
                             .await;
                     }
                 }
@@ -548,6 +575,162 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
     }
     let _ = runtime.send(RuntimeCommand::Shutdown).await;
     0
+}
+
+/// Mutable wait state while `/model` blocks for runtime acknowledgement.
+struct ModelSwitchWaitContext<'a> {
+    /// Runtime event receiver owned by REPL loop.
+    runtime_events: &'a mut mpsc::UnboundedReceiver<RuntimeEventEnvelope>,
+    /// Buffered runtime events waiting to be processed.
+    pending_runtime_events: &'a mut Vec<RuntimeEventEnvelope>,
+    /// In-flight background task list.
+    background_tasks: &'a mut Vec<BackgroundTask>,
+    /// Completed task queue waiting to be rendered.
+    completed_tasks: &'a mut Vec<CompletedBackgroundTask>,
+    /// Pending shell approval state.
+    pending_approval: &'a mut Option<PendingApproval>,
+    /// Mutable runtime config mirror.
+    config: &'a mut Config,
+    /// Active session id mirror.
+    active_session: &'a mut String,
+    /// Runtime token/context summary.
+    runtime_context: &'a mut RuntimeContextState,
+    /// Optional trace writer for JSONL event logging.
+    trace_writer: Option<&'a mut RuntimeTraceWriter>,
+}
+
+/// Block prompt input until runtime applies (or rejects) one `/model` switch.
+async fn await_model_switch_application(
+    renderer: &dyn RenderSink,
+    submission: &ModelSwitchSubmission,
+    wait_context: &mut ModelSwitchWaitContext<'_>,
+) {
+    let mut progress = renderer.progress("switching model profile (validating auth/config)");
+    let mut switch_applied = false;
+    let mut switch_error: Option<String> = None;
+    let mut wait_cancelled = false;
+    let mut trace_writer = wait_context.trace_writer.as_deref_mut();
+    let _raw_mode = wait_raw_mode_guard();
+
+    while !switch_applied && switch_error.is_none() && !wait_cancelled {
+        collect_runtime_events(
+            wait_context.runtime_events,
+            wait_context.pending_runtime_events,
+        );
+        if wait_context.pending_runtime_events.is_empty() {
+            if poll_model_switch_cancel() {
+                wait_cancelled = true;
+                continue;
+            }
+            sleep(MODEL_SWITCH_WAIT_POLL).await;
+            continue;
+        }
+
+        for envelope in wait_context.pending_runtime_events.iter() {
+            match &envelope.event {
+                RuntimeEvent::Model(ModelEvent::ProfileSwitched { profile, .. })
+                    if profile == &submission.profile_name =>
+                {
+                    switch_applied = true;
+                }
+                RuntimeEvent::Error(err) if err.task.is_none() => {
+                    switch_error = Some(err.message.clone());
+                }
+                _ => {}
+            }
+        }
+
+        write_runtime_trace(
+            renderer,
+            trace_writer.as_deref_mut(),
+            wait_context.pending_runtime_events,
+        );
+        let mut runtime_event_context = ProcessRuntimeEventsContext {
+            renderer,
+            background_tasks: wait_context.background_tasks,
+            completed_tasks: wait_context.completed_tasks,
+            pending_approval: wait_context.pending_approval,
+            config: wait_context.config,
+            active_session: wait_context.active_session,
+            runtime_context: wait_context.runtime_context,
+        };
+        process_runtime_events(
+            wait_context.pending_runtime_events,
+            &mut runtime_event_context,
+        );
+        let _ = drain_completed_tasks(renderer, wait_context.completed_tasks);
+        if !switch_applied && switch_error.is_none() && poll_model_switch_cancel() {
+            wait_cancelled = true;
+        }
+    }
+    progress.finish();
+
+    if wait_cancelled {
+        renderer
+            .warn("model switch wait cancelled. The switch may still complete in the background.");
+        return;
+    }
+    if let Some(message) = switch_error {
+        renderer.warn(&format!("model switch failed: {message}"));
+        return;
+    }
+
+    renderer.section(&format!(
+        "switched model profile: {}",
+        submission.profile_name
+    ));
+    renderer.field("model", &submission.model_name);
+    if let Some(effort) = submission.reasoning_effort {
+        renderer.field("reasoning_effort", effort.as_str());
+    }
+    eprintln!();
+}
+
+/// Raw-mode guard used while waiting for model-switch completion.
+///
+/// This enables immediate Esc detection without waiting for newline input.
+fn wait_raw_mode_guard() -> Option<WaitRawModeGuard> {
+    let already_enabled = terminal::is_raw_mode_enabled().ok()?;
+    if already_enabled {
+        return Some(WaitRawModeGuard {
+            disable_on_drop: false,
+        });
+    }
+    if terminal::enable_raw_mode().is_err() {
+        return None;
+    }
+    Some(WaitRawModeGuard {
+        disable_on_drop: true,
+    })
+}
+
+/// Drop guard for temporary raw-mode activation.
+struct WaitRawModeGuard {
+    /// Whether this guard should disable raw mode when dropped.
+    disable_on_drop: bool,
+}
+
+impl Drop for WaitRawModeGuard {
+    fn drop(&mut self) {
+        if self.disable_on_drop {
+            let _ = terminal::disable_raw_mode();
+        }
+    }
+}
+
+/// Return true when user pressed Esc while waiting for a model switch.
+fn poll_model_switch_cancel() -> bool {
+    let Ok(ready) = event::poll(std::time::Duration::from_millis(0)) else {
+        return false;
+    };
+    if !ready {
+        return false;
+    }
+    let Ok(Event::Key(key)) = event::read() else {
+        return false;
+    };
+    (key.kind == KeyEventKind::Press || key.kind == KeyEventKind::Repeat)
+        && key.code == KeyCode::Esc
 }
 
 /// Write pending runtime events to the optional JSONL trace writer.

@@ -97,6 +97,38 @@ pub(super) fn persist_model_profile_auth(
     Ok(path)
 }
 
+/// Persist `auth="api-key"` + `api_key_env` for one model profile.
+pub(super) fn persist_model_profile_api_key_env(
+    path_override: Option<&str>,
+    profile: &str,
+    env_name: &str,
+) -> Result<PathBuf, ConfigError> {
+    let normalized_profile = profile.trim();
+    if normalized_profile.is_empty() {
+        return Err(ConfigError::Invalid(
+            "profile name cannot be empty".to_string(),
+        ));
+    }
+    let normalized_env = env_name.trim();
+    if normalized_env.is_empty() {
+        return Err(ConfigError::Invalid(
+            "api_key_env cannot be empty".to_string(),
+        ));
+    }
+
+    let path = resolve_persist_path(path_override)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    if !path.exists() {
+        ensure_default_global_config_at_path(&path)?;
+    }
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let updated = upsert_model_profile_api_key_env(&existing, normalized_profile, normalized_env)?;
+    std::fs::write(&path, updated)?;
+    Ok(path)
+}
+
 /// Resolve the config file path that should receive persisted theme updates.
 fn resolve_persist_path(path_override: Option<&str>) -> Result<PathBuf, ConfigError> {
     if let Some(path) = path_override {
@@ -287,9 +319,87 @@ fn upsert_model_profile_auth(
     Ok(ensure_trailing_newline(lines.join("\n")))
 }
 
+/// Upsert `auth="api-key"` + `api_key_env` in `[models.<profile>]`.
+fn upsert_model_profile_api_key_env(
+    input: &str,
+    profile: &str,
+    env_name: &str,
+) -> Result<String, ConfigError> {
+    let mut lines = if input.is_empty() {
+        Vec::new()
+    } else {
+        input.lines().map(str::to_string).collect::<Vec<_>>()
+    };
+
+    let header_models = format!("[models.{profile}]");
+    let header_model_alias = format!("[model.{profile}]");
+    let mut section_start: Option<usize> = None;
+    for (idx, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed == header_models || trimmed == header_model_alias {
+            section_start = Some(idx);
+            break;
+        }
+    }
+    let Some(start) = section_start else {
+        return Err(ConfigError::Invalid(format!(
+            "profile `{profile}` not found in config"
+        )));
+    };
+
+    let mut end = lines.len();
+    for (idx, line) in lines.iter().enumerate().skip(start + 1) {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            end = idx;
+            break;
+        }
+    }
+
+    let mut auth_set = false;
+    let mut env_set = false;
+    let mut idx = start + 1;
+    while idx < end {
+        if is_assignment_key(&lines[idx], "auth") {
+            lines[idx] = "auth = \"api-key\"".to_string();
+            auth_set = true;
+            idx += 1;
+            continue;
+        }
+        if is_assignment_key(&lines[idx], "api_key_env") {
+            lines[idx] = format!("api_key_env = \"{env_name}\"");
+            env_set = true;
+            idx += 1;
+            continue;
+        }
+        if is_assignment_key(&lines[idx], "api_key")
+            || is_assignment_key(&lines[idx], "api_key_file")
+        {
+            lines.remove(idx);
+            end -= 1;
+            continue;
+        }
+        idx += 1;
+    }
+
+    let mut insert_idx = start + 1;
+    if !auth_set {
+        lines.insert(insert_idx, "auth = \"api-key\"".to_string());
+        insert_idx += 1;
+    }
+    if !env_set {
+        lines.insert(insert_idx, format!("api_key_env = \"{env_name}\""));
+    }
+
+    Ok(ensure_trailing_newline(lines.join("\n")))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{upsert_agent_model, upsert_display_theme, upsert_model_profile_auth};
+    use super::{
+        upsert_agent_model, upsert_display_theme, upsert_model_profile_api_key_env,
+        upsert_model_profile_auth,
+    };
     use crate::error::ConfigError;
 
     #[test]
@@ -356,6 +466,23 @@ model = \"gpt-5.3-codex-spark\"
         let out =
             upsert_model_profile_auth(input, "gpt-spark", "api-key", true).expect("must update");
         assert!(out.contains("auth = \"api-key\""));
+    }
+
+    #[test]
+    fn upsert_model_profile_api_key_env_replaces_key_sources() {
+        let input = "\
+[models.kimi]
+api_base_url = \"https://api.moonshot.ai/v1\"
+auth = \"api-key\"
+api_key = \"inline-secret\"
+api_key_file = \"/tmp/key.txt\"
+";
+        let out = upsert_model_profile_api_key_env(input, "kimi", "MOONSHOT_API_KEY")
+            .expect("must update");
+        assert!(out.contains("auth = \"api-key\""));
+        assert!(out.contains("api_key_env = \"MOONSHOT_API_KEY\""));
+        assert!(!out.contains("api_key = "));
+        assert!(!out.contains("api_key_file = "));
     }
 
     #[test]

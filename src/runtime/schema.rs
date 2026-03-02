@@ -92,6 +92,16 @@ pub enum RuntimeCommand {
         /// Optional reasoning effort override applied for this profile switch.
         #[serde(skip_serializing_if = "Option::is_none")]
         reasoning_effort: Option<ReasoningEffort>,
+        /// Optional auth mode override applied before resolving this profile.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        auth_override: Option<AuthMode>,
+        /// Optional `api_key_env` override applied before resolving this profile.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        api_key_env_override: Option<String>,
+        /// Clear explicit key sources (`api_key`, `api_key_env`, `api_key_file`)
+        /// before applying auth/env overrides.
+        #[serde(default)]
+        clear_key_sources: bool,
     },
     /// Start a fresh session.
     SessionNew,
