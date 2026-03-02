@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use reqwest::header::{HeaderMap, RETRY_AFTER};
 use std::time::SystemTime;
 
+mod anthropic;
 mod client;
 mod completions;
 mod policy;

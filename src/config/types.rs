@@ -21,6 +21,8 @@ pub enum ApiProtocol {
     Completions,
     /// OpenAI-style `/responses` payload shape.
     Responses,
+    /// Anthropic `/v1/messages` payload shape.
+    Anthropic,
 }
 
 /// Logical model provider family for compatibility behavior.
@@ -36,6 +38,8 @@ pub enum ModelProvider {
     Openrouter,
     /// Moonshot native endpoints.
     Moonshot,
+    /// Anthropic native endpoints.
+    Anthropic,
     /// Any other OpenAI-compatible provider.
     Other,
 }
@@ -49,6 +53,9 @@ impl ModelProvider {
         }
         if normalized.contains("moonshot.ai") {
             return Self::Moonshot;
+        }
+        if normalized.contains("anthropic.com") {
+            return Self::Anthropic;
         }
         if normalized.contains("api.openai.com")
             || normalized.contains("chatgpt.com/backend-api/codex")

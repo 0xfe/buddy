@@ -21,7 +21,7 @@ use buddy::auth::{
 };
 use buddy::config::load_config_with_diagnostics;
 use buddy::config::select_model_profile;
-use buddy::config::{AuthMode, Config, ToolsConfig};
+use buddy::config::{AuthMode, Config, ModelProvider, ToolsConfig};
 use buddy::preflight::validate_active_profile_ready;
 use buddy::prompt::{render_system_prompt, ExecutionTarget, SystemPromptParams};
 #[cfg(test)]
@@ -453,6 +453,8 @@ fn build_tools(
     capture_pane_enabled: bool,
 ) -> ToolSetup {
     let mut tools = ToolRegistry::new();
+    let builtin_tool_names = openai_builtin_tool_names(config.api.provider, &config.api.model);
+    let builtin_web_search = builtin_tool_names.contains(&"web_search");
     let needs_tmux_management_approval =
         capture_pane_enabled && interactive_mode && execution.tmux_management_available();
     let needs_approval_broker = interactive_mode
@@ -518,7 +520,7 @@ fn build_tools(
             allowed_paths: config.tools.files_allowed_paths.clone(),
         });
     }
-    if config.tools.search_enabled {
+    if config.tools.search_enabled && !builtin_web_search {
         tools.register(WebSearchTool::new(Duration::from_secs(
             config.network.fetch_timeout_secs,
         )));
@@ -678,11 +680,31 @@ fn enabled_tool_names(
         tools.push("read_file");
         tools.push("write_file");
     }
-    if config.tools.search_enabled {
+    let builtin_tool_names = openai_builtin_tool_names(config.api.provider, &config.api.model);
+    let builtin_web_search = builtin_tool_names.contains(&"web_search");
+    if config.tools.search_enabled && !builtin_web_search {
         tools.push("web_search");
     }
+    tools.extend(builtin_tool_names);
     tools.push("time");
     tools
+}
+
+/// Return OpenAI native built-in tools enabled by default for this profile.
+fn openai_builtin_tool_names(provider: ModelProvider, model: &str) -> Vec<&'static str> {
+    if provider != ModelProvider::Openai {
+        return Vec::new();
+    }
+    let normalized = model.trim().to_ascii_lowercase();
+    let reasoning_family = normalized.contains("gpt-5")
+        || normalized.contains("codex")
+        || normalized.starts_with("o1")
+        || normalized.starts_with("o3")
+        || normalized.starts_with("o4");
+    if !reasoning_family {
+        return Vec::new();
+    }
+    vec!["web_search", "code_interpreter"]
 }
 
 #[cfg(test)]
@@ -1016,6 +1038,20 @@ mod tests {
             apply_task_timeout_command(&mut tasks, Some("10m"), None).expect("timeout should set");
         assert!(ok.contains("#9"));
         assert!(tasks[0].timeout_at.is_some());
+    }
+
+    #[test]
+    fn openai_builtin_tool_names_enabled_for_reasoning_profiles() {
+        // GPT-5/Codex profiles should expose OpenAI-native web + python tools.
+        let names = openai_builtin_tool_names(ModelProvider::Openai, "gpt-5.3-codex");
+        assert_eq!(names, vec!["web_search", "code_interpreter"]);
+    }
+
+    #[test]
+    fn openai_builtin_tool_names_disabled_for_non_openai_profiles() {
+        // Non-OpenAI providers should not advertise OpenAI built-in tools.
+        let names = openai_builtin_tool_names(ModelProvider::Openrouter, "gpt-5.3-codex");
+        assert!(names.is_empty());
     }
 
     #[tokio::test]

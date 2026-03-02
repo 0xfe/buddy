@@ -100,5 +100,35 @@ pub(super) fn default_models_map() -> BTreeMap<String, ModelConfig> {
             context_limit: None,
         },
     );
+    // Anthropic Claude Sonnet profile (API-key auth only).
+    models.insert(
+        "claude-sonnet".to_string(),
+        ModelConfig {
+            api_base_url: "https://api.anthropic.com/v1".to_string(),
+            provider: ModelProvider::Anthropic,
+            api: ApiProtocol::Anthropic,
+            auth: AuthMode::ApiKey,
+            api_key: String::new(),
+            api_key_env: Some("ANTHROPIC_API_KEY".to_string()),
+            api_key_file: None,
+            model: Some("claude-sonnet-4-5".to_string()),
+            context_limit: None,
+        },
+    );
+    // Anthropic Claude Haiku profile (API-key auth only).
+    models.insert(
+        "claude-haiku".to_string(),
+        ModelConfig {
+            api_base_url: "https://api.anthropic.com/v1".to_string(),
+            provider: ModelProvider::Anthropic,
+            api: ApiProtocol::Anthropic,
+            auth: AuthMode::ApiKey,
+            api_key: String::new(),
+            api_key_env: Some("ANTHROPIC_API_KEY".to_string()),
+            api_key_file: None,
+            model: Some("claude-haiku-4-5".to_string()),
+            context_limit: None,
+        },
+    );
     models
 }

@@ -11,9 +11,6 @@ Buddy currently ships these default profiles:
 - `openrouter-deepseek` (OpenRouter, `/chat/completions`, API key)
 - `openrouter-glm` (OpenRouter, `/chat/completions`, API key)
 - `kimi` (Moonshot, `/chat/completions`, API key)
-
-Planned (tracked in `docs/plans/plan-2026-03-02-provider-tooling-login-rationalization.md`):
-
 - `claude-sonnet` (Anthropic, `/v1/messages`, API key only)
 - `claude-haiku` (Anthropic, `/v1/messages`, API key only)
 
@@ -115,6 +112,19 @@ Buddy requests reasoning summaries for OpenAI reasoning-capable model IDs:
 ```
 
 This improves REPL reasoning rendering for codex/gpt-5 style profiles where summary blocks may otherwise be sparse.
+
+Buddy also enables OpenAI native built-ins for GPT-5/Codex-family `/responses`
+profiles:
+
+```json
+[
+  { "type": "web_search" },
+  { "type": "code_interpreter", "container": { "type": "auto" } }
+]
+```
+
+To avoid duplicate capabilities, Buddy suppresses its local `web_search`
+function tool when OpenAI built-in `web_search` is active for the profile.
 
 Buddy’s SSE parser handles:
 

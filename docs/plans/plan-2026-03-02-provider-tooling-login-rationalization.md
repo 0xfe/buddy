@@ -3,8 +3,8 @@
 ## Status
 
 - Program status: Active
-- Current focus: M2 OpenAI built-in tooling and prompt contract
-- Next step: implement OpenAI Responses built-in tool declaration/feature gating paths
+- Current focus: M5 regression/docs closure and final commit slices
+- Next step: run targeted opt-in suites where needed and finalize commit map
 - Completed so far:
   1. Captured scope from the request: OpenAI tooling correctness, Claude Sonnet/Haiku support, provider-scoped login/logout UX.
   2. Split execution into incremental milestones with acceptance gates, tests, docs, and commit slices.
@@ -16,6 +16,13 @@
   8. Updated login output/behavior to be provider-scoped and concise, including "already logged in" fast-path guidance to use `/logout`.
   9. Updated login-missing preflight/API guidance to use provider-first commands (`buddy login <provider>` / `/login <provider>`).
   10. Synced command reference docs for provider-first login/logout surfaces.
+  11. Implemented OpenAI Responses built-in tool injection (`web_search`, `code_interpreter`) for GPT-5/Codex-family profiles.
+  12. Added provider/model gating to avoid duplicate web-search tool surfaces (suppresses local `web_search` when OpenAI built-in is active).
+  13. Updated system prompt guidance and model/feature docs for OpenAI built-in tool behavior.
+  14. Added native Anthropic `/v1/messages` transport with tool-call and tool-result mapping into Buddy's normalized runtime schema.
+  15. Added bundled `claude-sonnet` and `claude-haiku` profiles to defaults/template (`api = "anthropic"`, provider `anthropic`, API-key auth).
+  16. Enforced provider behavior for Claude auth (`auth=login` remains unsupported and fails with actionable guidance).
+  17. Verified full quality gates after M3/M4 integration (`fmt`, `test`, `clippy`) all passing.
 - Blockers: none
 
 ## Scope (Locked)
@@ -53,9 +60,9 @@
 
 - [x] M0: API Research And Design Freeze
 - [x] M1: Provider-Scoped Auth Surface And Migration
-- [ ] M2: OpenAI Built-In Tooling And Prompt Contract
-- [ ] M3: Claude Sonnet/Haiku Provider Support
-- [ ] M4: Login/Logout UX Simplification
+- [x] M2: OpenAI Built-In Tooling And Prompt Contract
+- [x] M3: Claude Sonnet/Haiku Provider Support
+- [x] M4: Login/Logout UX Simplification
 - [ ] M5: Regression Coverage, Docs, And Release Validation
 
 ## M0: API Research And Design Freeze
@@ -326,3 +333,8 @@ Consolidate behavior with robust tests/docs and ensure release readiness.
 - 2026-03-02: Implemented M1 provider-first login/logout plumbing across CLI, slash commands, auth selector resolution, and preflight guidance.
 - 2026-03-02: Verified post-change quality gates: `cargo fmt --check`, `cargo test`, and `cargo clippy --all-targets -- -D warnings` all passing.
 - 2026-03-02: Committed M0+M1 slice as `305c96a` (`feat(auth): make login provider-scoped and add logout command`).
+- 2026-03-02: Implemented M2 OpenAI built-in tool contract updates across request policy, responses payload builder, runtime tool registration, and prompt guidance.
+- 2026-03-02: Verified M2 with `cargo fmt --check`, `cargo test`, and `cargo clippy --all-targets -- -D warnings`.
+- 2026-03-02: Implemented M3 native Anthropic provider support (`api = "anthropic"`), including request/response/tool translation and bundled Claude profiles.
+- 2026-03-02: Completed M4 UX updates for provider-first login/logout and simplified login presentation.
+- 2026-03-02: Verified integrated M3/M4 state with `cargo fmt --check`, `cargo test`, and `cargo clippy --all-targets -- -D warnings`.

@@ -189,6 +189,7 @@ fn provider_label(provider: ModelProvider) -> &'static str {
         ModelProvider::Openai => "openai",
         ModelProvider::Openrouter => "openrouter",
         ModelProvider::Moonshot => "moonshot",
+        ModelProvider::Anthropic => "anthropic",
         ModelProvider::Other => "other",
     }
 }

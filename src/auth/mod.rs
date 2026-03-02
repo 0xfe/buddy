@@ -180,6 +180,13 @@ mod tests {
             ),
             "moonshot"
         );
+        assert_eq!(
+            api_key_provider_key(
+                crate::config::ModelProvider::Anthropic,
+                "https://api.anthropic.com/v1"
+            ),
+            "anthropic"
+        );
     }
 
     // Verifies provider-scoped records override legacy profile-scoped fallbacks.

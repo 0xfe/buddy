@@ -215,6 +215,8 @@ mod tests {
         assert!(c.models.contains_key("openrouter-deepseek"));
         assert!(c.models.contains_key("openrouter-glm"));
         assert!(c.models.contains_key("kimi"));
+        assert!(c.models.contains_key("claude-sonnet"));
+        assert!(c.models.contains_key("claude-haiku"));
         assert!(!c.tools.shell_denylist.is_empty());
         assert_eq!(c.network.api_timeout_secs, DEFAULT_API_TIMEOUT_SECS);
         assert_eq!(c.network.fetch_timeout_secs, DEFAULT_FETCH_TIMEOUT_SECS);
@@ -402,6 +404,27 @@ mod tests {
         let c = parse_file_config_for_test(toml).unwrap();
         assert_eq!(c.api.protocol, ApiProtocol::Responses);
         assert_eq!(c.api.auth, AuthMode::Login);
+    }
+
+    // Verifies Anthropic protocol/provider enums parse and resolve correctly.
+    #[test]
+    fn parse_anthropic_model_profile() {
+        let toml = r#"
+            [models.claude-sonnet]
+            api_base_url = "https://api.anthropic.com/v1"
+            provider = "anthropic"
+            api = "anthropic"
+            auth = "api-key"
+            model = "claude-sonnet-4-5"
+
+            [agent]
+            model = "claude-sonnet"
+        "#;
+        let c = parse_file_config_for_test(toml).unwrap();
+        assert_eq!(c.api.provider, ModelProvider::Anthropic);
+        assert_eq!(c.api.protocol, ApiProtocol::Anthropic);
+        assert_eq!(c.api.auth, AuthMode::ApiKey);
+        assert_eq!(c.api.model, "claude-sonnet-4-5");
     }
 
     // Ensures missing `agent.model` defaults to the first available profile.

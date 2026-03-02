@@ -26,6 +26,8 @@ The default config template (`src/templates/buddy.toml`) includes tested profile
 - `openrouter-deepseek` (`deepseek/deepseek-v3.2`, OpenRouter Completions API)
 - `openrouter-glm` (`z-ai/glm-5`, OpenRouter Completions API)
 - `kimi` (`kimi-k2.5`, Moonshot Completions API)
+- `claude-sonnet` (`claude-sonnet-4-5`, Anthropic Messages API)
+- `claude-haiku` (`claude-haiku-4-5`, Anthropic Messages API)
 
 ## Quickstart
 

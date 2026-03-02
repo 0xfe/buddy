@@ -53,6 +53,23 @@ pub(crate) fn responses_reasoning_config(provider: ModelProvider, model: &str) -
     Some(json!({ "summary": "auto" }))
 }
 
+/// Return default OpenAI built-in tool declarations for `/responses` requests.
+pub(crate) fn responses_builtin_tools(provider: ModelProvider, model: &str) -> Vec<Value> {
+    if provider != ModelProvider::Openai {
+        return Vec::new();
+    }
+    if !is_openai_reasoning_model(model) {
+        return Vec::new();
+    }
+
+    // For GPT-5/Codex reasoning profiles, expose OpenAI-native built-ins so the
+    // model can choose server-side search/python flows when appropriate.
+    vec![
+        json!({"type":"web_search"}),
+        json!({"type":"code_interpreter","container":{"type":"auto"}}),
+    ]
+}
+
 /// Return true when an OpenRouter model should request reasoning output.
 fn is_openrouter_reasoning_profile(model: &str) -> bool {
     let normalized = model.trim().to_ascii_lowercase();
@@ -93,6 +110,10 @@ mod tests {
             ModelProvider::Moonshot
         );
         assert_eq!(
+            ModelProvider::Auto.resolved("https://api.anthropic.com/v1"),
+            ModelProvider::Anthropic
+        );
+        assert_eq!(
             ModelProvider::Auto.resolved("https://example.invalid/v1"),
             ModelProvider::Other
         );
@@ -130,5 +151,20 @@ mod tests {
         let openrouter =
             responses_reasoning_config(ModelProvider::Openrouter, "deepseek/deepseek-v3.2");
         assert!(openrouter.is_none());
+    }
+
+    // Verifies OpenAI built-ins are enabled only for OpenAI reasoning profiles.
+    #[test]
+    fn responses_builtin_tools_only_for_openai_reasoning_models() {
+        let openai = responses_builtin_tools(ModelProvider::Openai, "gpt-5.3-codex");
+        assert_eq!(openai.len(), 2);
+        assert_eq!(openai[0]["type"], "web_search");
+        assert_eq!(openai[1]["type"], "code_interpreter");
+
+        let non_reasoning = responses_builtin_tools(ModelProvider::Openai, "gpt-4o-mini");
+        assert!(non_reasoning.is_empty());
+
+        let openrouter = responses_builtin_tools(ModelProvider::Openrouter, "gpt-5.3-codex");
+        assert!(openrouter.is_empty());
     }
 }

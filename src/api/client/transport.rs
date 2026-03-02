@@ -1,5 +1,6 @@
 //! HTTP transport helpers for protocol-specific API requests.
 
+use crate::api::anthropic;
 use crate::api::completions;
 use crate::api::policy;
 use crate::api::responses::{self, ResponsesRequestOptions};
@@ -64,6 +65,12 @@ pub(super) async fn dispatch_request(args: DispatchRequest<'_>) -> Result<ChatRe
             );
             responses::request(http, base_url, request, bearer, options).await
         }
+        ApiProtocol::Anthropic => {
+            let api_key = bearer
+                .filter(|value| !value.trim().is_empty())
+                .or_else(|| (!api_key.trim().is_empty()).then_some(api_key));
+            anthropic::request(http, base_url, request, api_key).await
+        }
     }
 }
 
@@ -90,6 +97,11 @@ pub(super) fn with_diagnostic_hints(protocol: ApiProtocol, err: ApiError) -> Api
     if code == 404 && protocol == ApiProtocol::Completions {
         body.push_str(
             "\nHint: this endpoint may not support `/chat/completions`; set `api = \"responses\"` for this model profile.",
+        );
+    }
+    if code == 404 && protocol == ApiProtocol::Anthropic {
+        body.push_str(
+            "\nHint: this endpoint may not support `/messages`; set `api = \"anthropic\"` for Anthropic model profiles.",
         );
     }
     ApiError::status(code, body, retry_after_secs)

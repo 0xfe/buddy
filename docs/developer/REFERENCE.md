@@ -66,6 +66,8 @@ Default bundled profiles in `src/templates/buddy.toml`:
 - `openrouter-deepseek` => `deepseek/deepseek-v3.2` (OpenRouter, `api = "completions"`, `auth = "api-key"`)
 - `openrouter-glm` => `z-ai/glm-5` (OpenRouter, `api = "completions"`, `auth = "api-key"`)
 - `kimi` => `kimi-k2.5` (Moonshot, `api = "completions"`, `auth = "api-key"`)
+- `claude-sonnet` => `claude-sonnet-4-5` (Anthropic, `api = "anthropic"`, `auth = "api-key"`)
+- `claude-haiku` => `claude-haiku-4-5` (Anthropic, `api = "anthropic"`, `auth = "api-key"`)
 
 Context-limit defaults come from `src/templates/models.toml` (compiled into the binary), with fallback `8192` for unknown models.
 
@@ -121,8 +123,8 @@ Legacy compatibility:
 ```toml
 [models.gpt-codex]
 api_base_url = "https://api.openai.com/v1"
-provider = "openai"                         # auto | openai | openrouter | moonshot | other
-api = "responses"                           # responses | completions
+provider = "openai"                         # auto | openai | openrouter | moonshot | anthropic | other
+api = "responses"                           # responses | completions | anthropic
 auth = "login"                              # login | api-key
 # Only one may be set: api_key, api_key_env, api_key_file.
 # api_key_env = "OPENAI_API_KEY"
@@ -161,6 +163,22 @@ api = "completions"
 auth = "api-key"
 api_key_env = "MOONSHOT_API_KEY"
 model = "kimi-k2.5"
+
+[models.claude-sonnet]
+api_base_url = "https://api.anthropic.com/v1"
+provider = "anthropic"
+api = "anthropic"
+auth = "api-key"
+api_key_env = "ANTHROPIC_API_KEY"
+model = "claude-sonnet-4-5"
+
+[models.claude-haiku]
+api_base_url = "https://api.anthropic.com/v1"
+provider = "anthropic"
+api = "anthropic"
+auth = "api-key"
+api_key_env = "ANTHROPIC_API_KEY"
+model = "claude-haiku-4-5"
 
 [agent]
 name = "agent-mo"                           # tmux session prefix: buddy-<name>

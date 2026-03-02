@@ -47,5 +47,6 @@ pub(crate) fn responses_request_options(
         store_false: login_openai,
         stream: login_openai,
         reasoning: provider_compat::responses_reasoning_config(provider, model),
+        builtin_tools: provider_compat::responses_builtin_tools(provider, model),
     }
 }

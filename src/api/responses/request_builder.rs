@@ -9,6 +9,7 @@ pub(super) fn build_responses_payload(
     store_false: bool,
     stream: bool,
     reasoning: Option<&Value>,
+    builtin_tools: &[Value],
 ) -> Value {
     let mut instructions = Vec::<String>::new();
     let mut input = Vec::<Value>::new();
@@ -30,18 +31,23 @@ pub(super) fn build_responses_payload(
     }
 
     // Convert tool definitions to the function-tool shape expected by `/responses`.
-    let tools = request.tools.as_ref().map(|defs| {
-        defs.iter()
-            .map(|tool| {
-                json!({
-                    "type": "function",
-                    "name": tool.function.name,
-                    "description": tool.function.description,
-                    "parameters": tool.function.parameters,
+    let mut tools = request
+        .tools
+        .as_ref()
+        .map(|defs| {
+            defs.iter()
+                .map(|tool| {
+                    json!({
+                        "type": "function",
+                        "name": tool.function.name,
+                        "description": tool.function.description,
+                        "parameters": tool.function.parameters,
+                    })
                 })
-            })
-            .collect::<Vec<_>>()
-    });
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    tools.extend(builtin_tools.iter().cloned());
 
     let mut payload = Map::new();
     payload.insert("model".to_string(), Value::String(request.model.clone()));
@@ -52,7 +58,7 @@ pub(super) fn build_responses_payload(
             Value::String(instructions.join("\n\n")),
         );
     }
-    if let Some(tools) = tools.filter(|items| !items.is_empty()) {
+    if !tools.is_empty() {
         payload.insert("tools".to_string(), Value::Array(tools));
     }
     if let Some(temperature) = request.temperature {
@@ -158,7 +164,7 @@ mod tests {
             temperature: None,
             top_p: None,
         };
-        let payload = build_responses_payload(&request, false, false, None);
+        let payload = build_responses_payload(&request, false, false, None, &[]);
         let input = payload["input"].as_array().expect("array");
         assert_eq!(input.len(), 2);
         assert_eq!(input[1]["type"], "function_call_output");
@@ -183,7 +189,7 @@ mod tests {
             temperature: Some(0.1),
             top_p: Some(0.9),
         };
-        let payload = build_responses_payload(&request, false, false, None);
+        let payload = build_responses_payload(&request, false, false, None, &[]);
         assert_eq!(payload["tools"][0]["type"], "function");
         assert_eq!(payload["tools"][0]["name"], "run_shell");
         assert!(payload["tools"][0].get("description").is_some());
@@ -199,7 +205,7 @@ mod tests {
             temperature: None,
             top_p: None,
         };
-        let payload = build_responses_payload(&request, false, false, None);
+        let payload = build_responses_payload(&request, false, false, None, &[]);
         assert_eq!(payload["instructions"], "sys");
         let input = payload["input"].as_array().expect("array");
         assert_eq!(input.len(), 1);
@@ -226,7 +232,7 @@ mod tests {
             temperature: None,
             top_p: None,
         };
-        let payload = build_responses_payload(&request, false, false, None);
+        let payload = build_responses_payload(&request, false, false, None, &[]);
         let input = payload["input"].as_array().expect("array");
         assert_eq!(input.len(), 2);
         assert_eq!(input[0]["content"][0]["type"], "input_text");
@@ -243,7 +249,7 @@ mod tests {
             temperature: None,
             top_p: None,
         };
-        let payload = build_responses_payload(&request, true, false, None);
+        let payload = build_responses_payload(&request, true, false, None, &[]);
         assert_eq!(payload["store"], Value::Bool(false));
     }
 
@@ -257,7 +263,7 @@ mod tests {
             temperature: None,
             top_p: None,
         };
-        let payload = build_responses_payload(&request, false, true, None);
+        let payload = build_responses_payload(&request, false, true, None, &[]);
         assert_eq!(payload["stream"], Value::Bool(true));
     }
 
@@ -271,8 +277,41 @@ mod tests {
             temperature: None,
             top_p: None,
         };
-        let payload =
-            build_responses_payload(&request, false, false, Some(&json!({"summary":"auto"})));
+        let payload = build_responses_payload(
+            &request,
+            false,
+            false,
+            Some(&json!({"summary":"auto"})),
+            &[],
+        );
         assert_eq!(payload["reasoning"]["summary"], "auto");
+    }
+
+    // Ensures provider built-ins are appended next to function tools.
+    #[test]
+    fn responses_payload_appends_builtin_tools() {
+        let request = ChatRequest {
+            model: "gpt-5.3-codex".to_string(),
+            messages: vec![Message::user("hi")],
+            tools: Some(vec![ToolDefinition {
+                tool_type: "function".to_string(),
+                function: FunctionDefinition {
+                    name: "run_shell".to_string(),
+                    description: "Run shell".to_string(),
+                    parameters: json!({"type":"object","properties":{"command":{"type":"string"}}}),
+                },
+            }]),
+            temperature: None,
+            top_p: None,
+        };
+        let builtin = vec![
+            json!({"type":"web_search"}),
+            json!({"type":"code_interpreter","container":{"type":"auto"}}),
+        ];
+        let payload = build_responses_payload(&request, false, false, None, &builtin);
+        let tools = payload["tools"].as_array().expect("tools array");
+        assert_eq!(tools.len(), 3);
+        assert_eq!(tools[1]["type"], "web_search");
+        assert_eq!(tools[2]["type"], "code_interpreter");
     }
 }

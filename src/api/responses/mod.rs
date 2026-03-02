@@ -25,6 +25,8 @@ pub(crate) struct ResponsesRequestOptions {
     pub(crate) stream: bool,
     /// Optional reasoning config payload inserted into `/responses` requests.
     pub(crate) reasoning: Option<Value>,
+    /// Provider-native built-in tool declarations to include alongside functions.
+    pub(crate) builtin_tools: Vec<Value>,
 }
 
 /// Send one `/responses` request and normalize provider output.
@@ -42,6 +44,7 @@ pub(crate) async fn request(
         options.store_false,
         options.stream,
         options.reasoning.as_ref(),
+        &options.builtin_tools,
     );
     let mut req = http.post(&url).json(&payload);
     if let Some(token) = bearer.filter(|value| !value.trim().is_empty()) {

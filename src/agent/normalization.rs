@@ -63,6 +63,7 @@ fn preferred_reasoning_keys(provider: ModelProvider) -> &'static [&'static str] 
             "reasoning_content",
         ],
         ModelProvider::Moonshot => &["reasoning_content", "reasoning", "thinking"],
+        ModelProvider::Anthropic => &["thinking", "reasoning"],
         ModelProvider::Other | ModelProvider::Auto => &[],
     }
 }

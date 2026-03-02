@@ -28,7 +28,10 @@ pub fn supports_login_for_provider(provider: ModelProvider, base_url: &str) -> b
     match provider {
         ModelProvider::Auto => supports_openai_login(base_url),
         ModelProvider::Openai => true,
-        ModelProvider::Openrouter | ModelProvider::Moonshot | ModelProvider::Other => false,
+        ModelProvider::Openrouter
+        | ModelProvider::Moonshot
+        | ModelProvider::Anthropic
+        | ModelProvider::Other => false,
     }
 }
 
@@ -62,6 +65,7 @@ pub fn api_key_provider_key(provider: ModelProvider, base_url: &str) -> String {
         ModelProvider::Openai => OPENAI_PROVIDER_KEY.to_string(),
         ModelProvider::Openrouter => "openrouter".to_string(),
         ModelProvider::Moonshot => "moonshot".to_string(),
+        ModelProvider::Anthropic => "anthropic".to_string(),
         ModelProvider::Other | ModelProvider::Auto => {
             let host = Url::parse(base_url)
                 .ok()

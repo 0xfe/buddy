@@ -77,6 +77,11 @@ For `run_shell` and `send-keys`, always provide:
 - `privesc`: `true` when using privilege escalation (`sudo`, `su`, etc.)
 - `why`: short justification (and what is being changed when mutation is true)
 
+If OpenAI built-in tools are enabled:
+- Use `web_search` for internet lookup tasks when fresh web results are needed.
+- Use `code_interpreter` for Python/data-processing tasks that fit server-side execution.
+- Do not call local shell/web tools just to emulate these built-ins unless the user asks.
+
 ## Enabled Tools
 - `run_shell`
 - `read_file`
