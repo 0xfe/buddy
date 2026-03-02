@@ -67,14 +67,31 @@ where
     W: Write + QueueableCommand,
 {
     if color {
-        stderr.queue(PrintStyledContent(
-            status_line.with(settings::color_status_line()),
-        ))?;
+        if let Some((spinner, rest)) = split_spinner_prefix(status_line) {
+            stderr.queue(PrintStyledContent(spinner.white().bold()))?;
+            if !rest.is_empty() {
+                stderr.queue(PrintStyledContent(rest.with(settings::color_status_line())))?;
+            }
+        } else {
+            stderr.queue(PrintStyledContent(
+                status_line.with(settings::color_status_line()),
+            ))?;
+        }
     } else {
         stderr.queue(Print(status_line))?;
     }
     stderr.queue(Print(newline))?;
     Ok(())
+}
+
+/// Split one status line into `[spinner]` prefix and tail when present.
+fn split_spinner_prefix(status_line: &str) -> Option<(&str, &str)> {
+    if !status_line.starts_with('[') {
+        return None;
+    }
+    let close = status_line.find(']')?;
+    let split = close + 1;
+    Some(status_line.split_at(split))
 }
 
 /// Queue the primary prompt with color/styling.
@@ -227,5 +244,18 @@ mod tests {
             approval_prompt_text(&prompt),
             "• approve (privileged) (mutation) command ? [y/n] "
         );
+    }
+
+    #[test]
+    fn split_spinner_prefix_detects_spinner_segment() {
+        let (spinner, rest) = split_spinner_prefix("[|] task #1 running 3s").unwrap();
+        assert_eq!(spinner, "[|]");
+        assert_eq!(rest, " task #1 running 3s");
+    }
+
+    #[test]
+    fn split_spinner_prefix_ignores_non_spinner_lines() {
+        assert!(split_spinner_prefix("task #1 running 3s").is_none());
+        assert!(split_spinner_prefix("[broken task #1").is_none());
     }
 }

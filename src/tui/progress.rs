@@ -138,7 +138,7 @@ fn progress_line(
         format!(
             "{}{} {} {}{}",
             settings::PROGRESS_CLEAR_LINE,
-            format!("[{frame}]").with(settings::color_progress_frame()),
+            format!("[{frame}]").white().bold(),
             label.with(settings::color_progress_label()),
             format!("({elapsed_s:.1}s)").with(settings::color_progress_elapsed()),
             suffix,
