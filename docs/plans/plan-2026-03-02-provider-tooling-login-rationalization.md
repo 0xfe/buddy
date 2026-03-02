@@ -325,3 +325,4 @@ Consolidate behavior with robust tests/docs and ensure release readiness.
 - 2026-03-02: Passed M0 baseline gates (`cargo test`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`) and marked M0 complete.
 - 2026-03-02: Implemented M1 provider-first login/logout plumbing across CLI, slash commands, auth selector resolution, and preflight guidance.
 - 2026-03-02: Verified post-change quality gates: `cargo fmt --check`, `cargo test`, and `cargo clippy --all-targets -- -D warnings` all passing.
+- 2026-03-02: Committed M0+M1 slice as `305c96a` (`feat(auth): make login provider-scoped and add logout command`).
