@@ -23,6 +23,51 @@ pub enum ApiProtocol {
     Responses,
 }
 
+/// Logical model provider family for compatibility behavior.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ModelProvider {
+    /// Infer provider behavior from base URL.
+    #[default]
+    Auto,
+    /// OpenAI-hosted endpoints.
+    Openai,
+    /// OpenRouter proxy endpoints.
+    Openrouter,
+    /// Moonshot native endpoints.
+    Moonshot,
+    /// Any other OpenAI-compatible provider.
+    Other,
+}
+
+impl ModelProvider {
+    /// Infer provider family from API base URL.
+    pub fn infer_from_base_url(base_url: &str) -> Self {
+        let normalized = base_url.trim().to_ascii_lowercase();
+        if normalized.contains("openrouter.ai") {
+            return Self::Openrouter;
+        }
+        if normalized.contains("moonshot.ai") {
+            return Self::Moonshot;
+        }
+        if normalized.contains("api.openai.com")
+            || normalized.contains("chatgpt.com/backend-api/codex")
+        {
+            return Self::Openai;
+        }
+        Self::Other
+    }
+
+    /// Resolve provider, falling back to URL inference when configured as `auto`.
+    pub fn resolved(self, base_url: &str) -> Self {
+        if self == Self::Auto {
+            Self::infer_from_base_url(base_url)
+        } else {
+            self
+        }
+    }
+}
+
 /// Authentication mode for a model profile.
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -90,6 +135,8 @@ impl Default for Config {
 pub struct ApiConfig {
     /// Provider base URL (e.g., `https://api.openai.com/v1`).
     pub base_url: String,
+    /// Resolved provider family used for compatibility/auth behavior.
+    pub provider: ModelProvider,
     /// Resolved API key value (possibly empty for login/local endpoints).
     pub api_key: String,
     /// Concrete provider model ID to request.
@@ -108,6 +155,7 @@ impl Default for ApiConfig {
     fn default() -> Self {
         Self {
             base_url: DEFAULT_API_BASE_URL.into(),
+            provider: ModelProvider::Openai,
             api_key: String::new(),
             model: DEFAULT_MODEL_ID.into(),
             protocol: ApiProtocol::Completions,
@@ -132,6 +180,9 @@ pub struct ModelConfig {
     /// Profile-specific API base URL.
     #[serde(alias = "base_url")]
     pub api_base_url: String,
+    /// Provider family override (defaults to auto-detect from base URL).
+    #[serde(default)]
+    pub provider: ModelProvider,
     /// Provider protocol for this profile.
     #[serde(default)]
     pub api: ApiProtocol,
@@ -161,6 +212,7 @@ impl Default for ModelConfig {
     fn default() -> Self {
         Self {
             api_base_url: DEFAULT_API_BASE_URL.into(),
+            provider: ModelProvider::Auto,
             api: ApiProtocol::Completions,
             auth: AuthMode::ApiKey,
             api_key: String::new(),
@@ -393,6 +445,7 @@ impl LegacyApiConfig {
     pub(super) fn into_model_config(self) -> ModelConfig {
         ModelConfig {
             api_base_url: self.base_url,
+            provider: ModelProvider::Auto,
             api: ApiProtocol::Completions,
             auth: AuthMode::ApiKey,
             api_key: self.api_key,

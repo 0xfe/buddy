@@ -1291,6 +1291,7 @@ mod tests {
             "unit-switch-target".to_string(),
             ModelConfig {
                 api_base_url: "https://example.invalid/v1".to_string(),
+                provider: crate::config::ModelProvider::Other,
                 api: ApiProtocol::Completions,
                 auth: AuthMode::ApiKey,
                 api_key: "unit-test-key".to_string(),

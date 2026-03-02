@@ -15,9 +15,9 @@ use crate::app::trace::resolve_trace_path;
 use crate::cli;
 use buddy::agent::Agent;
 use buddy::auth::{
-    complete_openai_device_login, has_legacy_profile_token_records,
-    login_provider_key_for_base_url, provider_login_health, reset_provider_tokens,
-    save_provider_tokens, start_openai_device_login, supports_openai_login, try_open_browser,
+    complete_openai_device_login, has_legacy_profile_token_records, login_provider_key,
+    provider_login_health, reset_provider_tokens, save_provider_tokens, start_openai_device_login,
+    supports_login_for_provider, try_open_browser,
 };
 use buddy::config::load_config_with_diagnostics;
 use buddy::config::select_model_profile;
@@ -536,17 +536,18 @@ pub(crate) async fn run_login_flow(
     let Some(profile) = config.models.get(&profile_name) else {
         return Err(format!("unknown profile `{profile_name}`"));
     };
-    if !supports_openai_login(&profile.api_base_url) {
+    let provider_family = profile.provider.resolved(&profile.api_base_url);
+    if !supports_login_for_provider(provider_family, &profile.api_base_url) {
         return Err(format!(
-            "profile `{profile_name}` points to `{}`. Login auth currently supports OpenAI endpoints only.",
-            profile.api_base_url
+            "profile `{profile_name}` with provider `{provider_family:?}` points to `{}`. Login auth currently supports OpenAI endpoints only.",
+            profile.api_base_url,
         ));
     }
 
-    let Some(provider) = login_provider_key_for_base_url(&profile.api_base_url) else {
+    let Some(provider) = login_provider_key(provider_family, &profile.api_base_url) else {
         return Err(format!(
-            "profile `{profile_name}` points to `{}`. Login auth currently supports OpenAI endpoints only.",
-            profile.api_base_url
+            "profile `{profile_name}` with provider `{provider_family:?}` points to `{}`. Login auth currently supports OpenAI endpoints only.",
+            profile.api_base_url,
         ));
     };
 

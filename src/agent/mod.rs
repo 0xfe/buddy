@@ -16,6 +16,7 @@ use crate::tools::{ToolContext, ToolRegistry};
 use crate::types::{ChatRequest, Message, Role};
 use crate::ui::render::Renderer;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::time::Instant;
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, info_span, warn, Instrument};
@@ -127,6 +128,8 @@ pub struct Agent {
     messages: Vec<Message>,
     /// Token usage tracker and context budget state.
     tracker: TokenTracker,
+    /// Runtime per-model token calibration derived from provider usage telemetry.
+    token_calibration: BTreeMap<String, tokens::ModelTokenCalibration>,
     /// Terminal renderer used for live foreground UI.
     renderer: Renderer,
     /// If true, suppress direct renderer output and prefer sinks.
@@ -175,6 +178,7 @@ impl Agent {
             tools,
             messages,
             tracker,
+            token_calibration: BTreeMap::new(),
             renderer,
             suppress_live_output: false,
             live_output_sink: None,
@@ -246,7 +250,11 @@ impl Agent {
             .floor()
             .max(1.0) as usize;
 
-        let mut estimated_tokens = TokenTracker::estimate_messages(&self.messages);
+        let raw_estimated_tokens = TokenTracker::estimate_messages(&self.messages);
+        let mut estimated_tokens = tokens::calibrated_estimate(
+            raw_estimated_tokens,
+            self.token_calibration.get(&self.config.api.model),
+        );
         let _budget_span =
             info_span!("agent.context_budget", context_limit, estimated_tokens).entered();
         if estimated_tokens >= warning_tokens {
@@ -278,7 +286,11 @@ impl Agent {
                     estimated_after = report.estimated_after,
                     "auto-compacted history to stay within context budget"
                 );
-                estimated_tokens = report.estimated_after as usize;
+                let raw_after = report.estimated_after as usize;
+                estimated_tokens = tokens::calibrated_estimate(
+                    raw_after,
+                    self.token_calibration.get(&self.config.api.model),
+                );
                 self.warn_live(&format!(
                     "Compacted history (removed {} turns / {} messages) to reduce context usage.",
                     report.removed_turns, report.removed_messages
@@ -396,7 +408,11 @@ impl Agent {
                 temperature: self.config.agent.temperature,
                 top_p: self.config.agent.top_p,
             };
-            let estimated_tokens = TokenTracker::estimate_messages(&request.messages) as u64;
+            let raw_estimated_tokens = TokenTracker::estimate_messages(&request.messages);
+            let estimated_tokens = tokens::calibrated_estimate(
+                raw_estimated_tokens,
+                self.token_calibration.get(&request.model),
+            ) as u64;
             let tool_count = request.tools.as_ref().map_or(0, |tools| tools.len() as u64);
             let llm_span = info_span!(
                 "gen_ai.chat.request",
@@ -494,6 +510,10 @@ impl Agent {
             // Record token usage if provided.
             let usage_snapshot = response.usage.clone();
             if let Some(usage) = &usage_snapshot {
+                self.token_calibration
+                    .entry(request.model.clone())
+                    .or_default()
+                    .observe_prompt_usage(raw_estimated_tokens as u64, usage.prompt_tokens);
                 self.tracker
                     .record(usage.prompt_tokens, usage.completion_tokens);
                 if let Some(task) = self.current_task_ref() {
@@ -571,7 +591,7 @@ impl Agent {
             }
 
             // Show reasoning/thinking traces when providers emit them.
-            for (field, trace) in reasoning_traces(&assistant_msg) {
+            for (field, trace) in reasoning_traces(&assistant_msg, self.config.api.provider) {
                 self.reasoning_trace_live(&field, &trace);
             }
 
@@ -787,7 +807,7 @@ fn build_request_messages(
 mod tests {
     use super::*;
     use crate::api::ModelClient;
-    use crate::config::Config;
+    use crate::config::{Config, ModelProvider};
     use crate::error::{AgentError, ApiError, ToolError};
     use crate::runtime::{
         MetricsEvent, ModelEvent, RuntimeEvent, TaskEvent, ToolEvent, WarningEvent,
@@ -822,7 +842,7 @@ mod tests {
         msg.extra
             .insert("thinking".into(), json!({"summary": "done"}));
 
-        let traces = reasoning_traces(&msg);
+        let traces = reasoning_traces(&msg, ModelProvider::Other);
         assert_eq!(traces.len(), 2);
         assert_eq!(traces[0].0, "reasoning_content");
         assert!(traces[0].1.contains("step one"));
@@ -991,6 +1011,7 @@ mod tests {
         let mut agent = Agent::new(Config::default(), ToolRegistry::new());
         let replacement = ApiConfig {
             base_url: "https://example.com/v1".to_string(),
+            provider: crate::config::ModelProvider::Other,
             api_key: "secret".to_string(),
             model: "moonshot-v1".to_string(),
             protocol: crate::config::ApiProtocol::Completions,

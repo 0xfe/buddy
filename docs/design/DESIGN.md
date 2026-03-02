@@ -59,7 +59,7 @@ Detailed inventory: [feature-catalog.md](feature-catalog.md).
   - `-v/--verbose` (`-vv`, `-vvv`) for structured diagnostics on stderr
   - `--no-color`
   - `--dangerously-auto-approve` for non-interactive exec guardrail override
-- Profile-based config with per-profile protocol/auth mode (`completions` vs `responses`; `api-key` vs `login`).
+- Profile-based config with per-profile provider/protocol/auth mode (`provider`; `completions` vs `responses`; `api-key` vs `login`).
 - Login auth startup behavior:
   - missing login credentials are surfaced as warnings (non-fatal startup/model-switch),
   - user guidance points to `/login <profile>` and `buddy login <profile>`.
@@ -95,6 +95,7 @@ Detailed inventory: [feature-catalog.md](feature-catalog.md).
 - Token/context behavior:
   - exact usage tracking when provider returns `usage`
   - heuristic context estimation + warnings
+  - per-model runtime calibration of token estimates using observed provider usage
   - automatic and manual history compaction
   - context-window lookup from embedded model catalog
 - Compatibility behaviors:

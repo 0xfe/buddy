@@ -1,5 +1,7 @@
 //! Provider detection and compatibility helpers.
 
+use crate::config::ModelProvider;
+
 /// Stable provider key used for OpenAI login token records.
 pub(crate) const OPENAI_PROVIDER_KEY: &str = "openai";
 /// Runtime base URL required for OpenAI login-backed API requests.
@@ -14,6 +16,24 @@ pub fn supports_openai_login(base_url: &str) -> bool {
 /// Resolve login provider key for a configured base URL.
 pub fn login_provider_key_for_base_url(base_url: &str) -> Option<&'static str> {
     if supports_openai_login(base_url) {
+        Some(OPENAI_PROVIDER_KEY)
+    } else {
+        None
+    }
+}
+
+/// Returns true when this provider/base-url pair supports login auth.
+pub fn supports_login_for_provider(provider: ModelProvider, base_url: &str) -> bool {
+    match provider {
+        ModelProvider::Auto => supports_openai_login(base_url),
+        ModelProvider::Openai => true,
+        ModelProvider::Openrouter | ModelProvider::Moonshot | ModelProvider::Other => false,
+    }
+}
+
+/// Resolve login provider key from explicit provider + URL fallback.
+pub fn login_provider_key(provider: ModelProvider, base_url: &str) -> Option<&'static str> {
+    if supports_login_for_provider(provider, base_url) {
         Some(OPENAI_PROVIDER_KEY)
     } else {
         None

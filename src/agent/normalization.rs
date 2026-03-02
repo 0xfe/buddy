@@ -4,22 +4,67 @@
 //! reasoning payload formats. This module centralizes cleanup/extraction rules
 //! so the main agent loop stays focused on control flow.
 
+use crate::config::ModelProvider;
 use crate::types::{Message, Role};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
 /// Extract normalized `(field, trace)` reasoning tuples from a message payload.
-pub(super) fn reasoning_traces(message: &Message) -> Vec<(String, String)> {
-    message
-        .extra
-        .iter()
-        .filter_map(|(key, value)| {
-            if !is_reasoning_key(key) {
-                return None;
+pub(super) fn reasoning_traces(
+    message: &Message,
+    provider: ModelProvider,
+) -> Vec<(String, String)> {
+    let mut traces = Vec::<(String, String)>::new();
+    let mut seen_fields = HashSet::<String>::new();
+    let mut seen_texts = HashSet::<String>::new();
+
+    // Prefer provider-specific reasoning keys first so the UI consistently
+    // renders the most informative provider-native traces.
+    for &key in preferred_reasoning_keys(provider) {
+        let Some(value) = message.extra.get(key) else {
+            continue;
+        };
+        if let Some(text) = reasoning_value_to_text(value) {
+            if seen_texts.insert(text.clone()) {
+                traces.push((key.to_string(), text));
             }
-            reasoning_value_to_text(value).map(|text| (key.clone(), text))
-        })
-        .collect()
+            seen_fields.insert(key.to_string());
+        }
+    }
+
+    // Fallback: extract any remaining reasoning-like fields for compatibility
+    // with unknown/other providers.
+    for (key, value) in &message.extra {
+        if seen_fields.contains(key) || !is_reasoning_key(key) {
+            continue;
+        }
+        if let Some(text) = reasoning_value_to_text(value) {
+            if seen_texts.insert(text.clone()) {
+                traces.push((key.clone(), text));
+            }
+        }
+    }
+    traces
+}
+
+/// Provider-specific preferred reasoning keys in display priority order.
+fn preferred_reasoning_keys(provider: ModelProvider) -> &'static [&'static str] {
+    match provider {
+        ModelProvider::Openai => &[
+            "reasoning_stream",
+            "reasoning",
+            "reasoning_summary",
+            "reasoning_text",
+        ],
+        ModelProvider::Openrouter => &[
+            "reasoning",
+            "reasoning_details",
+            "reasoning_text",
+            "reasoning_content",
+        ],
+        ModelProvider::Moonshot => &["reasoning_content", "reasoning", "thinking"],
+        ModelProvider::Other | ModelProvider::Auto => &[],
+    }
 }
 
 /// Return true when a key likely contains provider reasoning/thinking content.
@@ -426,5 +471,52 @@ mod tests {
         assert_eq!(report.repaired_unmatched_tool_calls, 0);
         assert_eq!(messages.len(), 4);
         assert_eq!(messages[2].role, Role::Tool);
+    }
+
+    #[test]
+    fn reasoning_traces_prefers_provider_specific_keys() {
+        // OpenAI profiles should prioritize compact reasoning text fields over
+        // bulky structured blobs when both are present.
+        let mut extra = BTreeMap::new();
+        extra.insert(
+            "reasoning".to_string(),
+            serde_json::json!([{"summary":[],"type":"reasoning"}]),
+        );
+        extra.insert(
+            "reasoning_stream".to_string(),
+            serde_json::Value::String("Plan: run one safe command.".to_string()),
+        );
+        let message = Message {
+            role: Role::Assistant,
+            content: None,
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+            extra,
+        };
+        let traces = reasoning_traces(&message, ModelProvider::Openai);
+        assert_eq!(traces.len(), 1);
+        assert_eq!(traces[0].0, "reasoning_stream");
+        assert!(traces[0].1.contains("safe command"));
+    }
+
+    #[test]
+    fn reasoning_traces_suppresses_placeholder_noise_values() {
+        // Provider reasoning placeholders should never surface in UI output.
+        let mut extra = BTreeMap::new();
+        extra.insert(
+            "reasoning_content".to_string(),
+            serde_json::Value::String("null".to_string()),
+        );
+        let message = Message {
+            role: Role::Assistant,
+            content: None,
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+            extra,
+        };
+        let traces = reasoning_traces(&message, ModelProvider::Moonshot);
+        assert!(traces.is_empty());
     }
 }

@@ -9,6 +9,59 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::OnceLock;
 
+/// Per-model runtime calibration state for token estimation.
+#[derive(Debug, Clone, Copy)]
+pub struct ModelTokenCalibration {
+    /// Smoothed multiplier applied to heuristic character-based estimates.
+    ratio: f64,
+    /// Number of observations used to build this calibration state.
+    samples: u32,
+}
+
+impl Default for ModelTokenCalibration {
+    fn default() -> Self {
+        Self {
+            ratio: 1.0,
+            samples: 0,
+        }
+    }
+}
+
+impl ModelTokenCalibration {
+    /// Apply current calibration ratio to a raw heuristic estimate.
+    pub fn calibrated_estimate(&self, raw_estimate: usize) -> usize {
+        if raw_estimate == 0 {
+            return 0;
+        }
+        let adjusted = (raw_estimate as f64 * self.ratio).round();
+        adjusted.max(1.0) as usize
+    }
+
+    /// Update calibration from one observed request.
+    pub fn observe_prompt_usage(&mut self, raw_estimate: u64, observed_prompt_tokens: u64) {
+        if raw_estimate == 0 || observed_prompt_tokens == 0 {
+            return;
+        }
+
+        // Keep the multiplier bounded so one outlier does not destabilize
+        // context-limit decisions.
+        let observed_ratio = (observed_prompt_tokens as f64 / raw_estimate as f64).clamp(0.5, 2.5);
+        let alpha = if self.samples < 4 { 0.35 } else { 0.15 };
+        self.ratio = (self.ratio * (1.0 - alpha)) + (observed_ratio * alpha);
+        self.samples = self.samples.saturating_add(1);
+    }
+}
+
+/// Apply optional model calibration to a raw estimated token count.
+pub fn calibrated_estimate(
+    raw_estimate: usize,
+    calibration: Option<&ModelTokenCalibration>,
+) -> usize {
+    calibration
+        .map(|state| state.calibrated_estimate(raw_estimate))
+        .unwrap_or(raw_estimate)
+}
+
 /// Tracks token usage across a conversation session.
 #[derive(Debug, Clone)]
 pub struct TokenTracker {
@@ -259,6 +312,19 @@ pub fn default_context_limit(model: &str) -> usize {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    // Ensures calibration smooths toward observed provider usage and stays bounded.
+    #[test]
+    fn model_token_calibration_tracks_observed_usage() {
+        let mut state = ModelTokenCalibration::default();
+        assert_eq!(state.calibrated_estimate(100), 100);
+        state.observe_prompt_usage(100, 150);
+        let adjusted = state.calibrated_estimate(100);
+        assert!(adjusted > 100, "adjusted={adjusted}");
+        state.observe_prompt_usage(100, 300); // clamped at 2.5x
+        let clamped_adjusted = state.calibrated_estimate(100);
+        assert!(clamped_adjusted <= 250, "adjusted={clamped_adjusted}");
+    }
 
     // Ensures built-in catalog parsing works and key model mappings stay stable.
     #[test]

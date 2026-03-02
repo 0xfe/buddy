@@ -5,10 +5,10 @@
 
 use crate::api::policy;
 use crate::auth::{
-    load_provider_tokens, login_provider_key_for_base_url, refresh_openai_tokens_with_client,
+    load_provider_tokens, login_provider_key, refresh_openai_tokens_with_client,
     save_provider_tokens,
 };
-use crate::config::AuthMode;
+use crate::config::{AuthMode, ModelProvider};
 use crate::error::ApiError;
 
 /// Resolve the bearer token used for outbound API requests.
@@ -20,6 +20,7 @@ use crate::error::ApiError;
 pub(super) async fn resolve_bearer_token(
     http: &reqwest::Client,
     base_url: &str,
+    provider: ModelProvider,
     auth: AuthMode,
     api_key: &str,
     profile: &str,
@@ -32,12 +33,12 @@ pub(super) async fn resolve_bearer_token(
     if !policy::uses_login_auth(auth, api_key) {
         return Ok(None);
     }
-    if !policy::supports_login_for_base_url(base_url) {
+    if !policy::supports_login_for_provider(provider, base_url) {
         return Err(ApiError::LoginRequired(format!(
             "Profile `{profile}` sets `auth = \"login\"`, but base URL `{base_url}` is not an OpenAI login endpoint.",
         )));
     }
-    let provider = login_provider_key_for_base_url(base_url).ok_or_else(|| {
+    let provider = login_provider_key(provider, base_url).ok_or_else(|| {
         ApiError::LoginRequired(format!(
             "Profile `{profile}` sets `auth = \"login\"`, but provider for `{base_url}` is unsupported.",
         ))

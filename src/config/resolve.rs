@@ -118,9 +118,11 @@ where
     let api_key = resolve_api_key(profile, key_override, env_lookup, read_file, &path_prefix)?;
     let base_url = normalized_string(&profile.api_base_url)
         .unwrap_or_else(|| DEFAULT_API_BASE_URL.to_string());
+    let provider = profile.provider.resolved(&base_url);
 
     Ok(ApiConfig {
         base_url,
+        provider,
         api_key,
         model: profile.resolved_model_name(profile_name),
         protocol: profile.api,

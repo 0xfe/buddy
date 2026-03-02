@@ -40,6 +40,7 @@ For the high-level architecture narrative, see [docs/design/DESIGN.md](DESIGN.md
 - Config is profile-based under `[models.<name>]`.
 - Active profile is selected via `agent.model`.
 - Per profile:
+  - `provider = "auto" | "openai" | "openrouter" | "moonshot" | "other"`
   - `api = "completions" | "responses"`
   - `auth = "api-key" | "login"`
   - `api_base_url`

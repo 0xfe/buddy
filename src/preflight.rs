@@ -4,10 +4,9 @@
 //! configuration/auth mistakes as actionable errors instead of raw API failures.
 
 use crate::auth::{
-    load_provider_tokens, login_provider_key_for_base_url, supports_openai_login, AuthError,
-    OAuthTokens,
+    load_provider_tokens, login_provider_key, supports_login_for_provider, AuthError, OAuthTokens,
 };
-use crate::config::{AuthMode, Config, ModelConfig};
+use crate::config::{AuthMode, Config, ModelConfig, ModelProvider};
 use std::net::IpAddr;
 
 /// Result payload for active-profile preflight checks.
@@ -141,17 +140,20 @@ fn validate_login_mode_with<F>(config: &Config, load_tokens: F) -> Result<Option
 where
     F: Fn(&str) -> Result<Option<OAuthTokens>, AuthError>,
 {
-    if !supports_openai_login(&config.api.base_url) {
+    if !supports_login_for_provider(config.api.provider, &config.api.base_url) {
         return Err(format!(
-            "profile `{}` uses `auth = \"login\"`, but base URL `{}` is not an OpenAI login endpoint",
-            config.api.profile, config.api.base_url
+            "profile `{}` uses `auth = \"login\"`, but provider `{}` with base URL `{}` is not login-supported",
+            config.api.profile,
+            provider_label(config.api.provider),
+            config.api.base_url
         ));
     }
 
-    let Some(provider) = login_provider_key_for_base_url(&config.api.base_url) else {
+    let Some(provider) = login_provider_key(config.api.provider, &config.api.base_url) else {
         return Err(format!(
-            "profile `{}` uses `auth = \"login\"`, but provider for base URL `{}` is unsupported",
-            config.api.profile, config.api.base_url
+            "profile `{}` uses `auth = \"login\"`, but provider `{}` is unsupported",
+            config.api.profile,
+            provider_label(config.api.provider)
         ));
     };
 
@@ -165,6 +167,17 @@ where
             "failed to load login credentials for provider `{}`: {err}",
             provider
         )),
+    }
+}
+
+/// Stable display label for provider enum values.
+fn provider_label(provider: ModelProvider) -> &'static str {
+    match provider {
+        ModelProvider::Auto => "auto",
+        ModelProvider::Openai => "openai",
+        ModelProvider::Openrouter => "openrouter",
+        ModelProvider::Moonshot => "moonshot",
+        ModelProvider::Other => "other",
     }
 }
 
@@ -222,6 +235,7 @@ mod tests {
             "test".to_string(),
             ModelConfig {
                 api_base_url: "https://api.example.com/v1".to_string(),
+                provider: ModelProvider::Other,
                 api: ApiProtocol::Completions,
                 auth: AuthMode::ApiKey,
                 api_key: String::new(),
@@ -260,6 +274,7 @@ mod tests {
         let mut cfg = Config::default();
         cfg.api.profile = "gpt-codex".to_string();
         cfg.api.auth = AuthMode::Login;
+        cfg.api.provider = ModelProvider::Openai;
         cfg.api.base_url = "https://api.openai.com/v1".to_string();
         cfg.api.model = "gpt-5.3-codex".to_string();
         let warning = validate_login_mode_with(&cfg, |_provider| Ok(None))
@@ -273,5 +288,18 @@ mod tests {
             "warning: {}",
             report.warnings[0]
         );
+    }
+
+    // Explicit non-openai provider should disable login mode even on openai-looking URLs.
+    #[test]
+    fn preflight_rejects_login_when_provider_override_is_not_openai() {
+        let mut cfg = Config::default();
+        cfg.api.profile = "gpt-codex".to_string();
+        cfg.api.auth = AuthMode::Login;
+        cfg.api.provider = ModelProvider::Openrouter;
+        cfg.api.base_url = "https://api.openai.com/v1".to_string();
+        cfg.api.model = "gpt-5.3-codex".to_string();
+        let err = validate_login_mode_with(&cfg, |_provider| Ok(None)).expect_err("must fail");
+        assert!(err.contains("not login-supported"), "err={err}");
     }
 }

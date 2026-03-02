@@ -108,11 +108,12 @@ pub(crate) fn model_picker_options(config: &Config, names: &[String]) -> Vec<Str
         };
         let api_model = resolved_profile_api_model(profile, name);
         let value = format!(
-            "{}.{} {} | {} | {:?} | {:?}",
+            "{}.{} {} | {} | {:?} | {:?} | {:?}",
             idx + 1,
             marker,
             api_model,
             profile.api_base_url.trim(),
+            profile.provider,
             profile.api,
             profile.auth
         );

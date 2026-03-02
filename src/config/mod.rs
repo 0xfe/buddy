@@ -31,8 +31,8 @@ use defaults::{
 use types::FileConfig;
 pub use types::{
     AgentConfig, ApiConfig, ApiProtocol, AuthMode, Config, ConfigDiagnostics, DisplayConfig,
-    GlobalConfigInitResult, LoadedConfig, ModelConfig, NetworkConfig, ThemeOverrideConfig,
-    TmuxConfig, ToolsConfig,
+    GlobalConfigInitResult, LoadedConfig, ModelConfig, ModelProvider, NetworkConfig,
+    ThemeOverrideConfig, TmuxConfig, ToolsConfig,
 };
 
 /// Load configuration from disk and environment.
@@ -190,6 +190,7 @@ mod tests {
         assert_eq!(c.agent.name, "agent-mo");
         assert_eq!(c.agent.model, "gpt-spark");
         assert_eq!(c.api.base_url, "https://api.openai.com/v1");
+        assert_eq!(c.api.provider, ModelProvider::Openai);
         assert_eq!(c.api.model, "gpt-5.3-codex-spark");
         assert_eq!(c.api.protocol, ApiProtocol::Responses);
         assert_eq!(c.api.auth, AuthMode::Login);
@@ -230,6 +231,7 @@ mod tests {
         assert_eq!(c.agent.model, "kimi");
         assert_eq!(c.api.model, "kimi");
         assert_eq!(c.api.base_url, "https://api.moonshot.ai/v1");
+        assert_eq!(c.api.provider, ModelProvider::Moonshot);
         assert!(!c.tools.shell_confirm);
         assert!(c.display.color);
         assert!(c.display.persist_history);
@@ -270,6 +272,22 @@ mod tests {
                 .map(String::as_str),
             Some("#112233")
         );
+    }
+
+    // Verifies explicit provider field in profile config overrides URL heuristics.
+    #[test]
+    fn parse_profile_provider_override() {
+        let toml = r#"
+            [models.custom]
+            api_base_url = "https://api.openai.com/v1"
+            provider = "openrouter"
+            api_key = "k"
+
+            [agent]
+            model = "custom"
+        "#;
+        let c = parse_file_config_for_test(toml).unwrap();
+        assert_eq!(c.api.provider, ModelProvider::Openrouter);
     }
 
     // Verifies tool security policy fields deserialize correctly from TOML.

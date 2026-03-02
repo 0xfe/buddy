@@ -18,7 +18,8 @@ pub use openai::{
     start_openai_device_login,
 };
 pub use provider::{
-    login_provider_key_for_base_url, openai_login_runtime_base_url, supports_openai_login,
+    login_provider_key, login_provider_key_for_base_url, openai_login_runtime_base_url,
+    supports_login_for_provider, supports_openai_login,
 };
 pub use store::{
     default_auth_store_path, has_legacy_profile_token_records, load_profile_tokens,
@@ -132,6 +133,25 @@ mod tests {
         );
         assert_eq!(
             login_provider_key_for_base_url("https://openrouter.ai/api/v1"),
+            None
+        );
+    }
+
+    // Verifies explicit provider selection can enable login support regardless of URL heuristics.
+    #[test]
+    fn provider_key_resolution_supports_explicit_provider_override() {
+        assert_eq!(
+            login_provider_key(
+                crate::config::ModelProvider::Openai,
+                "https://example.invalid/v1"
+            ),
+            Some("openai")
+        );
+        assert_eq!(
+            login_provider_key(
+                crate::config::ModelProvider::Openrouter,
+                "https://api.openai.com/v1"
+            ),
             None
         );
     }

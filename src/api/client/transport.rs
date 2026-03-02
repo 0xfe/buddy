@@ -3,7 +3,7 @@
 use crate::api::completions;
 use crate::api::policy;
 use crate::api::responses::{self, ResponsesRequestOptions};
-use crate::config::{ApiProtocol, AuthMode};
+use crate::config::{ApiProtocol, AuthMode, ModelProvider};
 use crate::error::ApiError;
 use crate::types::{ChatRequest, ChatResponse};
 use std::time::Duration;
@@ -21,6 +21,7 @@ pub(super) fn build_http_client(timeout: Duration) -> reqwest::Client {
 pub(super) async fn dispatch_request(
     http: &reqwest::Client,
     protocol: ApiProtocol,
+    provider: ModelProvider,
     auth: AuthMode,
     api_key: &str,
     base_url: &str,
@@ -29,10 +30,17 @@ pub(super) async fn dispatch_request(
 ) -> Result<ChatResponse, ApiError> {
     // Dispatch by wire protocol while keeping a single normalized return type.
     match protocol {
-        ApiProtocol::Completions => completions::request(http, base_url, request, bearer).await,
+        ApiProtocol::Completions => {
+            completions::request(http, base_url, provider, request, bearer).await
+        }
         ApiProtocol::Responses => {
-            let options: ResponsesRequestOptions =
-                policy::responses_request_options(base_url, auth, api_key, &request.model);
+            let options: ResponsesRequestOptions = policy::responses_request_options(
+                provider,
+                base_url,
+                auth,
+                api_key,
+                &request.model,
+            );
             responses::request(http, base_url, request, bearer, options).await
         }
     }

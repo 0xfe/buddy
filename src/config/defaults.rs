@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{ApiProtocol, AuthMode, ModelConfig};
+use super::{ApiProtocol, AuthMode, ModelConfig, ModelProvider};
 
 /// Embedded default `buddy.toml` template written by `buddy init`.
 pub(super) const DEFAULT_BUDDY_CONFIG_TEMPLATE: &str = include_str!("../templates/buddy.toml");
@@ -30,6 +30,7 @@ pub(super) fn default_models_map() -> BTreeMap<String, ModelConfig> {
         DEFAULT_MODEL_PROFILE_NAME.to_string(),
         ModelConfig {
             api_base_url: DEFAULT_API_BASE_URL.to_string(),
+            provider: ModelProvider::Openai,
             api: ApiProtocol::Responses,
             auth: AuthMode::Login,
             api_key: String::new(),
@@ -44,6 +45,7 @@ pub(super) fn default_models_map() -> BTreeMap<String, ModelConfig> {
         "gpt-codex".to_string(),
         ModelConfig {
             api_base_url: DEFAULT_API_BASE_URL.to_string(),
+            provider: ModelProvider::Openai,
             api: ApiProtocol::Responses,
             auth: AuthMode::Login,
             api_key: String::new(),
@@ -58,6 +60,7 @@ pub(super) fn default_models_map() -> BTreeMap<String, ModelConfig> {
         "openrouter-deepseek".to_string(),
         ModelConfig {
             api_base_url: "https://openrouter.ai/api/v1".to_string(),
+            provider: ModelProvider::Openrouter,
             api: ApiProtocol::Completions,
             auth: AuthMode::ApiKey,
             api_key: String::new(),
@@ -72,6 +75,7 @@ pub(super) fn default_models_map() -> BTreeMap<String, ModelConfig> {
         "openrouter-glm".to_string(),
         ModelConfig {
             api_base_url: "https://openrouter.ai/api/v1".to_string(),
+            provider: ModelProvider::Openrouter,
             api: ApiProtocol::Completions,
             auth: AuthMode::ApiKey,
             api_key: String::new(),
@@ -86,6 +90,7 @@ pub(super) fn default_models_map() -> BTreeMap<String, ModelConfig> {
         "kimi".to_string(),
         ModelConfig {
             api_base_url: "https://api.moonshot.ai/v1".to_string(),
+            provider: ModelProvider::Moonshot,
             api: ApiProtocol::Completions,
             auth: AuthMode::ApiKey,
             api_key: String::new(),

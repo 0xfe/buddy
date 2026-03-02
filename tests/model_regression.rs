@@ -8,7 +8,7 @@
 //! `cargo test --test model_regression -- --ignored --nocapture`
 
 use buddy::api::ApiClient;
-use buddy::auth::{load_provider_tokens, login_provider_key_for_base_url};
+use buddy::auth::{load_provider_tokens, login_provider_key};
 use buddy::config::{load_config, select_model_profile, AuthMode, Config};
 use buddy::types::{ChatRequest, Message};
 use std::fs;
@@ -192,10 +192,10 @@ fn profile_auth_preflight(config: &Config, profile_name: &str) -> Result<(), Str
     }
 
     if config.api.auth == AuthMode::Login && config.api.api_key.trim().is_empty() {
-        let provider = login_provider_key_for_base_url(&config.api.base_url).ok_or_else(|| {
+        let provider = login_provider_key(config.api.provider, &config.api.base_url).ok_or_else(|| {
             format!(
-                "login auth profile `{profile_name}` has unsupported base URL `{}`",
-                config.api.base_url
+                "login auth profile `{profile_name}` has unsupported provider/base URL `{:?}` + `{}`",
+                config.api.provider, config.api.base_url
             )
         })?;
 

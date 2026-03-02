@@ -11,7 +11,7 @@ mod transport;
 
 use super::policy;
 use super::ModelClient;
-use crate::config::{ApiConfig, ApiProtocol};
+use crate::config::{ApiConfig, ApiProtocol, ModelProvider};
 use crate::error::ApiError;
 use crate::types::{ChatRequest, ChatResponse};
 use async_trait::async_trait;
@@ -29,6 +29,8 @@ pub struct ApiClient {
     api_key: String,
     /// Selected wire protocol.
     protocol: ApiProtocol,
+    /// Resolved provider family for compatibility/auth behavior.
+    provider: ModelProvider,
     /// Selected auth mode for this profile.
     auth: crate::config::AuthMode,
     /// Profile name used for diagnostics and login messaging.
@@ -55,6 +57,7 @@ impl ApiClient {
             base_url: config.base_url.trim_end_matches('/').to_string(),
             api_key: config.api_key.trim().to_string(),
             protocol: config.protocol,
+            provider: config.provider,
             auth: config.auth,
             profile: config.profile.clone(),
             retry_policy,
@@ -65,10 +68,12 @@ impl ApiClient {
     pub async fn chat(&self, request: &ChatRequest) -> Result<ChatResponse, ApiError> {
         // Some login flows require a different runtime base URL than the
         // configured profile URL.
-        let base_url = policy::runtime_base_url(&self.base_url, self.auth, &self.api_key);
+        let base_url =
+            policy::runtime_base_url(&self.base_url, self.provider, self.auth, &self.api_key);
         let mut bearer = auth::resolve_bearer_token(
             &self.http,
             &self.base_url,
+            self.provider,
             self.auth,
             &self.api_key,
             &self.profile,
@@ -90,6 +95,7 @@ impl ApiClient {
             bearer = auth::resolve_bearer_token(
                 &self.http,
                 &self.base_url,
+                self.provider,
                 self.auth,
                 &self.api_key,
                 &self.profile,
@@ -124,6 +130,7 @@ impl ApiClient {
         transport::dispatch_request(
             &self.http,
             self.protocol,
+            self.provider,
             self.auth,
             &self.api_key,
             base_url,

@@ -1,50 +1,21 @@
 //! Provider/model compatibility helpers for request-shape and reasoning behavior.
 //!
-//! OpenAI-compatible providers differ in how they expose reasoning:
-//! - OpenAI `/responses` can emit reasoning summary events when requested.
-//! - OpenRouter `/chat/completions` often needs explicit reasoning flags.
-//! - Moonshot exposes `reasoning_content` on chat-completions responses.
-//!
-//! This module centralizes small provider/model conditionals so protocol modules
-//! stay focused on transport and parsing.
+//! Provider behavior is driven by explicit profile configuration when present.
+//! `provider = "auto"` falls back to base-URL inference.
 
-use crate::auth::supports_openai_login;
+use crate::config::ModelProvider;
 use serde_json::{json, Value};
 
-/// Provider family inferred from the configured API base URL.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ProviderFamily {
-    /// OpenAI-hosted endpoints (`api.openai.com`, ChatGPT codex runtime).
-    OpenAI,
-    /// OpenRouter proxy endpoints.
-    OpenRouter,
-    /// Moonshot native endpoints.
-    Moonshot,
-    /// Any other OpenAI-compatible provider.
-    Other,
-}
-
-/// Infer provider family from an API base URL.
-pub(crate) fn provider_family(base_url: &str) -> ProviderFamily {
-    let normalized = base_url.trim().to_ascii_lowercase();
-    if normalized.contains("openrouter.ai") {
-        return ProviderFamily::OpenRouter;
-    }
-    if normalized.contains("moonshot.ai") {
-        return ProviderFamily::Moonshot;
-    }
-    if supports_openai_login(base_url) {
-        return ProviderFamily::OpenAI;
-    }
-    ProviderFamily::Other
-}
-
 /// Apply provider/model-specific request body overrides for `/chat/completions`.
-pub(crate) fn apply_completions_overrides(base_url: &str, model: &str, payload: &mut Value) {
+pub(crate) fn apply_completions_overrides(
+    provider: ModelProvider,
+    model: &str,
+    payload: &mut Value,
+) {
     if !payload.is_object() {
         return;
     }
-    if provider_family(base_url) != ProviderFamily::OpenRouter {
+    if provider != ModelProvider::Openrouter {
         return;
     }
     if !is_openrouter_reasoning_profile(model) {
@@ -71,8 +42,8 @@ pub(crate) fn apply_completions_overrides(base_url: &str, model: &str, payload: 
 }
 
 /// Return default `/responses` reasoning config for this provider/model pair.
-pub(crate) fn responses_reasoning_config(base_url: &str, model: &str) -> Option<Value> {
-    if provider_family(base_url) != ProviderFamily::OpenAI {
+pub(crate) fn responses_reasoning_config(provider: ModelProvider, model: &str) -> Option<Value> {
+    if provider != ModelProvider::Openai {
         return None;
     }
     if !is_openai_reasoning_model(model) {
@@ -106,28 +77,28 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    // Verifies provider inference for OpenAI, OpenRouter, Moonshot, and unknown hosts.
+    // Verifies explicit provider wins over base-URL heuristics and auto infers by URL.
     #[test]
-    fn provider_family_detection() {
+    fn resolved_provider_prefers_explicit_or_auto_infers() {
         assert_eq!(
-            provider_family("https://api.openai.com/v1"),
-            ProviderFamily::OpenAI
+            ModelProvider::Auto.resolved("https://api.openai.com/v1"),
+            ModelProvider::Openai
         );
         assert_eq!(
-            provider_family("https://chatgpt.com/backend-api/codex"),
-            ProviderFamily::OpenAI
+            ModelProvider::Auto.resolved("https://openrouter.ai/api/v1"),
+            ModelProvider::Openrouter
         );
         assert_eq!(
-            provider_family("https://openrouter.ai/api/v1"),
-            ProviderFamily::OpenRouter
+            ModelProvider::Auto.resolved("https://api.moonshot.ai/v1"),
+            ModelProvider::Moonshot
         );
         assert_eq!(
-            provider_family("https://api.moonshot.ai/v1"),
-            ProviderFamily::Moonshot
+            ModelProvider::Auto.resolved("https://example.invalid/v1"),
+            ModelProvider::Other
         );
         assert_eq!(
-            provider_family("https://example.invalid/v1"),
-            ProviderFamily::Other
+            ModelProvider::Openrouter.resolved("https://api.openai.com/v1"),
+            ModelProvider::Openrouter
         );
     }
 
@@ -139,7 +110,7 @@ mod tests {
             "messages": [{"role":"user","content":"hi"}]
         });
         apply_completions_overrides(
-            "https://openrouter.ai/api/v1",
+            ModelProvider::Openrouter,
             "deepseek/deepseek-v3.2",
             &mut payload,
         );
@@ -150,14 +121,14 @@ mod tests {
     // Verifies OpenAI reasoning-summary config is enabled for codex/reasoning models only.
     #[test]
     fn responses_reasoning_config_only_for_openai_reasoning_models() {
-        let openai = responses_reasoning_config("https://api.openai.com/v1", "gpt-5.3-codex");
+        let openai = responses_reasoning_config(ModelProvider::Openai, "gpt-5.3-codex");
         assert_eq!(openai, Some(json!({"summary":"auto"})));
 
-        let non_reasoning = responses_reasoning_config("https://api.openai.com/v1", "gpt-4o-mini");
+        let non_reasoning = responses_reasoning_config(ModelProvider::Openai, "gpt-4o-mini");
         assert!(non_reasoning.is_none());
 
         let openrouter =
-            responses_reasoning_config("https://openrouter.ai/api/v1", "deepseek/deepseek-v3.2");
+            responses_reasoning_config(ModelProvider::Openrouter, "deepseek/deepseek-v3.2");
         assert!(openrouter.is_none());
     }
 }

@@ -116,6 +116,7 @@ Legacy compatibility:
 ```toml
 [models.gpt-codex]
 api_base_url = "https://api.openai.com/v1"
+provider = "openai"                         # auto | openai | openrouter | moonshot | other
 api = "responses"                           # responses | completions
 auth = "login"                              # login | api-key
 # Only one may be set: api_key, api_key_env, api_key_file.
@@ -127,12 +128,14 @@ model = "gpt-5.3-codex"
 
 [models.gpt-spark]
 api_base_url = "https://api.openai.com/v1"
+provider = "openai"
 api = "responses"
 auth = "login"
 model = "gpt-5.3-codex-spark"
 
 [models.openrouter-deepseek]
 api_base_url = "https://openrouter.ai/api/v1"
+provider = "openrouter"
 api = "completions"
 auth = "api-key"
 api_key_env = "OPENROUTER_API_KEY"
@@ -140,6 +143,7 @@ model = "deepseek/deepseek-v3.2"
 
 [models.openrouter-glm]
 api_base_url = "https://openrouter.ai/api/v1"
+provider = "openrouter"
 api = "completions"
 auth = "api-key"
 api_key_env = "OPENROUTER_API_KEY"
@@ -147,6 +151,7 @@ model = "z-ai/glm-5"
 
 [models.kimi]
 api_base_url = "https://api.moonshot.ai/v1"
+provider = "moonshot"
 api = "completions"
 auth = "api-key"
 api_key_env = "MOONSHOT_API_KEY"

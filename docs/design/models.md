@@ -21,6 +21,12 @@ Buddy currently ships these default profiles:
 | `openrouter-glm` | OpenRouter | `/chat/completions` | `include_reasoning: true`, `reasoning: {}` | `message.reasoning`, `message.reasoning_details`, reasoning aliases |
 | `kimi` | Moonshot | `/chat/completions` | no override (provider default thinking behavior) | `message.reasoning_content` and related reasoning keys |
 
+Each profile can set:
+
+- `provider = "openai" | "openrouter" | "moonshot" | "other" | "auto"`
+- `auto` is the default and falls back to base-URL inference.
+- explicit provider values override URL heuristics for compatibility behavior.
+
 ## Why This Exists
 
 OpenAI-compatible APIs are not behavior-compatible in reasoning output:
@@ -34,6 +40,7 @@ Buddy preserves raw provider fields in message `extra`, then derives display tex
 - extracts reasoning text from known nested structures (`summary`, `summary_text`, `reasoning_text`, `reasoning_details`)
 - parses JSON-encoded reasoning strings when providers return embedded JSON blobs
 - suppresses placeholder/noise values (`null`, `none`, `[]`, `{}`)
+- prefers provider-specific reasoning keys first (`reasoning_stream`, `reasoning_details`, `reasoning_content`, etc.), then falls back to generic reasoning-key extraction
 
 ## OpenAI (`/responses`) Notes
 
@@ -96,6 +103,12 @@ Coverage is split across:
   - `cargo test --test model_regression -- --ignored --nocapture`
   - probes all default profiles end-to-end
   - verifies assistant output is non-empty and reasoning payloads do not degrade to placeholder noise values
+
+Token estimation:
+
+- Buddy keeps a per-model runtime calibration multiplier.
+- Raw heuristic estimates (character-based) are adjusted using observed provider `usage.prompt_tokens`.
+- Calibration is bounded and smoothed to avoid overreacting to one outlier response.
 
 ## Sources
 

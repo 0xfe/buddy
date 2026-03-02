@@ -1,6 +1,7 @@
 //! `/chat/completions` protocol request/parse helpers.
 
 use crate::api::{parse_retry_after_secs, provider_compat};
+use crate::config::ModelProvider;
 use crate::error::ApiError;
 use crate::types::{ChatRequest, ChatResponse};
 use serde_json::Value;
@@ -9,11 +10,12 @@ use serde_json::Value;
 pub(crate) async fn request(
     http: &reqwest::Client,
     base_url: &str,
+    provider: ModelProvider,
     request: &ChatRequest,
     bearer: Option<&str>,
 ) -> Result<ChatResponse, ApiError> {
     let url = format!("{base_url}/chat/completions");
-    let payload = build_completions_payload(base_url, request)?;
+    let payload = build_completions_payload(provider, request)?;
     let mut req = http.post(&url).json(&payload);
     if let Some(token) = bearer.filter(|value| !value.trim().is_empty()) {
         req = req.header("Authorization", format!("Bearer {token}"));
@@ -32,10 +34,13 @@ pub(crate) async fn request(
 }
 
 /// Build a `/chat/completions` payload with provider-specific compatibility tweaks.
-fn build_completions_payload(base_url: &str, request: &ChatRequest) -> Result<Value, ApiError> {
+fn build_completions_payload(
+    provider: ModelProvider,
+    request: &ChatRequest,
+) -> Result<Value, ApiError> {
     let mut payload = serde_json::to_value(request)
         .map_err(|err| ApiError::InvalidResponse(format!("invalid request payload: {err}")))?;
-    provider_compat::apply_completions_overrides(base_url, &request.model, &mut payload);
+    provider_compat::apply_completions_overrides(provider, &request.model, &mut payload);
     Ok(payload)
 }
 
@@ -151,7 +156,7 @@ mod tests {
             temperature: None,
             top_p: None,
         };
-        let payload = build_completions_payload("https://openrouter.ai/api/v1", &req).expect("ok");
+        let payload = build_completions_payload(ModelProvider::Openrouter, &req).expect("ok");
         assert_eq!(payload["include_reasoning"], true);
         assert_eq!(payload["reasoning"]["enabled"], true);
     }
