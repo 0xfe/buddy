@@ -5,10 +5,14 @@ BINDIR ?= $(PREFIX)/bin
 BIN_NAME := buddy
 DIST_DIR ?= dist
 RELEASE_REMOTE ?= origin
+BUILD_TARGET ?=
 
 CRATE_VERSION := $(shell awk -F'"' '/^version = / { print $$2; exit }' Cargo.toml)
 HOST_TRIPLE := $(shell rustc -vV | awk '/^host:/ { print $$2; exit }')
-ARTIFACT_STEM := $(BIN_NAME)-v$(CRATE_VERSION)-$(HOST_TRIPLE)
+TARGET_TRIPLE := $(if $(BUILD_TARGET),$(BUILD_TARGET),$(HOST_TRIPLE))
+TARGET_RELEASE_DIR := $(if $(BUILD_TARGET),target/$(BUILD_TARGET)/release,target/release)
+TARGET_BIN := $(TARGET_RELEASE_DIR)/$(BIN_NAME)
+ARTIFACT_STEM := $(BIN_NAME)-v$(CRATE_VERSION)-$(TARGET_TRIPLE)
 RELEASE_TAG := v$(CRATE_VERSION)
 SHA256_CMD := $(shell if command -v shasum >/dev/null 2>&1; then echo "shasum -a 256"; elif command -v sha256sum >/dev/null 2>&1; then echo "sha256sum"; else echo ""; fi)
 
@@ -28,7 +32,7 @@ help:
 	@echo "  make clippy              Run clippy with warnings as errors"
 	@echo "  make check               Run fmt-check + clippy + test"
 	@echo "  make release             Run checks and create release artifact"
-	@echo "  make release-artifacts   Package release tarball + checksum"
+	@echo "  make release-artifacts   Package release tarball + checksum (BUILD_TARGET=<triple> optional)"
 	@echo "  make install-from-release Install from latest GitHub release (curl-style script)"
 	@echo "  make install             Install binary to ~/.local/bin"
 	@echo "  make version             Print Cargo.toml version"
@@ -86,10 +90,15 @@ check: fmt-check clippy test
 
 release: check release-artifacts
 
-release-artifacts: build
-	@if [[ -z "$(HOST_TRIPLE)" ]]; then echo "error: unable to resolve host triple"; exit 1; fi
+release-artifacts:
+	@if [[ -z "$(TARGET_TRIPLE)" ]]; then echo "error: unable to resolve target triple"; exit 1; fi
+	@if [[ -n "$(BUILD_TARGET)" ]]; then \
+		cargo build --release --target "$(BUILD_TARGET)"; \
+	else \
+		cargo build --release; \
+	fi
 	mkdir -p "$(DIST_DIR)"
-	cp "target/release/$(BIN_NAME)" "$(DIST_DIR)/$(BIN_NAME)"
+	cp "$(TARGET_BIN)" "$(DIST_DIR)/$(BIN_NAME)"
 	tar -C "$(DIST_DIR)" -czf "$(DIST_DIR)/$(ARTIFACT_STEM).tar.gz" "$(BIN_NAME)"
 	rm -f "$(DIST_DIR)/$(BIN_NAME)"
 	@if [[ -z "$(SHA256_CMD)" ]]; then \

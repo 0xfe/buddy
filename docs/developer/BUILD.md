@@ -113,7 +113,7 @@ When the tag is pushed, GitHub Actions builds and uploads artifacts for:
 
 - Linux `amd64` (`ubuntu-24.04`)
 - Linux `arm64` (`ubuntu-24.04-arm`)
-- macOS `amd64` (`macos-13`)
+- macOS `amd64` (`macos-14`, cross-target `x86_64-apple-darwin`)
 - macOS `arm64` (`macos-14`)
 
 Artifacts are published to the GitHub Release for that tag as:
@@ -147,7 +147,9 @@ make test-installer-smoke
 
 Notes:
 
-- `make release-artifacts` packages for the current machine host triple.
+- `make release-artifacts` packages for the current machine host triple by default.
+- `make release-artifacts BUILD_TARGET=<triple>` packages for an explicit target
+  (for example `x86_64-apple-darwin` on Apple Silicon CI hosts).
 - To reproduce a specific CI artifact issue, run the same commands on a host
   matching that target (Linux/macOS and `amd64`/`arm64`).
 - Optional suites remain explicit and are not part of default CI release gates:
