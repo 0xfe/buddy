@@ -38,6 +38,7 @@ pub(super) fn default_models_map() -> BTreeMap<String, ModelConfig> {
             api_key_file: None,
             model: Some(DEFAULT_MODEL_ID.to_string()),
             context_limit: None,
+            reasoning_effort: Some(super::ReasoningEffort::Medium),
         },
     );
     // Alternate OpenAI profile targeting the primary codex variant.
@@ -53,6 +54,7 @@ pub(super) fn default_models_map() -> BTreeMap<String, ModelConfig> {
             api_key_file: None,
             model: Some("gpt-5.3-codex".to_string()),
             context_limit: None,
+            reasoning_effort: Some(super::ReasoningEffort::Medium),
         },
     );
     // OpenRouter profile pre-wired for DeepSeek.
@@ -68,6 +70,7 @@ pub(super) fn default_models_map() -> BTreeMap<String, ModelConfig> {
             api_key_file: None,
             model: Some("deepseek/deepseek-v3.2".to_string()),
             context_limit: None,
+            reasoning_effort: None,
         },
     );
     // OpenRouter profile pre-wired for GLM family models.
@@ -83,6 +86,7 @@ pub(super) fn default_models_map() -> BTreeMap<String, ModelConfig> {
             api_key_file: None,
             model: Some("z-ai/glm-5".to_string()),
             context_limit: None,
+            reasoning_effort: None,
         },
     );
     // Moonshot Kimi profile with explicit provider endpoint.
@@ -98,6 +102,7 @@ pub(super) fn default_models_map() -> BTreeMap<String, ModelConfig> {
             api_key_file: None,
             model: Some("kimi-k2.5".to_string()),
             context_limit: None,
+            reasoning_effort: None,
         },
     );
     // Anthropic Claude Sonnet profile (API-key auth only).
@@ -113,6 +118,7 @@ pub(super) fn default_models_map() -> BTreeMap<String, ModelConfig> {
             api_key_file: None,
             model: Some("claude-sonnet-4-5".to_string()),
             context_limit: None,
+            reasoning_effort: None,
         },
     );
     // Anthropic Claude Haiku profile (API-key auth only).
@@ -128,6 +134,7 @@ pub(super) fn default_models_map() -> BTreeMap<String, ModelConfig> {
             api_key_file: None,
             model: Some("claude-haiku-4-5".to_string()),
             context_limit: None,
+            reasoning_effort: None,
         },
     );
     models

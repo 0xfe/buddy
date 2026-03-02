@@ -23,7 +23,7 @@ If you're working with complicated tooling/infrastructure/workflows, add or upda
 ## AI state workflow
 
 - Treat `ai-state.md` as a fast cache for the next AI: current architecture map, active defaults, and immediate gotchas.
-- Do not keep a long chronological changelog there. Replace stale sections instead of appending.
+- Do not keep a long chronological changelog there. Replace stale sections instead of appending. Use the git commit log for historical context.
 - Move deep operational guidance to `docs/tips/*.md` and long-lived planning details to `docs/plans/`.
 - Aim for a quick-scan document (roughly <= 150 lines unless there is a strong reason to exceed it).
 

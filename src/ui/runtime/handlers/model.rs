@@ -30,6 +30,7 @@ pub(in crate::ui::runtime) fn handle_model(
             base_url,
             api,
             auth,
+            reasoning_effort,
         } => {
             if let Err(err) = select_model_profile(ctx.config, &profile) {
                 ctx.renderer.warn(&format!(
@@ -44,6 +45,9 @@ pub(in crate::ui::runtime) fn handle_model(
                 .field("api", &format!("{api:?}").to_ascii_lowercase());
             ctx.renderer
                 .field("auth", &format!("{auth:?}").to_ascii_lowercase());
+            if let Some(effort) = reasoning_effort {
+                ctx.renderer.field("reasoning_effort", effort.as_str());
+            }
             ctx.renderer.field(
                 "context_limit",
                 &ctx.config

@@ -421,7 +421,10 @@ async fn handle_runtime_command(
                 }),
             );
         }
-        RuntimeCommand::SwitchModel { profile } => {
+        RuntimeCommand::SwitchModel {
+            profile,
+            reasoning_effort,
+        } => {
             if active_task.is_some() {
                 emit_event(
                     event_tx,
@@ -448,6 +451,14 @@ async fn handle_runtime_command(
                 );
                 return false;
             }
+            // Optional interactive override from `/model` picker.
+            if let Some(override_effort) = reasoning_effort {
+                if let Some(profile_cfg) = next.models.get_mut(&profile) {
+                    profile_cfg.reasoning_effort = Some(override_effort);
+                }
+                next.api.reasoning_effort = Some(override_effort);
+            }
+
             let preflight = match validate_active_profile_ready(&next) {
                 Ok(report) => report,
                 Err(err) => {
@@ -504,6 +515,7 @@ async fn handle_runtime_command(
                     base_url: next.api.base_url.clone(),
                     api: next.api.protocol,
                     auth: next.api.auth,
+                    reasoning_effort: next.api.reasoning_effort,
                 }),
             );
         }
@@ -1301,6 +1313,7 @@ mod tests {
                 api_key_file: None,
                 model: Some("unit-test-model".to_string()),
                 context_limit: None,
+                reasoning_effort: None,
             },
         );
         let agent = Agent::with_client(
@@ -1315,6 +1328,7 @@ mod tests {
         handle
             .send(RuntimeCommand::SwitchModel {
                 profile: "unit-switch-target".to_string(),
+                reasoning_effort: None,
             })
             .await
             .expect("send switch");

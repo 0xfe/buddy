@@ -4,7 +4,7 @@ use crate::api::anthropic;
 use crate::api::completions;
 use crate::api::policy;
 use crate::api::responses::{self, ResponsesRequestOptions};
-use crate::config::{ApiProtocol, AuthMode, ModelProvider};
+use crate::config::{ApiProtocol, AuthMode, ModelProvider, ReasoningEffort};
 use crate::error::ApiError;
 use crate::types::{ChatRequest, ChatResponse};
 use std::time::Duration;
@@ -27,6 +27,8 @@ pub(super) struct DispatchRequest<'a> {
     pub(super) request: &'a ChatRequest,
     /// Optional resolved bearer token.
     pub(super) bearer: Option<&'a str>,
+    /// Optional reasoning effort override from active profile config.
+    pub(super) reasoning_effort: Option<ReasoningEffort>,
 }
 
 /// Build an HTTP client with timeout applied.
@@ -49,6 +51,7 @@ pub(super) async fn dispatch_request(args: DispatchRequest<'_>) -> Result<ChatRe
         base_url,
         request,
         bearer,
+        reasoning_effort,
     } = args;
     // Dispatch by wire protocol while keeping a single normalized return type.
     match protocol {
@@ -62,6 +65,7 @@ pub(super) async fn dispatch_request(args: DispatchRequest<'_>) -> Result<ChatRe
                 auth,
                 api_key,
                 &request.model,
+                reasoning_effort,
             );
             responses::request(http, base_url, request, bearer, options).await
         }

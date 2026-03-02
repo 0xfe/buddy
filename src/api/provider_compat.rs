@@ -3,7 +3,7 @@
 //! Provider behavior is driven by explicit profile configuration when present.
 //! `provider = "auto"` falls back to base-URL inference.
 
-use crate::config::ModelProvider;
+use crate::config::{supported_reasoning_efforts, ApiProtocol, ModelProvider, ReasoningEffort};
 use serde_json::{json, Value};
 
 /// Apply provider/model-specific request body overrides for `/chat/completions`.
@@ -42,15 +42,26 @@ pub(crate) fn apply_completions_overrides(
 }
 
 /// Return default `/responses` reasoning config for this provider/model pair.
-pub(crate) fn responses_reasoning_config(provider: ModelProvider, model: &str) -> Option<Value> {
-    if provider != ModelProvider::Openai {
+pub(crate) fn responses_reasoning_config(
+    provider: ModelProvider,
+    model: &str,
+    reasoning_effort: Option<ReasoningEffort>,
+) -> Option<Value> {
+    let supported = supported_reasoning_efforts(provider, ApiProtocol::Responses, model);
+    if supported.is_empty() {
         return None;
     }
-    if !is_openai_reasoning_model(model) {
-        return None;
-    }
+
     // Request reasoning summaries so the REPL can render useful thinking text.
-    Some(json!({ "summary": "auto" }))
+    let mut reasoning = serde_json::Map::new();
+    reasoning.insert("summary".to_string(), Value::String("auto".to_string()));
+    if let Some(effort) = reasoning_effort.filter(|candidate| supported.contains(candidate)) {
+        reasoning.insert(
+            "effort".to_string(),
+            Value::String(effort.as_str().to_string()),
+        );
+    }
+    Some(Value::Object(reasoning))
 }
 
 /// Return default OpenAI built-in tool declarations for `/responses` requests.
@@ -67,7 +78,7 @@ pub(crate) fn responses_builtin_tools(
     if login_mode {
         return Vec::new();
     }
-    if !is_openai_reasoning_model(model) {
+    if supported_reasoning_efforts(provider, ApiProtocol::Responses, model).is_empty() {
         return Vec::new();
     }
 
@@ -86,16 +97,6 @@ fn is_openrouter_reasoning_profile(model: &str) -> bool {
         || normalized.contains("glm")
         || normalized.contains("kimi")
         || normalized.contains("reason")
-}
-
-/// Return true for model IDs that commonly support OpenAI reasoning summaries.
-fn is_openai_reasoning_model(model: &str) -> bool {
-    let normalized = model.trim().to_ascii_lowercase();
-    normalized.contains("gpt-5")
-        || normalized.contains("codex")
-        || normalized.starts_with("o1")
-        || normalized.starts_with("o3")
-        || normalized.starts_with("o4")
 }
 
 #[cfg(test)]
@@ -151,14 +152,21 @@ mod tests {
     // Verifies OpenAI reasoning-summary config is enabled for codex/reasoning models only.
     #[test]
     fn responses_reasoning_config_only_for_openai_reasoning_models() {
-        let openai = responses_reasoning_config(ModelProvider::Openai, "gpt-5.3-codex");
-        assert_eq!(openai, Some(json!({"summary":"auto"})));
+        let openai = responses_reasoning_config(
+            ModelProvider::Openai,
+            "gpt-5.3-codex",
+            Some(ReasoningEffort::High),
+        );
+        assert_eq!(openai, Some(json!({"summary":"auto","effort":"high"})));
 
-        let non_reasoning = responses_reasoning_config(ModelProvider::Openai, "gpt-4o-mini");
+        let non_reasoning = responses_reasoning_config(ModelProvider::Openai, "gpt-4o-mini", None);
         assert!(non_reasoning.is_none());
 
-        let openrouter =
-            responses_reasoning_config(ModelProvider::Openrouter, "deepseek/deepseek-v3.2");
+        let openrouter = responses_reasoning_config(
+            ModelProvider::Openrouter,
+            "deepseek/deepseek-v3.2",
+            Some(ReasoningEffort::High),
+        );
         assert!(openrouter.is_none());
     }
 
@@ -180,7 +188,11 @@ mod tests {
     // Verifies non-OpenAI providers never inherit OpenAI Responses-only defaults.
     #[test]
     fn anthropic_provider_never_enables_openai_responses_defaults() {
-        let reasoning = responses_reasoning_config(ModelProvider::Anthropic, "claude-sonnet-4-5");
+        let reasoning = responses_reasoning_config(
+            ModelProvider::Anthropic,
+            "claude-sonnet-4-5",
+            Some(ReasoningEffort::High),
+        );
         assert!(reasoning.is_none());
 
         let builtins =
@@ -193,5 +205,17 @@ mod tests {
     fn responses_builtin_tools_disabled_in_login_mode() {
         let builtins = responses_builtin_tools(ModelProvider::Openai, "gpt-5.3-codex", true);
         assert!(builtins.is_empty());
+    }
+
+    // Verifies unsupported effort values are ignored instead of producing invalid payloads.
+    #[test]
+    fn responses_reasoning_config_filters_unsupported_effort_values() {
+        let openai = responses_reasoning_config(
+            ModelProvider::Openai,
+            "gpt-5.1",
+            Some(ReasoningEffort::Xhigh),
+        )
+        .expect("reasoning config");
+        assert_eq!(openai, json!({"summary":"auto"}));
     }
 }

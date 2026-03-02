@@ -75,7 +75,7 @@ operators explicitly prefer snapshot pinning.
 
 | Profile | Provider | API protocol | Request tuning in Buddy | Reasoning fields consumed |
 | --- | --- | --- | --- | --- |
-| `gpt-codex`, `gpt-spark` | OpenAI | `/responses` | `reasoning: { summary: "auto" }` for reasoning-capable model IDs | `response.reasoning_*` SSE events, reasoning output items (`summary`, `content`) |
+| `gpt-codex`, `gpt-spark` | OpenAI | `/responses` | `reasoning: { summary: "auto", effort: "<selected>" }` for reasoning-capable model IDs | `response.reasoning_*` SSE events, reasoning output items (`summary`, `content`) |
 | `openrouter-deepseek` | OpenRouter | `/chat/completions` | `include_reasoning: true`, `reasoning: { enabled: true }` | `message.reasoning`, `message.reasoning_details`, reasoning aliases |
 | `openrouter-glm` | OpenRouter | `/chat/completions` | `include_reasoning: true`, `reasoning: {}` | `message.reasoning`, `message.reasoning_details`, reasoning aliases |
 | `kimi` | Moonshot | `/chat/completions` | no override (provider default thinking behavior) | `message.reasoning_content` and related reasoning keys |
@@ -112,6 +112,16 @@ Buddy requests reasoning summaries for OpenAI reasoning-capable model IDs:
 ```
 
 This improves REPL reasoning rendering for codex/gpt-5 style profiles where summary blocks may otherwise be sparse.
+
+When an OpenAI model supports configurable reasoning effort, Buddy also sends:
+
+```json
+{
+  "reasoning": { "summary": "auto", "effort": "medium" }
+}
+```
+
+Buddy’s `/model` command uses a second picker step for reasoning effort only when the selected profile supports it. Unsupported profiles skip this picker.
 
 Buddy also enables OpenAI native built-ins for GPT-5/Codex-family `/responses`
 profiles:
@@ -206,6 +216,7 @@ Pricing/cost estimation:
 - OpenAI Python SDK generated response types (reasoning config + response stream event schema):
   - https://github.com/openai/openai-python/tree/main/src/openai/types/responses
   - https://github.com/openai/openai-python/blob/main/src/openai/types/shared_params/reasoning.py
+  - https://github.com/openai/openai-python/blob/main/src/openai/types/shared/reasoning_effort.py
 - Anthropic APIs/models/tooling:
   - https://docs.anthropic.com/en/api/messages
   - https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview

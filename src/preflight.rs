@@ -1,13 +1,13 @@
 //! Runtime profile preflight validation.
 //!
 //! These checks run before startup and model switches to surface common
-//! configuration/auth mistakes as actionable errors instead of raw API failures.
+//! configuration/auth mistakes before the first model request.
 
 use crate::auth::{
     api_key_provider_key, load_provider_api_key, load_provider_tokens, login_provider_key,
     supports_login_for_provider, AuthError, OAuthTokens,
 };
-use crate::config::{AuthMode, Config, ModelConfig, ModelProvider};
+use crate::config::{supports_reasoning_effort, AuthMode, Config, ModelConfig, ModelProvider};
 use crate::tokens::model_auth_capabilities;
 use std::net::IpAddr;
 
@@ -28,11 +28,26 @@ pub fn validate_active_profile_ready(config: &Config) -> Result<ProfilePreflight
     let profile = config.models.get(&config.api.profile);
     let mut warnings = Vec::new();
     match config.api.auth {
-        AuthMode::ApiKey => validate_api_key_mode(config, profile, &base_url)?,
-        AuthMode::Login => {
-            if let Some(warning) = validate_login_mode(config)? {
+        AuthMode::ApiKey => {
+            if let Some(warning) = validate_api_key_mode(config, profile, &base_url) {
                 warnings.push(warning);
             }
+        }
+        AuthMode::Login => {
+            if let Some(warning) = validate_login_mode(config) {
+                warnings.push(warning);
+            }
+        }
+    }
+    if let Some(effort) = config.api.reasoning_effort {
+        if !supports_reasoning_effort(config.api.provider, config.api.protocol, &config.api.model) {
+            warnings.push(format!(
+                "profile `{}` sets reasoning_effort=`{}`, but model `{}` on provider `{}` does not advertise reasoning-effort controls; the override will be ignored.",
+                config.api.profile,
+                effort.as_str(),
+                config.api.model,
+                provider_label(config.api.provider)
+            ));
         }
     }
 
@@ -90,57 +105,64 @@ fn validate_api_key_mode(
     config: &Config,
     profile: Option<&ModelConfig>,
     base_url: &str,
-) -> Result<(), String> {
+) -> Option<String> {
     let caps = model_auth_capabilities(&config.api.model);
     if !caps.supports_api_key_auth {
         if caps.supports_login_auth {
-            return Err(format!(
-                "model `{}` requires `auth = \"login\"`; update `models.{}` auth mode or run `buddy init` to switch auth setup",
-                config.api.model, config.api.profile
+            return Some(format!(
+                "model `{}` expects login auth, but profile `{}` is configured for api-key auth. {}",
+                config.api.model,
+                config.api.profile,
+                auth_recovery_hint(config, base_url)
             ));
         }
-        return Err(format!(
-            "model `{}` does not support `auth = \"api-key\"`",
-            config.api.model
+        return Some(format!(
+            "model `{}` does not support api-key auth for profile `{}`. {}",
+            config.api.model,
+            config.api.profile,
+            auth_recovery_hint(config, base_url)
         ));
     }
 
     // Runtime API config already carries a concrete key value when available.
     if !config.api.api_key.trim().is_empty() {
-        return Ok(());
+        return None;
     }
 
     let Some(profile) = profile else {
         // Should not happen after config resolution, but avoid hard-failing
         // unknown callers that build Config manually.
-        return Ok(());
+        return None;
     };
 
     // When the profile explicitly points to a key source, fail with a targeted
     // hint if that source resolved to empty.
     if let Some(env_name) = profile.api_key_env.as_deref() {
-        return Err(format!(
-            "profile `{}` expects an API key from env var `{env_name}`, but it is unset or empty",
-            config.api.profile
+        return Some(format!(
+            "profile `{}` expects an API key from env var `{env_name}`, but it is unset or empty. {}",
+            config.api.profile,
+            auth_recovery_hint(config, base_url)
         ));
     }
     if let Some(path) = profile.api_key_file.as_deref() {
-        return Err(format!(
-            "profile `{}` expects an API key from file `{path}`, but the file resolved to empty contents",
-            config.api.profile
+        return Some(format!(
+            "profile `{}` expects an API key from file `{path}`, but the file resolved to empty contents. {}",
+            config.api.profile,
+            auth_recovery_hint(config, base_url)
         ));
     }
     if !profile.api_key.trim().is_empty() {
-        return Ok(());
+        return None;
     }
 
     let provider_key = api_key_provider_key(config.api.provider, base_url);
     match load_provider_api_key(&provider_key) {
-        Ok(Some(_)) => return Ok(()),
+        Ok(Some(_)) => return None,
         Ok(None) => {}
         Err(err) => {
-            return Err(format!(
-                "failed to read stored API key for provider `{provider_key}`: {err}"
+            return Some(format!(
+                "failed to read stored API key for provider `{provider_key}`: {err}. {}",
+                auth_recovery_hint(config, base_url)
             ));
         }
     }
@@ -148,59 +170,64 @@ fn validate_api_key_mode(
     // No configured key source. Allow localhost-style endpoints where auth is
     // often intentionally disabled, but otherwise fail early.
     if is_localhost_endpoint(base_url) {
-        return Ok(());
+        return None;
     }
 
-    Err(format!(
-        "profile `{}` uses auth=api-key but no API key is configured. Set `models.{}.api_key`, `api_key_env`, or `api_key_file`, or run `buddy init` to save an encrypted provider key.",
-        config.api.profile, config.api.profile
+    Some(format!(
+        "profile `{}` has no usable API key configured. Set `models.{}.api_key`, `api_key_env`, or `api_key_file`. {}",
+        config.api.profile,
+        config.api.profile,
+        auth_recovery_hint(config, base_url)
     ))
 }
 
 /// Validate login-based auth configuration and credential availability.
-fn validate_login_mode(config: &Config) -> Result<Option<String>, String> {
+fn validate_login_mode(config: &Config) -> Option<String> {
     validate_login_mode_with(config, load_provider_tokens)
 }
 
 /// Validate login-mode profile shape and token availability via injected loader.
-fn validate_login_mode_with<F>(config: &Config, load_tokens: F) -> Result<Option<String>, String>
+fn validate_login_mode_with<F>(config: &Config, load_tokens: F) -> Option<String>
 where
     F: Fn(&str) -> Result<Option<OAuthTokens>, AuthError>,
 {
+    let recovery_hint = auth_recovery_hint(config, &config.api.base_url);
     let caps = model_auth_capabilities(&config.api.model);
     if !caps.supports_login_auth {
-        return Err(format!(
-            "model `{}` does not support `auth = \"login\"`; configure this profile for API-key auth",
-            config.api.model
+        return Some(format!(
+            "model `{}` does not support login auth for profile `{}`. {}",
+            config.api.model, config.api.profile, recovery_hint
         ));
     }
 
     if !supports_login_for_provider(config.api.provider, &config.api.base_url) {
-        return Err(format!(
-            "profile `{}` uses `auth = \"login\"`, but provider `{}` with base URL `{}` is not login-supported",
+        return Some(format!(
+            "profile `{}` uses login auth, but provider `{}` with base URL `{}` is not login-supported. {}",
             config.api.profile,
             provider_label(config.api.provider),
-            config.api.base_url
+            config.api.base_url,
+            recovery_hint
         ));
     }
 
     let Some(provider) = login_provider_key(config.api.provider, &config.api.base_url) else {
-        return Err(format!(
-            "profile `{}` uses `auth = \"login\"`, but provider `{}` is unsupported",
+        return Some(format!(
+            "profile `{}` uses login auth, but provider `{}` is unsupported. {}",
             config.api.profile,
-            provider_label(config.api.provider)
+            provider_label(config.api.provider),
+            recovery_hint
         ));
     };
 
     match load_tokens(provider) {
-        Ok(Some(_)) => Ok(None),
-        Ok(None) => Ok(Some(format!(
-            "provider `{}` requires login auth, but no saved login was found. Run `buddy login {}` (or `/login {}` inside REPL).",
+        Ok(Some(_)) => None,
+        Ok(None) => Some(format!(
+            "provider `{}` requires login auth, but no saved login was found. Run `/login {}` (or `buddy login {}`), or use `/model` to choose a profile with API-key auth.",
             provider, provider, provider
-        ))),
-        Err(err) => Err(format!(
-            "failed to load login credentials for provider `{}`: {err}",
-            provider
+        )),
+        Err(err) => Some(format!(
+            "failed to load login credentials for provider `{}`: {err}. {}",
+            provider, recovery_hint
         )),
     }
 }
@@ -214,6 +241,18 @@ fn provider_label(provider: ModelProvider) -> &'static str {
         ModelProvider::Moonshot => "moonshot",
         ModelProvider::Anthropic => "anthropic",
         ModelProvider::Other => "other",
+    }
+}
+
+/// Recovery guidance for auth-readiness warnings.
+fn auth_recovery_hint(config: &Config, base_url: &str) -> String {
+    if let Some(provider) = login_provider_key(config.api.provider, base_url) {
+        format!(
+            "Use `/login {provider}` (or `buddy login {provider}`), or `/model` to choose a different profile."
+        )
+    } else {
+        "Use `/model` to choose a different profile, or configure an API key for this profile."
+            .to_string()
     }
 }
 
@@ -257,9 +296,9 @@ mod tests {
         assert!(err.contains("unsupported scheme"), "err: {err}");
     }
 
-    // Ensures missing configured env key sources produce targeted guidance.
+    // Ensures missing configured env key sources are surfaced as non-fatal guidance.
     #[test]
-    fn preflight_rejects_empty_api_key_env_source() {
+    fn preflight_warns_on_empty_api_key_env_source() {
         let mut cfg = Config::default();
         cfg.api.profile = "test".to_string();
         cfg.api.base_url = "https://api.example.com/v1".to_string();
@@ -267,6 +306,7 @@ mod tests {
         cfg.api.protocol = ApiProtocol::Completions;
         cfg.api.auth = AuthMode::ApiKey;
         cfg.api.api_key.clear();
+        cfg.api.reasoning_effort = None;
         cfg.models.insert(
             "test".to_string(),
             ModelConfig {
@@ -279,10 +319,16 @@ mod tests {
                 api_key_file: None,
                 model: Some("x".to_string()),
                 context_limit: None,
+                reasoning_effort: None,
             },
         );
-        let err = validate_active_profile_ready(&cfg).expect_err("should fail");
-        assert!(err.contains("TEST_KEY"), "err: {err}");
+        let report = validate_active_profile_ready(&cfg).expect("should pass with warning");
+        assert_eq!(report.warnings.len(), 1);
+        assert!(
+            report.warnings[0].contains("TEST_KEY"),
+            "warn: {}",
+            report.warnings[0]
+        );
     }
 
     // Ensures localhost-style endpoints remain usable without explicit API keys.
@@ -293,6 +339,7 @@ mod tests {
         cfg.api.model = "llama3.2".to_string();
         cfg.api.auth = AuthMode::ApiKey;
         cfg.api.api_key.clear();
+        cfg.api.reasoning_effort = None;
         let profile = cfg
             .models
             .get_mut(&cfg.api.profile)
@@ -302,13 +349,14 @@ mod tests {
         profile.api_key.clear();
         profile.api_key_env = None;
         profile.api_key_file = None;
+        profile.reasoning_effort = None;
         let report = validate_active_profile_ready(&cfg).expect("should pass");
         assert!(report.warnings.is_empty());
     }
 
-    // Ensures login-only models fail early when profile auth is api-key.
+    // Ensures login-only models in api-key mode surface guidance without blocking startup.
     #[test]
-    fn preflight_rejects_api_key_mode_for_login_only_model() {
+    fn preflight_warns_for_login_only_model_in_api_key_mode() {
         let mut cfg = Config::default();
         cfg.api.profile = "gpt-spark".to_string();
         cfg.api.auth = AuthMode::ApiKey;
@@ -317,8 +365,13 @@ mod tests {
         cfg.api.model = "gpt-5.3-codex-spark".to_string();
         cfg.api.api_key = "sk-test".to_string();
 
-        let err = validate_active_profile_ready(&cfg).expect_err("should fail");
-        assert!(err.contains("requires `auth = \"login\"`"), "err: {err}");
+        let report = validate_active_profile_ready(&cfg).expect("should pass with warning");
+        assert_eq!(report.warnings.len(), 1);
+        assert!(
+            report.warnings[0].contains("expects login auth"),
+            "warn: {}",
+            report.warnings[0]
+        );
     }
 
     // Missing login credentials should be non-fatal and surface guidance.
@@ -330,29 +383,28 @@ mod tests {
         cfg.api.provider = ModelProvider::Openai;
         cfg.api.base_url = "https://api.openai.com/v1".to_string();
         cfg.api.model = "gpt-5.3-codex".to_string();
-        let warning = validate_login_mode_with(&cfg, |_provider| Ok(None))
-            .expect("non-fatal warning should pass");
+        let warning = validate_login_mode_with(&cfg, |_provider| Ok(None));
         let report = ProfilePreflight {
             warnings: warning.into_iter().collect(),
         };
         assert_eq!(report.warnings.len(), 1);
         assert!(
-            report.warnings[0].contains("buddy login openai"),
+            report.warnings[0].contains("/login openai"),
             "warning: {}",
             report.warnings[0]
         );
     }
 
-    // Explicit non-openai provider should disable login mode even on openai-looking URLs.
+    // Explicit non-openai provider should surface login-support guidance.
     #[test]
-    fn preflight_rejects_login_when_provider_override_is_not_openai() {
+    fn preflight_warns_when_provider_override_is_not_openai_for_login() {
         let mut cfg = Config::default();
         cfg.api.profile = "gpt-codex".to_string();
         cfg.api.auth = AuthMode::Login;
         cfg.api.provider = ModelProvider::Openrouter;
         cfg.api.base_url = "https://api.openai.com/v1".to_string();
         cfg.api.model = "gpt-5.3-codex".to_string();
-        let err = validate_login_mode_with(&cfg, |_provider| Ok(None)).expect_err("must fail");
-        assert!(err.contains("not login-supported"), "err={err}");
+        let warning = validate_login_mode_with(&cfg, |_provider| Ok(None)).expect("warning");
+        assert!(warning.contains("not login-supported"), "warning={warning}");
     }
 }

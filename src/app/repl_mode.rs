@@ -592,6 +592,9 @@ fn render_status(
     renderer.field("base_url", &config.api.base_url);
     renderer.field("api", &format!("{:?}", config.api.protocol));
     renderer.field("auth", &format!("{:?}", config.api.auth));
+    if let Some(effort) = config.api.reasoning_effort {
+        renderer.field("reasoning_effort", effort.as_str());
+    }
     renderer.field("theme", &config.display.theme);
     renderer.field("max_iterations", &config.agent.max_iterations.to_string());
     renderer.field("tools", &enabled_tools(config, capture_pane_enabled));

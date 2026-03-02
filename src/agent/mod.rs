@@ -1049,6 +1049,7 @@ mod tests {
             auth: crate::config::AuthMode::ApiKey,
             profile: "test".to_string(),
             context_limit: Some(42_000),
+            reasoning_effort: None,
         };
 
         agent.switch_api_config(replacement);

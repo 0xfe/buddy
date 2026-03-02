@@ -86,6 +86,38 @@ pub enum AuthMode {
     Login,
 }
 
+/// Reasoning effort level for models that support configurable reasoning depth.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReasoningEffort {
+    /// Disable explicit reasoning effort (model-specific support).
+    None,
+    /// Minimal reasoning effort.
+    Minimal,
+    /// Low reasoning effort.
+    Low,
+    /// Medium reasoning effort.
+    Medium,
+    /// High reasoning effort.
+    High,
+    /// Extra-high reasoning effort.
+    Xhigh,
+}
+
+impl ReasoningEffort {
+    /// Return the API wire value used by provider request payloads.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Minimal => "minimal",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Xhigh => "xhigh",
+        }
+    }
+}
+
 /// Top-level runtime configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -156,6 +188,8 @@ pub struct ApiConfig {
     pub profile: String,
     /// Override for context window size. Auto-detected from model name if omitted.
     pub context_limit: Option<usize>,
+    /// Optional reasoning effort override for supported reasoning models.
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 impl Default for ApiConfig {
@@ -169,6 +203,7 @@ impl Default for ApiConfig {
             auth: AuthMode::ApiKey,
             profile: DEFAULT_MODEL_PROFILE_NAME.to_string(),
             context_limit: None,
+            reasoning_effort: None,
         }
     }
 }
@@ -206,6 +241,8 @@ pub struct ModelConfig {
     pub model: Option<String>,
     /// Optional override for context window size.
     pub context_limit: Option<usize>,
+    /// Optional reasoning effort for models supporting reasoning controls.
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 impl ModelConfig {
@@ -227,6 +264,7 @@ impl Default for ModelConfig {
             api_key_file: None,
             model: None,
             context_limit: None,
+            reasoning_effort: None,
         }
     }
 }
@@ -460,6 +498,7 @@ impl LegacyApiConfig {
             api_key_file: self.api_key_file,
             model: Some(self.model),
             context_limit: self.context_limit,
+            reasoning_effort: None,
         }
     }
 }

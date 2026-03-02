@@ -239,7 +239,7 @@ All tool outputs are wrapped as JSON:
 - `/approve ask|all|none|<duration>`
 - `/session [list|resume <id|last>|new]`
 - `/compact`
-- `/model [name|index]`
+- `/model [name|index]` (for compatible OpenAI `/responses` profiles, includes a second reasoning-effort picker)
 - `/theme [name|index]`
 - `/login [provider]`
 - `/logout [provider]`

@@ -203,7 +203,7 @@ are processed by the REPL loop before being sent to the agent.
 | Command | Description |
 |---------|-------------|
 | `/status` | Show model name, base URL, enabled tools, and session token counts |
-| `/model [name\|index]` | Switch active configured model profile (`/model` with no args opens arrow-key picker); warns when API/auth mode changes |
+| `/model [name\|index]` | Switch active configured model profile (`/model` with no args opens arrow-key picker); for compatible OpenAI `/responses` models, a second picker selects reasoning effort; warns when API/auth mode changes |
 | `/theme [name\|index]` | Switch active terminal theme (`/theme` with no args opens arrow-key picker), persist config, and render preview |
 | `/login [provider]` | Start provider login flow (opens browser when available) |
 | `/logout [provider]` | Clear saved provider login credentials |

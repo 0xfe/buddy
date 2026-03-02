@@ -1183,8 +1183,12 @@ mod tests {
 
         let command = rx.recv().await.expect("command expected");
         match command {
-            RuntimeCommand::SwitchModel { profile } => {
+            RuntimeCommand::SwitchModel {
+                profile,
+                reasoning_effort,
+            } => {
                 assert_eq!(profile, "openrouter-deepseek");
+                assert!(reasoning_effort.is_none());
             }
             other => panic!("unexpected command: {other:?}"),
         }

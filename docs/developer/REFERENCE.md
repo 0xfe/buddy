@@ -46,7 +46,7 @@ Execution-target note:
 | Command | Description |
 |---------|-------------|
 | `/status` | Show current model, base URL, enabled tools, and session counters. |
-| `/model [name\|index]` | Switch configured model profile (`/model` with no args opens picker). |
+| `/model [name\|index]` | Switch configured model profile; for compatible OpenAI `/responses` models, also opens a reasoning-effort picker. |
 | `/theme [name\|index]` | Switch terminal theme (`/theme` with no args opens picker), persist config, and render preview blocks. |
 | `/login [provider]` | Check/start provider login flow. |
 | `/logout [provider]` | Clear saved provider login credentials. |
@@ -76,6 +76,12 @@ Default bundled profiles in `src/templates/buddy.toml`:
 
 Context-limit defaults come from `src/templates/models.toml` (compiled into the binary), with fallback `8192` for unknown models.
 The same catalog can also define per-model auth capability flags (`supports_api_key_auth`, `supports_login_auth`) used by preflight and regression checks.
+
+OpenAI reasoning-effort support:
+
+- Buddy sends `reasoning.effort` only for models that advertise this capability.
+- Picker visibility is capability-driven (provider + protocol + model).
+- Current bundled OpenAI codex profiles expose `low|medium|high|xhigh`.
 
 ## Theme reference
 
@@ -132,6 +138,7 @@ api_base_url = "https://api.openai.com/v1"
 provider = "openai"                         # auto | openai | openrouter | moonshot | anthropic | other
 api = "responses"                           # responses | completions | anthropic
 auth = "login"                              # login | api-key
+reasoning_effort = "medium"                 # optional, only used for supported reasoning models
 # Only one may be set: api_key, api_key_env, api_key_file.
 # api_key_env = "OPENAI_API_KEY"
 # api_key = "sk-..."
@@ -145,6 +152,7 @@ provider = "openai"
 api = "responses"
 auth = "login"
 model = "gpt-5.3-codex-spark"
+reasoning_effort = "medium"
 
 [models.openrouter-deepseek]
 api_base_url = "https://openrouter.ai/api/v1"

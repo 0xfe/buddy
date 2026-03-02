@@ -129,6 +129,7 @@ where
         auth: profile.auth,
         profile: profile_name.to_string(),
         context_limit: profile.context_limit,
+        reasoning_effort: profile.reasoning_effort,
     })
 }
 

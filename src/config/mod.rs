@@ -14,6 +14,7 @@ mod env;
 mod init;
 mod loader;
 mod persist;
+mod reasoning;
 mod resolve;
 mod selector;
 mod sources;
@@ -28,11 +29,12 @@ use std::path::PathBuf;
 use defaults::{
     DEFAULT_API_TIMEOUT_SECS, DEFAULT_BUDDY_CONFIG_TEMPLATE, DEFAULT_FETCH_TIMEOUT_SECS,
 };
+pub use reasoning::{supported_reasoning_efforts, supports_reasoning_effort};
 use types::FileConfig;
 pub use types::{
     AgentConfig, ApiConfig, ApiProtocol, AuthMode, Config, ConfigDiagnostics, DisplayConfig,
     GlobalConfigInitResult, LoadedConfig, ModelConfig, ModelProvider, NetworkConfig,
-    ThemeOverrideConfig, TmuxConfig, ToolsConfig,
+    ReasoningEffort, ThemeOverrideConfig, TmuxConfig, ToolsConfig,
 };
 
 /// Load configuration from disk and environment.
@@ -925,6 +927,46 @@ mod tests {
         assert_eq!(loaded.config.agent.model, "explicit");
         assert_eq!(loaded.config.api.model, "explicit-model");
         assert_eq!(loaded.config.api.base_url, "https://explicit.example/v1");
+    }
+
+    // Verifies model-profile reasoning effort parses and resolves into active API config.
+    #[test]
+    fn parse_reasoning_effort_from_model_profile() {
+        let toml = r#"
+            [models.gpt-codex]
+            api_base_url = "https://api.openai.com/v1"
+            provider = "openai"
+            api = "responses"
+            model = "gpt-5.3-codex"
+            reasoning_effort = "high"
+
+            [agent]
+            model = "gpt-codex"
+        "#;
+        let config = parse_file_config_for_test(toml).expect("config");
+        assert_eq!(config.api.reasoning_effort, Some(ReasoningEffort::High));
+    }
+
+    // Verifies invalid reasoning effort values fail configuration parsing.
+    #[test]
+    fn invalid_reasoning_effort_value_is_rejected() {
+        let toml = r#"
+            [models.gpt-codex]
+            api_base_url = "https://api.openai.com/v1"
+            provider = "openai"
+            api = "responses"
+            model = "gpt-5.3-codex"
+            reasoning_effort = "extreme"
+
+            [agent]
+            model = "gpt-codex"
+        "#;
+        let err = parse_file_config_for_test(toml).expect_err("invalid effort");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("reasoning_effort"),
+            "unexpected error message: {msg}"
+        );
     }
 
     /// Test helper that wires an in-memory file/env view into the loader.

@@ -8,6 +8,7 @@
 # - provider: "auto" | "openai" | "openrouter" | "moonshot" | "anthropic" | "other"
 # - api: "completions" | "responses" | "anthropic"
 # - auth: "api-key" | "login" (set by `buddy init`)
+# - reasoning_effort: optional OpenAI reasoning effort (low|medium|high|xhigh|...)
 # - one optional key source: api_key, api_key_env, or api_key_file
 #   (if omitted for auth="api-key", buddy uses encrypted provider key storage).
 
@@ -16,12 +17,14 @@ api_base_url = "https://api.openai.com/v1"
 provider = "openai"
 api = "responses"
 model = "gpt-5.3-codex"
+reasoning_effort = "medium"
 
 [models.gpt-spark]
 api_base_url = "https://api.openai.com/v1"
 provider = "openai"
 api = "responses"
 model = "gpt-5.3-codex-spark"
+reasoning_effort = "medium"
 
 [models.openrouter-deepseek]
 api_base_url = "https://openrouter.ai/api/v1"

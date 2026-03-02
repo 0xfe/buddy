@@ -11,7 +11,7 @@ mod transport;
 
 use super::policy;
 use super::ModelClient;
-use crate::config::{ApiConfig, ApiProtocol, ModelProvider};
+use crate::config::{ApiConfig, ApiProtocol, ModelProvider, ReasoningEffort};
 use crate::error::ApiError;
 use crate::types::{ChatRequest, ChatResponse};
 use async_trait::async_trait;
@@ -35,6 +35,8 @@ pub struct ApiClient {
     auth: crate::config::AuthMode,
     /// Profile name used for diagnostics and login messaging.
     profile: String,
+    /// Optional reasoning effort override for reasoning-capable models.
+    reasoning_effort: Option<ReasoningEffort>,
     /// Retry/backoff policy for transient failures.
     retry_policy: RetryPolicy,
 }
@@ -60,6 +62,7 @@ impl ApiClient {
             provider: config.provider,
             auth: config.auth,
             profile: config.profile.clone(),
+            reasoning_effort: config.reasoning_effort,
             retry_policy,
         }
     }
@@ -136,6 +139,7 @@ impl ApiClient {
             base_url,
             request,
             bearer,
+            reasoning_effort: self.reasoning_effort,
         })
         .await
     }

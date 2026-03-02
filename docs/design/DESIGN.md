@@ -60,7 +60,7 @@ Detailed inventory: [feature-catalog.md](feature-catalog.md).
   - `-v/--verbose` (`-vv`, `-vvv`) for structured diagnostics on stderr
   - `--no-color`
   - `--dangerously-auto-approve` for non-interactive exec guardrail override
-- Profile-based config with per-profile provider/protocol/auth mode (`provider`; `completions` vs `responses` vs `anthropic`; `api-key` vs `login`).
+- Profile-based config with per-profile provider/protocol/auth mode (`provider`; `completions` vs `responses` vs `anthropic`; `api-key` vs `login`) plus optional OpenAI `reasoning_effort`.
 - Login auth startup behavior:
   - missing login credentials are surfaced as warnings (non-fatal startup/model-switch),
   - user guidance points to `/login <provider>` and `buddy login <provider>`.
@@ -74,6 +74,7 @@ Detailed inventory: [feature-catalog.md](feature-catalog.md).
   - SSH with persistent control socket and optional tmux management
 - REPL interaction model:
   - slash commands, autocomplete, multiline editing, history persistence
+  - `/model` two-step picker for supported OpenAI reasoning profiles (model, then reasoning effort)
   - `/theme` command with interactive picker, persisted selection, and live preview blocks
   - background prompt tasks with `/ps`, `/kill`, `/timeout`
   - interactive approval flow and `/approve` policy modes

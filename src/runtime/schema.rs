@@ -4,7 +4,7 @@
 //! by frontends to drive the runtime actor and render progress streams.
 
 use crate::agent::AgentUiEvent;
-use crate::config::{ApiProtocol, AuthMode};
+use crate::config::{ApiProtocol, AuthMode, ReasoningEffort};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -89,6 +89,9 @@ pub enum RuntimeCommand {
     SwitchModel {
         /// Profile name defined in config.
         profile: String,
+        /// Optional reasoning effort override applied for this profile switch.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reasoning_effort: Option<ReasoningEffort>,
     },
     /// Start a fresh session.
     SessionNew,
@@ -304,6 +307,9 @@ pub enum ModelEvent {
         api: ApiProtocol,
         /// Effective auth mode.
         auth: AuthMode,
+        /// Effective reasoning effort for reasoning-capable models.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reasoning_effort: Option<ReasoningEffort>,
     },
     /// One model request started for a task.
     RequestStarted {

@@ -34,7 +34,7 @@ pub fn default_builtin_tool_names(
     api_key: &str,
     model: &str,
 ) -> Vec<&'static str> {
-    let options = policy::responses_request_options(provider, base_url, auth, api_key, model);
+    let options = policy::responses_request_options(provider, base_url, auth, api_key, model, None);
     let mut names = Vec::new();
     for builtin in options.builtin_tools {
         let kind = builtin

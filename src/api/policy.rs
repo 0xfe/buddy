@@ -5,7 +5,7 @@ use super::responses::ResponsesRequestOptions;
 use crate::auth::{
     openai_login_runtime_base_url, supports_login_for_provider as auth_supports_login_for_provider,
 };
-use crate::config::{AuthMode, ModelProvider};
+use crate::config::{AuthMode, ModelProvider, ReasoningEffort};
 
 /// True when this request should use login-derived bearer tokens instead of API keys.
 pub(crate) fn uses_login_auth(auth: AuthMode, api_key: &str) -> bool {
@@ -40,13 +40,14 @@ pub(crate) fn responses_request_options(
     auth: AuthMode,
     api_key: &str,
     model: &str,
+    reasoning_effort: Option<ReasoningEffort>,
 ) -> ResponsesRequestOptions {
     let login_openai =
         uses_login_auth(auth, api_key) && supports_login_for_provider(provider, base_url);
     ResponsesRequestOptions {
         store_false: login_openai,
         stream: login_openai,
-        reasoning: provider_compat::responses_reasoning_config(provider, model),
+        reasoning: provider_compat::responses_reasoning_config(provider, model, reasoning_effort),
         builtin_tools: provider_compat::responses_builtin_tools(provider, model, login_openai),
     }
 }
