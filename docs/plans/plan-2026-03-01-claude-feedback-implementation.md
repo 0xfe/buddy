@@ -4,7 +4,7 @@
 
 - Program status: Active
 - Scope status: Locked to actionable items from `docs/plans/review-2026-03-01-claude-feedback.md`, sequenced for lowest-risk delivery.
-- Current focus: Milestone 6 (provider/model compatibility and token accuracy) is next.
+- Current focus: Milestone 7 (evaluation, trace tooling, cost visibility, and closure) is next.
 - Completed so far:
   1. Reviewed `docs/plans/review-2026-03-01-claude-feedback.md` end-to-end.
   2. Mapped priority recommendations into an execution board with validation gates.
@@ -14,9 +14,10 @@
   6. Completed Milestone 3: static system prompt + request-scoped tmux snapshot context injection with non-default target labeling and prompt-architecture docs updates.
   7. Completed Milestone 4: pair-safe compaction units, orphan tool-call/result repair passes, structured compaction summaries, and failed-tool retention guarantees.
   8. Completed Milestone 5: explicit prompt-priority sectioning, additive operator-instructions conflict policy, planning-before-tools guidance, and structured tool-definition disambiguation metadata.
+  9. Completed Milestone 6: explicit provider field support with fallback detection, provider-priority reasoning extraction, and per-model token-estimation calibration.
 - Next steps:
-  1. Start Milestone 5 (prompt structure + tool description hardening).
-  2. Keep Milestone 1-4 observability/context/compaction guarantees stable while prompt/tool guidance changes land.
+  1. Start Milestone 7 (`buddy trace` analysis CLI, cost metrics, expanded eval coverage, and plan closure).
+  2. Keep Milestone 1-6 observability/context/compatibility guarantees stable while Milestone 7 lands.
 
 ## Goal
 
@@ -76,7 +77,7 @@ Out of scope for this plan:
 - [x] Milestone 3: Prompt Context Architecture (static system + dynamic snapshot as turn context)
 - [x] Milestone 4: Compaction Integrity and Error-Preserving Memory
 - [x] Milestone 5: Prompt and Tooling Reliability Hardening
-- [ ] Milestone 6: Provider/Model Compatibility and Token Accuracy
+- [x] Milestone 6: Provider/Model Compatibility and Token Accuracy
 - [ ] Milestone 7: Evaluation, Trace Tooling, Cost Visibility, and Closure
 
 ## Milestone 0: Baseline, Repro Matrix, and Design Freeze
@@ -489,3 +490,12 @@ Close the loop with analysis tooling, cost metrics, and regression confidence.
    - updated prompt/tools/design docs to match the new behavior,
    - validated with `cargo fmt` and `cargo test` (full suite).
    - commit: `b625cba`.
+8. 2026-03-02: Finished Milestone 6:
+   - added explicit model-profile `provider` support (`auto|openai|openrouter|moonshot|other`) and resolved-runtime provider plumbing in config/API/auth/preflight paths,
+   - switched provider compatibility behavior (responses reasoning config, completions reasoning overrides, login-support checks) to resolved provider selection with `auto` base-url fallback,
+   - added provider-priority reasoning extraction with generic fallback and placeholder/noise suppression retention,
+   - added per-model runtime token-estimation calibration based on observed `usage.prompt_tokens` with bounded smoothing,
+   - updated bundled `buddy.toml` template and model/config design docs for provider semantics and calibration behavior,
+   - added/updated provider and reasoning regression tests plus token calibration unit coverage,
+   - validated with `cargo fmt`, `cargo test` (full suite), and `cargo test --test model_regression -- --ignored --nocapture` (all default template profiles passing).
+   - commit: `82255ae`.
