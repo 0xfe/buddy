@@ -98,20 +98,13 @@ pub fn start_progress(
 
     let thread = thread::spawn(move || {
         let start = Instant::now();
-        let mut idx = 0usize;
 
         while !stop_flag.load(Ordering::Relaxed) {
-            let line = progress_line(
-                settings::PROGRESS_FRAMES[idx % settings::PROGRESS_FRAMES.len()],
-                &label,
-                start.elapsed(),
-                color,
-                &metrics,
-            );
+            let frame = spinner_frame_for_elapsed(start.elapsed());
+            let line = progress_line(frame, &label, start.elapsed(), color, &metrics);
             let mut err = io::stderr();
             let _ = write!(err, "{line}");
             let _ = err.flush();
-            idx += 1;
             thread::sleep(Duration::from_millis(settings::PROGRESS_TICK_MS));
         }
 
@@ -122,6 +115,17 @@ pub fn start_progress(
         stop,
         thread: Some(thread),
     }
+}
+
+/// Resolve spinner frame from elapsed time using shared global spinner cadence.
+///
+/// This is the canonical frame-selection path for all UI spinners so both
+/// inline liveness status and threaded progress indicators stay in sync.
+pub fn spinner_frame_for_elapsed(elapsed: Duration) -> char {
+    let tick_ms = u128::from(settings::PROGRESS_TICK_MS.max(1));
+    let steps = elapsed.as_millis() / tick_ms;
+    let idx = (steps as usize) % settings::PROGRESS_FRAMES.len();
+    settings::PROGRESS_FRAMES[idx]
 }
 
 fn progress_line(
@@ -182,5 +186,19 @@ mod tests {
             .with_entry("out", "42kb");
         let out = progress_line('|', "fetch", Duration::from_millis(200), false, &metrics);
         assert!(out.contains("[in:12kb out:42kb]"));
+    }
+
+    #[test]
+    fn spinner_frame_for_elapsed_uses_global_tick_and_frame_sequence() {
+        // Spinner frame selection should advance exactly one frame per global tick.
+        assert_eq!(spinner_frame_for_elapsed(Duration::from_millis(0)), '|');
+        assert_eq!(
+            spinner_frame_for_elapsed(Duration::from_millis(settings::PROGRESS_TICK_MS)),
+            '/'
+        );
+        assert_eq!(
+            spinner_frame_for_elapsed(Duration::from_millis(settings::PROGRESS_TICK_MS * 2)),
+            '-'
+        );
     }
 }

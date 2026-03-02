@@ -8,9 +8,9 @@ use buddy::repl::{
     RuntimeContextState,
 };
 use buddy::runtime::{BuddyRuntimeHandle, RuntimeCommand, RuntimeEventEnvelope};
+use buddy::tui::progress::spinner_frame_for_elapsed;
 use buddy::ui::render::RenderSink;
 use buddy::ui::runtime;
-use buddy::ui::terminal::settings;
 use std::time::Instant;
 use tokio::sync::mpsc;
 
@@ -166,11 +166,7 @@ pub(crate) fn background_liveness_spinner(tasks: &[BackgroundTask]) -> char {
         })
         .max()
         .unwrap_or_default();
-    // Keep REPL status redraws stable: ultra-fast ticks can cause excessive
-    // full-surface repaints in raw-mode input, which can look like flicker.
-    // A half-second cadence still feels responsive while keeping churn low.
-    let idx = ((elapsed.as_millis() / 500) as usize) % settings::PROGRESS_FRAMES.len();
-    settings::PROGRESS_FRAMES[idx]
+    spinner_frame_for_elapsed(elapsed)
 }
 
 /// Request runtime cancellation for a running task.
