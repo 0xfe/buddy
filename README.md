@@ -1,8 +1,15 @@
 # buddy -- a sysadmin AI assistant
 
-A terminal AI agent written in Rust with native `tmux` support. It is designed for sysadmin workflows across local hosts, remote SSH targets, and local containers.
+Buddy is your personal AI sysadmin who can pair with you on shared terminals to help you operate your servers, workstations, and laptops. It works locally, in containers, and on remote hosts via SSH.
 
-Buddy works with OpenAI-compatible APIs and supports both `/v1/chat/completions` and `/v1/responses`.
+Buddy is written in Rust and comes with first-class `tmux` support to allow for sophisticated cooperative workflows between humans and agents.
+
+```bash
+# Install on macOS or Linux
+curl -fsSL https://raw.githubusercontent.com/0xfe/buddy/main/scripts/install.sh | bash
+```
+
+Buddy works with most OpenAI-compatible APIs and works extremely well with fast models like OpenAI Spark and Claude Haiku, and open-weight models like Kimi k2.5 and GLM-5.
 
 ## Pre-requisites
 
@@ -100,7 +107,7 @@ make check
 make release-artifacts
 ```
 
-Install/distribution details are in [docs/developer/install.md](docs/developer/install.md).  
+Install/distribution details are in [docs/developer/install.md](docs/developer/install.md).
 Full build, test, versioning, and release CI details are in [docs/developer/BUILD.md](docs/developer/BUILD.md).
 
 ## Documentation map
