@@ -45,11 +45,11 @@ cargo test --test model_regression -- --ignored --nocapture
 ## Required Setup
 
 1. Ensure template-referenced API key env vars are available for API-key profiles.
-   - Example defaults: `OPENROUTER_API_KEY`, `MOONSHOT_API_KEY`.
+   - Example defaults: `OPENROUTER_API_KEY`, `MOONSHOT_API_KEY`, `ANTHROPIC_API_KEY`.
 2. Ensure login profiles are already authenticated (for default OpenAI login profiles):
 
 ```bash
-buddy login gpt-codex
+buddy login openai
 ```
 
 3. Unset global runtime override env vars before running this suite:

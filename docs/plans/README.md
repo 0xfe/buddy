@@ -6,5 +6,5 @@
 
 Current state:
 - active plans:
-  - `plan-2026-03-02-provider-tooling-login-rationalization.md`
+  - none
 - all historical plans are archived in `docs/plans/completed/`.

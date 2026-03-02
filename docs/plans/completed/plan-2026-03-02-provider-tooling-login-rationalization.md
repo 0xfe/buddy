@@ -2,9 +2,9 @@
 
 ## Status
 
-- Program status: Active
-- Current focus: M5 regression/docs closure and final commit slices
-- Next step: run targeted opt-in suites where needed and finalize commit map
+- Program status: Completed
+- Current focus: Archived
+- Next step: none
 - Completed so far:
   1. Captured scope from the request: OpenAI tooling correctness, Claude Sonnet/Haiku support, provider-scoped login/logout UX.
   2. Split execution into incremental milestones with acceptance gates, tests, docs, and commit slices.
@@ -23,6 +23,11 @@
   15. Added bundled `claude-sonnet` and `claude-haiku` profiles to defaults/template (`api = "anthropic"`, provider `anthropic`, API-key auth).
   16. Enforced provider behavior for Claude auth (`auth=login` remains unsupported and fails with actionable guidance).
   17. Verified full quality gates after M3/M4 integration (`fmt`, `test`, `clippy`) all passing.
+  18. Extended provider-compat regression coverage to assert Anthropic profiles never enable OpenAI Responses defaults.
+  19. Updated regression/auth docs to provider-scoped login wording and current env prerequisites.
+  20. Ran M5 quality gates (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`) successfully.
+  21. Ran opt-in UI tmux regression suite successfully.
+  22. Ran opt-in live model regression suite; failures were limited to missing credentials in this environment (expected preflight gate).
 - Blockers: none
 
 ## Scope (Locked)
@@ -63,7 +68,7 @@
 - [x] M2: OpenAI Built-In Tooling And Prompt Contract
 - [x] M3: Claude Sonnet/Haiku Provider Support
 - [x] M4: Login/Logout UX Simplification
-- [ ] M5: Regression Coverage, Docs, And Release Validation
+- [x] M5: Regression Coverage, Docs, And Release Validation
 
 ## M0: API Research And Design Freeze
 
@@ -339,3 +344,12 @@ Consolidate behavior with robust tests/docs and ensure release readiness.
 - 2026-03-02: Completed M4 UX updates for provider-first login/logout and simplified login presentation.
 - 2026-03-02: Verified integrated M3/M4 state with `cargo fmt --check`, `cargo test`, and `cargo clippy --all-targets -- -D warnings`.
 - 2026-03-02: Committed M2+M3+M4 implementation slice as `4b8cf1f` (`feat(api): add anthropic messages support and openai built-in tools`).
+- 2026-03-02: Completed M5 docs/test closure updates:
+  - added provider-compat test `anthropic_provider_never_enables_openai_responses_defaults`.
+  - updated provider-scoped login references in `docs/developer/model-regression-tests.md` and `docs/design/auth-storage.md`.
+- 2026-03-02: Ran M5 validation gates:
+  - pass: `cargo fmt --check`
+  - pass: `cargo clippy --all-targets -- -D warnings`
+  - pass: `cargo test`
+  - pass: `cargo test --test ui_tmux_regression -- --ignored --nocapture`
+  - expected-env failure: `cargo test --test model_regression -- --ignored --nocapture` (all profiles reported missing credentials).

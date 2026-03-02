@@ -167,4 +167,14 @@ mod tests {
         let openrouter = responses_builtin_tools(ModelProvider::Openrouter, "gpt-5.3-codex");
         assert!(openrouter.is_empty());
     }
+
+    // Verifies non-OpenAI providers never inherit OpenAI Responses-only defaults.
+    #[test]
+    fn anthropic_provider_never_enables_openai_responses_defaults() {
+        let reasoning = responses_reasoning_config(ModelProvider::Anthropic, "claude-sonnet-4-5");
+        assert!(reasoning.is_none());
+
+        let builtins = responses_builtin_tools(ModelProvider::Anthropic, "claude-sonnet-4-5");
+        assert!(builtins.is_empty());
+    }
 }

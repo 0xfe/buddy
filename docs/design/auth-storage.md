@@ -21,19 +21,19 @@ This is intended to protect tokens at rest on the same machine (similar threat m
 
 ## Operations
 
-- `buddy login --check [profile]`
+- `buddy login --check [provider]`
   - Shows credential health for the provider (saved/not saved, expiry, expiring soon).
-- `buddy login --reset [profile]`
+- `buddy login --reset [provider]`
   - Removes saved credentials for the provider, then continues login.
-- `buddy login [profile]`
+- `buddy login [provider]`
   - Shows health and runs device login flow.
 
 ## Failure Recovery
 
 If decryption fails (for example, machine identity changes, corruption, or tampering), Buddy returns an actionable error and recommends:
 
-1. `buddy login --reset [profile]`
-2. `buddy login [profile]`
+1. `buddy login --reset [provider]`
+2. `buddy login [provider]`
 
 ## File Permissions
 
