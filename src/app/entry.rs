@@ -453,7 +453,12 @@ fn build_tools(
     capture_pane_enabled: bool,
 ) -> ToolSetup {
     let mut tools = ToolRegistry::new();
-    let builtin_tool_names = openai_builtin_tool_names(config.api.provider, &config.api.model);
+    let builtin_tool_names = openai_builtin_tool_names(
+        config.api.provider,
+        config.api.auth,
+        &config.api.api_key,
+        &config.api.model,
+    );
     let builtin_web_search = builtin_tool_names.contains(&"web_search");
     let needs_tmux_management_approval =
         capture_pane_enabled && interactive_mode && execution.tmux_management_available();
@@ -680,7 +685,12 @@ fn enabled_tool_names(
         tools.push("read_file");
         tools.push("write_file");
     }
-    let builtin_tool_names = openai_builtin_tool_names(config.api.provider, &config.api.model);
+    let builtin_tool_names = openai_builtin_tool_names(
+        config.api.provider,
+        config.api.auth,
+        &config.api.api_key,
+        &config.api.model,
+    );
     let builtin_web_search = builtin_tool_names.contains(&"web_search");
     if config.tools.search_enabled && !builtin_web_search {
         tools.push("web_search");
@@ -691,8 +701,16 @@ fn enabled_tool_names(
 }
 
 /// Return OpenAI native built-in tools enabled by default for this profile.
-fn openai_builtin_tool_names(provider: ModelProvider, model: &str) -> Vec<&'static str> {
+fn openai_builtin_tool_names(
+    provider: ModelProvider,
+    auth: AuthMode,
+    api_key: &str,
+    model: &str,
+) -> Vec<&'static str> {
     if provider != ModelProvider::Openai {
+        return Vec::new();
+    }
+    if auth == AuthMode::Login && api_key.trim().is_empty() {
         return Vec::new();
     }
     let normalized = model.trim().to_ascii_lowercase();
@@ -1043,14 +1061,32 @@ mod tests {
     #[test]
     fn openai_builtin_tool_names_enabled_for_reasoning_profiles() {
         // GPT-5/Codex profiles should expose OpenAI-native web + python tools.
-        let names = openai_builtin_tool_names(ModelProvider::Openai, "gpt-5.3-codex");
+        let names = openai_builtin_tool_names(
+            ModelProvider::Openai,
+            AuthMode::ApiKey,
+            "sk-test",
+            "gpt-5.3-codex",
+        );
         assert_eq!(names, vec!["web_search", "code_interpreter"]);
     }
 
     #[test]
     fn openai_builtin_tool_names_disabled_for_non_openai_profiles() {
         // Non-OpenAI providers should not advertise OpenAI built-in tools.
-        let names = openai_builtin_tool_names(ModelProvider::Openrouter, "gpt-5.3-codex");
+        let names = openai_builtin_tool_names(
+            ModelProvider::Openrouter,
+            AuthMode::ApiKey,
+            "sk-test",
+            "gpt-5.3-codex",
+        );
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn openai_builtin_tool_names_disabled_for_login_auth_mode() {
+        // ChatGPT/Codex login runtime rejects these built-ins.
+        let names =
+            openai_builtin_tool_names(ModelProvider::Openai, AuthMode::Login, "", "gpt-5.3-codex");
         assert!(names.is_empty());
     }
 

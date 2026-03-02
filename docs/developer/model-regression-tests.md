@@ -19,6 +19,9 @@ For each profile in the default template:
 2. Validate auth prerequisites:
    - `auth = "api-key"`: resolved key must be non-empty.
    - `auth = "login"`: saved provider login tokens must already exist.
+   - If a profile does not set `api_key_env`, the suite falls back to provider
+     defaults: `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `MOONSHOT_API_KEY`,
+     `ANTHROPIC_API_KEY`.
 3. Send a minimal prompt (`Reply with exactly OK.`) with no tools.
 4. Assert:
    - response has at least one choice,
@@ -31,6 +34,14 @@ For each profile in the default template:
 6. Assert:
    - provider accepts the history shape,
    - assistant text content is still non-empty (error recovery path remains viable).
+
+Profile execution is independent:
+
+- missing credentials remain failures for that profile,
+- `model_not_found` responses are reported as skipped (profile unavailable on the current account/API),
+- one profile failure does not stop probes for other profiles.
+- auth-mode expectations are read from `src/templates/models.toml` capability metadata
+  (for example login-only models are probed with login auth even when profile auth defaults to API key).
 
 ## Why It Is Ignored By Default
 

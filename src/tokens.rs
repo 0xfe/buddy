@@ -89,6 +89,24 @@ pub struct UsageCostEstimate {
     pub total_usd: f64,
 }
 
+/// Per-model auth capabilities loaded from the embedded model catalog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModelAuthCapabilities {
+    /// True when the model can be used with API-key auth.
+    pub supports_api_key_auth: bool,
+    /// True when the model can be used with login-token auth.
+    pub supports_login_auth: bool,
+}
+
+impl Default for ModelAuthCapabilities {
+    fn default() -> Self {
+        Self {
+            supports_api_key_auth: true,
+            supports_login_auth: true,
+        }
+    }
+}
+
 /// Estimate request cost from usage totals and model pricing.
 ///
 /// `cached_prompt_tokens` is optional because many providers do not report it.
@@ -254,6 +272,12 @@ struct ModelContextRule {
     /// Optional cache-read input price in USD per 1M tokens.
     #[serde(default)]
     cache_read_price_per_mtok: Option<f64>,
+    /// Optional override for API-key auth capability.
+    #[serde(default)]
+    supports_api_key_auth: Option<bool>,
+    /// Optional override for login auth capability.
+    #[serde(default)]
+    supports_login_auth: Option<bool>,
 }
 
 impl ModelContextRule {
@@ -264,6 +288,14 @@ impl ModelContextRule {
             output_price_per_mtok: self.output_price_per_mtok?,
             cache_read_price_per_mtok: self.cache_read_price_per_mtok,
         })
+    }
+
+    /// Return auth-capability metadata, defaulting to dual-mode support.
+    fn auth_capabilities(&self) -> ModelAuthCapabilities {
+        ModelAuthCapabilities {
+            supports_api_key_auth: self.supports_api_key_auth.unwrap_or(true),
+            supports_login_auth: self.supports_login_auth.unwrap_or(true),
+        }
     }
 }
 
@@ -316,6 +348,13 @@ impl ModelCatalog {
     /// Return pricing for first matching rule when rates are available.
     fn lookup_pricing(&self, model: &str) -> Option<ModelPricing> {
         self.lookup_rule(model).and_then(ModelContextRule::pricing)
+    }
+
+    /// Return auth capabilities for first matching rule.
+    fn lookup_auth_capabilities(&self, model: &str) -> ModelAuthCapabilities {
+        self.lookup_rule(model)
+            .map(ModelContextRule::auth_capabilities)
+            .unwrap_or_default()
     }
 }
 
@@ -399,6 +438,16 @@ pub fn default_context_limit(model: &str) -> usize {
 /// Returns `None` when no pricing metadata exists in the embedded catalog.
 pub fn model_pricing(model: &str) -> Option<ModelPricing> {
     model_catalog().and_then(|catalog| catalog.lookup_pricing(model))
+}
+
+/// Best-effort auth-capability lookup for one model id.
+///
+/// If no catalog rule matches, both API-key and login auth are treated as
+/// supported to preserve compatibility.
+pub fn model_auth_capabilities(model: &str) -> ModelAuthCapabilities {
+    model_catalog()
+        .map(|catalog| catalog.lookup_auth_capabilities(model))
+        .unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------
@@ -498,6 +547,40 @@ mod tests {
         assert_eq!(pricing.input_price_per_mtok, 1.5);
         assert_eq!(pricing.output_price_per_mtok, 6.0);
         assert_eq!(pricing.cache_read_price_per_mtok, Some(0.5));
+    }
+
+    // Ensures auth capability metadata is parsed and matched from catalog rules.
+    #[test]
+    fn catalog_auth_capabilities_lookup() {
+        let catalog: ModelCatalog = toml::from_str(
+            r#"
+            default_context_window = 42
+
+            [[rule]]
+            match = "exact"
+            pattern = "gpt-login-only"
+            context_window = 100000
+            supports_api_key_auth = false
+            supports_login_auth = true
+            "#,
+        )
+        .unwrap();
+
+        let caps = catalog.lookup_auth_capabilities("gpt-login-only");
+        assert!(!caps.supports_api_key_auth);
+        assert!(caps.supports_login_auth);
+
+        let default_caps = catalog.lookup_auth_capabilities("unknown-model");
+        assert!(default_caps.supports_api_key_auth);
+        assert!(default_caps.supports_login_auth);
+    }
+
+    // Ensures built-in catalog marks spark profile model as login-only.
+    #[test]
+    fn built_in_catalog_marks_spark_login_only() {
+        let caps = model_auth_capabilities("gpt-5.3-codex-spark");
+        assert!(!caps.supports_api_key_auth);
+        assert!(caps.supports_login_auth);
     }
 
     // Ensures request-cost estimation computes each price bucket consistently.

@@ -70,6 +70,7 @@ Default bundled profiles in `src/templates/buddy.toml`:
 - `claude-haiku` => `claude-haiku-4-5` (Anthropic, `api = "anthropic"`, `auth = "api-key"`)
 
 Context-limit defaults come from `src/templates/models.toml` (compiled into the binary), with fallback `8192` for unknown models.
+The same catalog can also define per-model auth capability flags (`supports_api_key_auth`, `supports_login_auth`) used by preflight and regression checks.
 
 ## Theme reference
 

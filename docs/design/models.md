@@ -126,6 +126,10 @@ profiles:
 To avoid duplicate capabilities, Buddy suppresses its local `web_search`
 function tool when OpenAI built-in `web_search` is active for the profile.
 
+Model auth capabilities are also tracked in `src/templates/models.toml`.
+For example, `gpt-5.3-codex-spark` is marked login-only (`supports_api_key_auth = false`,
+`supports_login_auth = true`) so preflight/regression can enforce the correct auth path.
+
 Buddy’s SSE parser handles:
 
 - `response.reasoning_text.delta`

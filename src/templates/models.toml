@@ -6,6 +6,9 @@
 #   - 2026-02-18
 #
 # Rules are evaluated top-to-bottom. Put specific entries first.
+# Optional per-rule auth capability flags:
+#   - supports_api_key_auth = true|false
+#   - supports_login_auth = true|false
 
 schema_version = 1
 source = "openrouter-models-api"
@@ -24,6 +27,16 @@ context_window = 128000
 input_price_per_mtok = 1.25
 output_price_per_mtok = 10.0
 cache_read_price_per_mtok = 0.125
+
+[[rule]]
+match = "exact"
+pattern = "gpt-5.3-codex-spark"
+context_window = 400000
+input_price_per_mtok = 1.25
+output_price_per_mtok = 10.0
+cache_read_price_per_mtok = 0.125
+supports_api_key_auth = false
+supports_login_auth = true
 
 [[rule]]
 match = "prefix"

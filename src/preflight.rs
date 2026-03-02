@@ -8,6 +8,7 @@ use crate::auth::{
     supports_login_for_provider, AuthError, OAuthTokens,
 };
 use crate::config::{AuthMode, Config, ModelConfig, ModelProvider};
+use crate::tokens::model_auth_capabilities;
 use std::net::IpAddr;
 
 /// Result payload for active-profile preflight checks.
@@ -90,6 +91,20 @@ fn validate_api_key_mode(
     profile: Option<&ModelConfig>,
     base_url: &str,
 ) -> Result<(), String> {
+    let caps = model_auth_capabilities(&config.api.model);
+    if !caps.supports_api_key_auth {
+        if caps.supports_login_auth {
+            return Err(format!(
+                "model `{}` requires `auth = \"login\"`; update `models.{}` auth mode or run `buddy init` to switch auth setup",
+                config.api.model, config.api.profile
+            ));
+        }
+        return Err(format!(
+            "model `{}` does not support `auth = \"api-key\"`",
+            config.api.model
+        ));
+    }
+
     // Runtime API config already carries a concrete key value when available.
     if !config.api.api_key.trim().is_empty() {
         return Ok(());
@@ -152,6 +167,14 @@ fn validate_login_mode_with<F>(config: &Config, load_tokens: F) -> Result<Option
 where
     F: Fn(&str) -> Result<Option<OAuthTokens>, AuthError>,
 {
+    let caps = model_auth_capabilities(&config.api.model);
+    if !caps.supports_login_auth {
+        return Err(format!(
+            "model `{}` does not support `auth = \"login\"`; configure this profile for API-key auth",
+            config.api.model
+        ));
+    }
+
     if !supports_login_for_provider(config.api.provider, &config.api.base_url) {
         return Err(format!(
             "profile `{}` uses `auth = \"login\"`, but provider `{}` with base URL `{}` is not login-supported",
@@ -267,6 +290,7 @@ mod tests {
     fn preflight_allows_localhost_without_key_source() {
         let mut cfg = Config::default();
         cfg.api.base_url = "http://localhost:11434/v1".to_string();
+        cfg.api.model = "llama3.2".to_string();
         cfg.api.auth = AuthMode::ApiKey;
         cfg.api.api_key.clear();
         let profile = cfg
@@ -274,11 +298,27 @@ mod tests {
             .get_mut(&cfg.api.profile)
             .expect("default profile present");
         profile.api_base_url = cfg.api.base_url.clone();
+        profile.model = Some("llama3.2".to_string());
         profile.api_key.clear();
         profile.api_key_env = None;
         profile.api_key_file = None;
         let report = validate_active_profile_ready(&cfg).expect("should pass");
         assert!(report.warnings.is_empty());
+    }
+
+    // Ensures login-only models fail early when profile auth is api-key.
+    #[test]
+    fn preflight_rejects_api_key_mode_for_login_only_model() {
+        let mut cfg = Config::default();
+        cfg.api.profile = "gpt-spark".to_string();
+        cfg.api.auth = AuthMode::ApiKey;
+        cfg.api.provider = ModelProvider::Openai;
+        cfg.api.base_url = "https://api.openai.com/v1".to_string();
+        cfg.api.model = "gpt-5.3-codex-spark".to_string();
+        cfg.api.api_key = "sk-test".to_string();
+
+        let err = validate_active_profile_ready(&cfg).expect_err("should fail");
+        assert!(err.contains("requires `auth = \"login\"`"), "err: {err}");
     }
 
     // Missing login credentials should be non-fatal and surface guidance.

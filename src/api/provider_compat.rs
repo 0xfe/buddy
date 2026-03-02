@@ -54,8 +54,17 @@ pub(crate) fn responses_reasoning_config(provider: ModelProvider, model: &str) -
 }
 
 /// Return default OpenAI built-in tool declarations for `/responses` requests.
-pub(crate) fn responses_builtin_tools(provider: ModelProvider, model: &str) -> Vec<Value> {
+pub(crate) fn responses_builtin_tools(
+    provider: ModelProvider,
+    model: &str,
+    login_mode: bool,
+) -> Vec<Value> {
     if provider != ModelProvider::Openai {
+        return Vec::new();
+    }
+    // ChatGPT/Codex login runtime currently rejects these server built-ins.
+    // Keep request shape conservative in login mode.
+    if login_mode {
         return Vec::new();
     }
     if !is_openai_reasoning_model(model) {
@@ -156,15 +165,15 @@ mod tests {
     // Verifies OpenAI built-ins are enabled only for OpenAI reasoning profiles.
     #[test]
     fn responses_builtin_tools_only_for_openai_reasoning_models() {
-        let openai = responses_builtin_tools(ModelProvider::Openai, "gpt-5.3-codex");
+        let openai = responses_builtin_tools(ModelProvider::Openai, "gpt-5.3-codex", false);
         assert_eq!(openai.len(), 2);
         assert_eq!(openai[0]["type"], "web_search");
         assert_eq!(openai[1]["type"], "code_interpreter");
 
-        let non_reasoning = responses_builtin_tools(ModelProvider::Openai, "gpt-4o-mini");
+        let non_reasoning = responses_builtin_tools(ModelProvider::Openai, "gpt-4o-mini", false);
         assert!(non_reasoning.is_empty());
 
-        let openrouter = responses_builtin_tools(ModelProvider::Openrouter, "gpt-5.3-codex");
+        let openrouter = responses_builtin_tools(ModelProvider::Openrouter, "gpt-5.3-codex", false);
         assert!(openrouter.is_empty());
     }
 
@@ -174,7 +183,15 @@ mod tests {
         let reasoning = responses_reasoning_config(ModelProvider::Anthropic, "claude-sonnet-4-5");
         assert!(reasoning.is_none());
 
-        let builtins = responses_builtin_tools(ModelProvider::Anthropic, "claude-sonnet-4-5");
+        let builtins =
+            responses_builtin_tools(ModelProvider::Anthropic, "claude-sonnet-4-5", false);
+        assert!(builtins.is_empty());
+    }
+
+    // Verifies login-mode requests suppress OpenAI Responses built-ins.
+    #[test]
+    fn responses_builtin_tools_disabled_in_login_mode() {
+        let builtins = responses_builtin_tools(ModelProvider::Openai, "gpt-5.3-codex", true);
         assert!(builtins.is_empty());
     }
 }
