@@ -5,5 +5,6 @@
 - When a plan is finished or no longer relevant, move it into `completed/` instead of deleting it.
 
 Current state:
-- active plans: none (all current plan artifacts are archived under `completed/`).
+- active plans:
+  - `plan-2026-03-02-provider-tooling-login-rationalization.md`
 - all historical plans are archived in `docs/plans/completed/`.

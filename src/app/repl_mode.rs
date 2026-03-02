@@ -485,6 +485,15 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
                         renderer.warn(&msg);
                     }
                 }
+                term_ui::SlashCommandAction::Logout(selector) => {
+                    if has_background_tasks {
+                        renderer.warn(BACKGROUND_TASK_WARNING);
+                    } else if let Err(msg) =
+                        crate::app::entry::run_logout_flow(renderer, &config, selector.as_deref())
+                    {
+                        renderer.warn(&msg);
+                    }
+                }
                 term_ui::SlashCommandAction::Help => {
                     if has_background_tasks {
                         renderer.warn(BACKGROUND_TASK_WARNING);

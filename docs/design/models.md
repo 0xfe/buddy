@@ -12,6 +12,68 @@ Buddy currently ships these default profiles:
 - `openrouter-glm` (OpenRouter, `/chat/completions`, API key)
 - `kimi` (Moonshot, `/chat/completions`, API key)
 
+Planned (tracked in `docs/plans/plan-2026-03-02-provider-tooling-login-rationalization.md`):
+
+- `claude-sonnet` (Anthropic, `/v1/messages`, API key only)
+- `claude-haiku` (Anthropic, `/v1/messages`, API key only)
+
+## M0 Provider/API Freeze (2026-03-02)
+
+This section freezes provider semantics before implementation so request/response
+and tool-loop behavior stays consistent across refactors.
+
+| Provider | Primary API in Buddy | Tool shape Buddy must emit | Tool-loop shape Buddy must consume | Auth modes in Buddy |
+| --- | --- | --- | --- | --- |
+| OpenAI | `/responses` (default for GPT-5 Codex/Spark) | Function tools (`type=function`) plus supported built-in tools (`web_search`, `code_interpreter`) | Responses API function-call + function-call-output flow | `api-key`, `login` |
+| OpenRouter | `/chat/completions` | OpenAI-compatible function tools | OpenAI-compatible tool calls/messages with provider-specific reasoning fields | `api-key` |
+| Moonshot | `/chat/completions` | OpenAI-compatible function tools | OpenAI-compatible tool calls/messages with `reasoning_content` variants | `api-key` |
+| Anthropic (planned) | `/v1/messages` | `tools: [{name, description, input_schema}]` plus supported Anthropic server tools | Assistant `tool_use` blocks followed by user `tool_result` blocks | `api-key` only (`login` not supported) |
+
+## OpenAI Tooling Contract (Frozen)
+
+For OpenAI Responses API profiles, Buddy should align to these constraints:
+
+- Built-in tool types use provider-native names from OpenAI docs:
+  - `web_search` (and compatibility with older `web_search_preview` where needed).
+  - `code_interpreter` with container settings (`container: { type: "auto" }` supported).
+- Custom tools stay in the function schema expected by Responses:
+  - `{ "type": "function", "name": "...", "description": "...", "parameters": { ... } }`
+- Tool-loop events map through Responses function-call flow:
+  - model emits function call items,
+  - Buddy executes tool locally/remotely,
+  - Buddy sends `function_call_output` records back on the next turn.
+- Text item content types remain protocol-valid:
+  - user/system input as `input_text`,
+  - assistant text as `output_text`.
+
+## Anthropic Tooling Contract (Planned)
+
+For Anthropic profiles, Buddy will implement native Messages API semantics:
+
+- Request format:
+  - `POST /v1/messages`
+  - `anthropic-version` header required.
+- Custom tool declarations:
+  - `tools: [{ "name": "...", "description": "...", "input_schema": { ... } }]`
+- Tool-loop behavior:
+  - assistant returns `tool_use` content blocks,
+  - Buddy executes tool and returns user `tool_result` blocks.
+- Server tools are versioned types (for example):
+  - `web_search_20250305` / `web_search_20260209`
+  - `code_execution_20250522`
+- No login auth support:
+  - Anthropic provider is API-key only in Buddy.
+
+## Model IDs (Planning Targets)
+
+Anthropic docs currently expose these aliases and snapshots:
+
+- Sonnet alias: `claude-sonnet-4-5` (latest snapshot example: `claude-sonnet-4-5-20250929`)
+- Haiku alias: `claude-haiku-4-5` (latest snapshot example: `claude-haiku-4-5-20251001`)
+
+Buddy template defaults should use stable aliases (not pinned snapshots) unless
+operators explicitly prefer snapshot pinning.
+
 ## Compatibility Matrix
 
 | Profile | Provider | API protocol | Request tuning in Buddy | Reasoning fields consumed |
@@ -121,9 +183,21 @@ Pricing/cost estimation:
 
 ## Sources
 
+- OpenAI Responses API and tool guides:
+  - https://platform.openai.com/docs/api-reference/responses/create
+  - https://platform.openai.com/docs/guides/tools?api-mode=responses
+  - https://platform.openai.com/docs/guides/function-calling?api-mode=responses
+  - https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses
+  - https://platform.openai.com/docs/guides/tools-code-interpreter?api-mode=responses
 - OpenAI Python SDK generated response types (reasoning config + response stream event schema):
   - https://github.com/openai/openai-python/tree/main/src/openai/types/responses
   - https://github.com/openai/openai-python/blob/main/src/openai/types/shared_params/reasoning.py
+- Anthropic APIs/models/tooling:
+  - https://docs.anthropic.com/en/api/messages
+  - https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview
+  - https://docs.anthropic.com/en/docs/build-with-claude/tool-use/web-search-tool
+  - https://docs.anthropic.com/en/docs/build-with-claude/tool-use/code-execution-tool
+  - https://docs.anthropic.com/en/docs/about-claude/models/overview
 - OpenRouter OpenAPI schema (chat + responses reasoning fields):
   - https://openrouter.ai/openapi.json
 - OpenRouter reasoning docs:

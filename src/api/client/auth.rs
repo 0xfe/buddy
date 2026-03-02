@@ -64,7 +64,7 @@ pub(super) async fn resolve_bearer_token(
     // Missing provider tokens means the user has not completed login yet.
     if tokens.is_none() {
         return Err(ApiError::LoginRequired(format!(
-            "Provider `{provider}` requires login auth, but no saved login was found. Run `buddy login {profile}` (or `/login {profile}` inside REPL)."
+            "Provider `{provider}` requires login auth, but no saved login was found. Run `buddy login {provider}` (or `/login {provider}` inside REPL)."
         )));
     }
 

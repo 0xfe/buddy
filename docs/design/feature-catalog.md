@@ -13,7 +13,8 @@ For the high-level architecture narrative, see [docs/design/DESIGN.md](DESIGN.md
 - `buddy exec <prompt>`: executes one prompt and exits.
 - `buddy resume <session-id>`: starts REPL after restoring a saved session.
 - `buddy resume --last`: starts REPL using the most recent saved session.
-- `buddy login [model-profile] [--check] [--reset]`: runs login health/reset/device flow for the selected profile.
+- `buddy login [provider] [--check] [--reset]`: runs provider login health/reset/device flow.
+- `buddy logout [provider]`: clears saved provider login credentials.
 - `buddy trace summary <file>`: renders trace-level token/cost/tool/error summary.
 - `buddy trace replay <file> --turn <n>`: renders one prompt-turn reconstruction.
 - `buddy trace context-evolution <file>`: renders context/token/cost/compaction timeline.
@@ -237,7 +238,8 @@ All tool outputs are wrapped as JSON:
 - `/compact`
 - `/model [name|index]`
 - `/theme [name|index]`
-- `/login [name|index]`
+- `/login [provider]`
+- `/logout [provider]`
 - `/help`
 - `/quit`, `/exit`, `/q`
 

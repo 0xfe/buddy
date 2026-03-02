@@ -1,8 +1,8 @@
 //! Application entry orchestration for the buddy CLI.
 
+use crate::app::commands::auth::resolve_auth_provider_selector;
 #[cfg(test)]
 use crate::app::commands::model::handle_model_command;
-use crate::app::commands::model::{configured_model_profile_names, resolve_model_profile_selector};
 #[cfg(test)]
 use crate::app::commands::session::handle_session_command;
 use crate::app::commands::session::resume_request_from_command;
@@ -16,9 +16,8 @@ use crate::app::trace_cli::run_trace_command;
 use crate::cli;
 use buddy::agent::Agent;
 use buddy::auth::{
-    complete_openai_device_login, has_legacy_profile_token_records, login_provider_key,
-    provider_login_health, reset_provider_tokens, save_provider_tokens, start_openai_device_login,
-    supports_login_for_provider, try_open_browser,
+    complete_openai_device_login, has_legacy_profile_token_records, provider_login_health,
+    reset_provider_tokens, save_provider_tokens, start_openai_device_login, try_open_browser,
 };
 use buddy::config::load_config_with_diagnostics;
 use buddy::config::select_model_profile;
@@ -142,14 +141,28 @@ pub(crate) async fn run(args: crate::cli::Args) -> i32 {
     }
 
     if let Some(cli::Command::Login {
-        model,
+        provider,
         reset,
         check,
     }) = args.command.as_ref()
     {
-        if let Err(msg) =
-            run_login_flow(&renderer, &loaded.config, model.as_deref(), *reset, *check).await
+        if let Err(msg) = run_login_flow(
+            &renderer,
+            &loaded.config,
+            provider.as_deref(),
+            *reset,
+            *check,
+        )
+        .await
         {
+            renderer.error(&msg);
+            return 1;
+        }
+        return 0;
+    }
+
+    if let Some(cli::Command::Logout { provider }) = args.command.as_ref() {
+        if let Err(msg) = run_logout_flow(&renderer, &loaded.config, provider.as_deref()) {
             renderer.error(&msg);
             return 1;
         }
@@ -527,91 +540,65 @@ pub(crate) async fn run_login_flow(
     check: bool,
 ) -> Result<(), String> {
     // Login flow:
-    // 1) select profile/provider and render saved-login health,
-    // 2) optionally reset existing credentials,
-    // 3) run OpenAI device flow and persist resulting tokens.
-    if config.models.is_empty() {
-        return Err(
-            "No configured model profiles. Add `[models.<name>]` entries to buddy.toml."
-                .to_string(),
-        );
+    // 1) resolve provider selector (provider-first with profile compatibility),
+    // 2) surface lightweight status/check/reset behavior,
+    // 3) execute provider-specific device login flow when needed.
+    let selection = resolve_auth_provider_selector(config, selector, "login")?;
+    if let Some(profile_name) = selection.legacy_profile.as_deref() {
+        renderer.warn(&format!(
+            "Using model profile selector `{profile_name}` for `/login` is deprecated. Use provider names like `openai`."
+        ));
     }
-
-    let names = configured_model_profile_names(config);
-    let profile_name = if let Some(selector) = selector {
-        resolve_model_profile_selector(config, &names, selector)?
-    } else {
-        config.agent.model.clone()
-    };
-
-    let Some(profile) = config.models.get(&profile_name) else {
-        return Err(format!("unknown profile `{profile_name}`"));
-    };
-    let provider_family = profile.provider.resolved(&profile.api_base_url);
-    if !supports_login_for_provider(provider_family, &profile.api_base_url) {
+    let provider = selection.provider_label;
+    if provider != "openai" {
         return Err(format!(
-            "profile `{profile_name}` with provider `{provider_family:?}` points to `{}`. Login auth currently supports OpenAI endpoints only.",
-            profile.api_base_url,
+            "provider `{provider}` does not support login auth. Use API key auth for this provider."
         ));
     }
 
-    let Some(provider) = login_provider_key(provider_family, &profile.api_base_url) else {
-        return Err(format!(
-            "profile `{profile_name}` with provider `{provider_family:?}` points to `{}`. Login auth currently supports OpenAI endpoints only.",
-            profile.api_base_url,
-        ));
-    };
-
-    let health = provider_login_health(provider)
+    let health = provider_login_health(&provider)
         .map_err(|err| format!("failed to check existing login health: {err}"))?;
-    renderer.section("login health");
-    renderer.field("provider", provider);
-    renderer.field(
-        "saved_credentials",
-        if health.has_tokens { "yes" } else { "no" },
-    );
-    if let Some(expires_at_unix) = health.expires_at_unix {
-        renderer.field("expires_at_unix", &expires_at_unix.to_string());
-        renderer.field(
-            "expiring_soon",
-            if health.expiring_soon { "yes" } else { "no" },
-        );
-    }
-    eprintln!();
-
     if check {
+        renderer.section("login status");
+        renderer.field("provider", &provider);
+        renderer.field("logged_in", if health.has_tokens { "yes" } else { "no" });
+        if health.has_tokens {
+            renderer.detail("use `/logout openai` to clear saved login credentials.");
+        }
+        eprintln!();
         return Ok(());
     }
 
     if reset {
-        let removed = reset_provider_tokens(provider)
+        let removed = reset_provider_tokens(&provider)
             .map_err(|err| format!("failed to reset saved login credentials: {err}"))?;
         if removed {
-            renderer.section("login reset");
-            renderer.field("provider", provider);
-            renderer.field("status", "removed saved credentials");
-            eprintln!();
-        } else {
-            renderer.section("login reset");
-            renderer.field("provider", provider);
-            renderer.field("status", "no saved credentials found");
+            renderer.section("logout");
+            renderer.field("provider", &provider);
+            renderer.detail("removed saved login credentials.");
             eprintln!();
         }
+    } else if health.has_tokens {
+        renderer.section("login");
+        renderer.detail(&format!(
+            "already logged into {provider}. Use `/logout {provider}` to log out."
+        ));
+        eprintln!();
+        return Ok(());
     }
 
     let login = start_openai_device_login()
         .await
         .map_err(|err| format!("failed to start login flow: {err}"))?;
+    // Best-effort browser launch for convenience. The flow still works if this fails.
+    let _ = try_open_browser(&login.verification_url);
 
-    renderer.section("login");
-    renderer.field("profile", &profile_name);
-    renderer.field("url", &login.verification_url);
-    renderer.field("code", &login.user_code);
-    if try_open_browser(&login.verification_url) {
-        renderer.field("browser", "opened");
-    } else {
-        renderer.field("browser", "not available (open URL manually)");
-    }
+    renderer.section(&format!(
+        "logging you into {provider} via {}",
+        login.verification_url
+    ));
+    renderer.field("device code", &login.user_code);
+    renderer.detail("(open your browser and go to the url above, and enter the device code)");
     eprintln!();
 
     let tokens = {
@@ -620,20 +607,47 @@ pub(crate) async fn run_login_flow(
             .await
             .map_err(|err| format!("login failed: {err}"))?
     };
-    save_provider_tokens(provider, tokens)
+    save_provider_tokens(&provider, tokens)
         .map_err(|err| format!("failed to save login credentials: {err}"))?;
 
     renderer.section("login successful");
-    renderer.field("profile", &profile_name);
-    renderer.field("provider", provider);
-    if profile.auth != AuthMode::Login {
-        renderer.field(
-            "note",
-            "this profile currently uses auth=api-key; set auth=login to use saved login tokens",
+    renderer.field("provider", &provider);
+    if config.api.auth != AuthMode::Login {
+        renderer.detail(
+            "active profile currently uses auth=api-key; set auth=login to use saved login tokens.",
         );
     }
     eprintln!();
 
+    Ok(())
+}
+
+/// Handle `buddy logout` / `/logout` provider credential removal.
+pub(crate) fn run_logout_flow(
+    renderer: &dyn RenderSink,
+    config: &Config,
+    selector: Option<&str>,
+) -> Result<(), String> {
+    let selection = resolve_auth_provider_selector(config, selector, "logout")?;
+    if let Some(profile_name) = selection.legacy_profile.as_deref() {
+        renderer.warn(&format!(
+            "Using model profile selector `{profile_name}` for `/logout` is deprecated. Use provider names like `openai`."
+        ));
+    }
+    let provider = selection.provider_label;
+    let removed = reset_provider_tokens(&provider)
+        .map_err(|err| format!("failed to clear saved login credentials: {err}"))?;
+
+    if removed {
+        renderer.section("logout");
+        renderer.field("provider", &provider);
+        renderer.detail("saved login credentials removed.");
+    } else {
+        renderer.section("logout");
+        renderer.field("provider", &provider);
+        renderer.detail("no saved login credentials found.");
+    }
+    eprintln!();
     Ok(())
 }
 

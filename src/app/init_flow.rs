@@ -299,14 +299,7 @@ async fn run_auth_setup(
                     .map_err(|err| format!("failed to persist profile auth mode: {err}"))?;
                 let refreshed = load_config(Some(config_path))
                     .map_err(|err| format!("failed to reload config after auth update: {err}"))?;
-                crate::app::entry::run_login_flow(
-                    renderer,
-                    &refreshed,
-                    Some(&config.agent.model),
-                    false,
-                    false,
-                )
-                .await
+                crate::app::entry::run_login_flow(renderer, &refreshed, None, false, false).await
             }
             1 => configure_api_key_auth(renderer, config, config_path),
             _ => {

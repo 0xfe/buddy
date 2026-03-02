@@ -45,7 +45,7 @@ buddy init
 $EDITOR ~/.config/buddy/buddy.toml
 
 # Optional: login flow later (for auth = "login" profiles)
-buddy login
+buddy login openai
 
 # Start buddy operating on the local host (and connect to the tmux session)
 buddy
@@ -76,7 +76,8 @@ buddy resume --last
 | `/status` | Show current model, base URL, enabled tools, and session counters. |
 | `/model [name\|index]` | Switch configured model profile (`/model` with no args opens picker). |
 | `/theme [name\|index]` | Switch terminal theme (`/theme` with no args opens picker), persist config, and render preview blocks. |
-| `/login [name\|index]` | Check/start login flow for a configured profile. |
+| `/login [provider]` | Check/start provider login flow. |
+| `/logout [provider]` | Clear saved provider login credentials. |
 | `/context` | Show estimated context usage and token stats. |
 | `/compact` | Summarize and trim older turns to reclaim context budget. |
 | `/ps` | Show running background tasks with IDs and elapsed time. |
@@ -96,7 +97,7 @@ See config reference in [docs/developer/REFERENCE.md](docs/developer/REFERENCE.m
 ## Login auth behavior
 
 - Profiles using `auth = "login"` no longer hard-fail startup when credentials are missing.
-- Buddy starts normally and shows guidance to run `/login <profile>` (or `buddy login <profile>`).
+- Buddy starts normally and shows guidance to run `/login <provider>` (or `buddy login <provider>`).
 - Requests on that profile still require valid saved login credentials.
 
 ## Build and release

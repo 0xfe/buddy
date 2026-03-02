@@ -173,7 +173,7 @@ where
         Ok(Some(_)) => Ok(None),
         Ok(None) => Ok(Some(format!(
             "provider `{}` requires login auth, but no saved login was found. Run `buddy login {}` (or `/login {}` inside REPL).",
-            provider, config.api.profile, config.api.profile
+            provider, provider, provider
         ))),
         Err(err) => Err(format!(
             "failed to load login credentials for provider `{}`: {err}",
@@ -296,7 +296,7 @@ mod tests {
         };
         assert_eq!(report.warnings.len(), 1);
         assert!(
-            report.warnings[0].contains("buddy login gpt-codex"),
+            report.warnings[0].contains("buddy login openai"),
             "warning: {}",
             report.warnings[0]
         );

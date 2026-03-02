@@ -93,16 +93,22 @@ pub enum Command {
         #[arg(long = "last", default_value_t = false)]
         last: bool,
     },
-    /// Login to a provider for a model profile.
+    /// Login to a provider.
     Login {
-        /// Model profile name. Uses [agent].model when omitted.
-        model: Option<String>,
+        /// Provider (e.g., openai, openrouter, moonshot/kimi, anthropic/claude).
+        /// For compatibility, model-profile selectors are also accepted.
+        provider: Option<String>,
         /// Remove stored credentials for this provider before starting login.
         #[arg(long = "reset", default_value_t = false)]
         reset: bool,
         /// Print credential health for this provider and exit.
         #[arg(long = "check", default_value_t = false)]
         check: bool,
+    },
+    /// Remove saved login credentials for a provider.
+    Logout {
+        /// Provider (e.g., openai). Uses active profile provider when omitted.
+        provider: Option<String>,
     },
     /// Analyze runtime trace JSONL files.
     Trace {
@@ -168,25 +174,35 @@ mod tests {
         ));
     }
 
-    // Ensures `login` accepts an explicit model profile without mutating flags.
+    // Ensures `login` accepts an explicit provider without mutating flags.
     #[test]
-    fn login_subcommand_accepts_optional_model() {
-        let args = Args::parse_from(["buddy", "login", "gpt-codex"]);
+    fn login_subcommand_accepts_optional_provider() {
+        let args = Args::parse_from(["buddy", "login", "openai"]);
         assert!(matches!(
             args.command,
-            Some(Command::Login { model, reset, check })
-                if model.as_deref() == Some("gpt-codex") && !reset && !check
+            Some(Command::Login { provider, reset, check })
+                if provider.as_deref() == Some("openai") && !reset && !check
         ));
     }
 
     // Ensures optional login control flags can be combined.
     #[test]
     fn login_subcommand_accepts_reset_and_check_flags() {
-        let args = Args::parse_from(["buddy", "login", "gpt-codex", "--reset", "--check"]);
+        let args = Args::parse_from(["buddy", "login", "openai", "--reset", "--check"]);
         assert!(matches!(
             args.command,
-            Some(Command::Login { model, reset, check })
-                if model.as_deref() == Some("gpt-codex") && reset && check
+            Some(Command::Login { provider, reset, check })
+                if provider.as_deref() == Some("openai") && reset && check
+        ));
+    }
+
+    // Ensures `logout` supports optional provider selector.
+    #[test]
+    fn logout_subcommand_accepts_optional_provider() {
+        let args = Args::parse_from(["buddy", "logout", "openai"]);
+        assert!(matches!(
+            args.command,
+            Some(Command::Logout { provider }) if provider.as_deref() == Some("openai")
         ));
     }
 

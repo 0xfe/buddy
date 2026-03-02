@@ -9,7 +9,8 @@ This page centralizes command, flag, model, theme, config, and tool reference ma
 - `buddy resume <session-id>`: resume a saved session.
 - `buddy resume --last`: resume the last session in the current directory.
 - `buddy init [--force]`: guided init flow for `~/.config/buddy/buddy.toml` (update existing config, overwrite with backup, or cancel).
-- `buddy login [model] [--check] [--reset]`: login/check/reset provider credentials for a model profile.
+- `buddy login [provider] [--check] [--reset]`: login/check/reset provider credentials (provider-first; profile selectors still accepted with deprecation warning).
+- `buddy logout [provider]`: clear saved provider login credentials.
 - `buddy trace summary <file>`: summarize one JSONL runtime trace.
 - `buddy trace replay <file> --turn <n>`: inspect one prompt turn from trace.
 - `buddy trace context-evolution <file>`: inspect context/token/cost evolution over time.
@@ -17,7 +18,7 @@ This page centralizes command, flag, model, theme, config, and tool reference ma
 Login soft-fail behavior:
 
 - If the active profile uses `auth = "login"` and no saved credentials exist, startup/model switching stays available.
-- Buddy surfaces a warning with exact recovery commands: `/login <profile>` or `buddy login <profile>`.
+- Buddy surfaces a warning with exact recovery commands: `/login <provider>` or `buddy login <provider>`.
 
 ## Global flags
 
@@ -42,7 +43,8 @@ Login soft-fail behavior:
 | `/status` | Show current model, base URL, enabled tools, and session counters. |
 | `/model [name\|index]` | Switch configured model profile (`/model` with no args opens picker). |
 | `/theme [name\|index]` | Switch terminal theme (`/theme` with no args opens picker), persist config, and render preview blocks. |
-| `/login [name\|index]` | Check/start login flow for a configured profile. |
+| `/login [provider]` | Check/start provider login flow. |
+| `/logout [provider]` | Clear saved provider login credentials. |
 | `/context` | Show estimated context usage and token stats. |
 | `/compact` | Summarize and trim older turns to reclaim context budget. |
 | `/ps` | Show running background tasks with IDs and elapsed time. |
@@ -228,7 +230,7 @@ buddy
 OpenAI (login auth profile):
 
 ```bash
-buddy login gpt-codex
+buddy login openai
 buddy
 ```
 

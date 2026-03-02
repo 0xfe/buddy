@@ -13,7 +13,7 @@ pub struct SlashCommand {
 }
 
 /// Built-in slash commands for interactive mode.
-pub const SLASH_COMMANDS: [SlashCommand; 15] = [
+pub const SLASH_COMMANDS: [SlashCommand; 16] = [
     SlashCommand {
         name: "/status",
         description: "Show model, endpoint, tools, and session details.",
@@ -56,7 +56,11 @@ pub const SLASH_COMMANDS: [SlashCommand; 15] = [
     },
     SlashCommand {
         name: "/login",
-        description: "Login for a model profile: /login [name|index].",
+        description: "Login for a provider: /login [provider].",
+    },
+    SlashCommand {
+        name: "/logout",
+        description: "Logout a provider: /logout [provider].",
     },
     SlashCommand {
         name: "/help",
@@ -111,8 +115,10 @@ pub enum SlashCommandAction {
     Model(Option<String>),
     /// Switch the active terminal theme.
     Theme(Option<String>),
-    /// Start login flow for a model profile.
+    /// Start login flow for a provider.
     Login(Option<String>),
+    /// Clear saved login credentials for a provider.
+    Logout(Option<String>),
     /// Show slash-command help.
     Help,
     /// Preserve unknown command token for higher-level UX handling.
@@ -161,6 +167,9 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommandAction> {
         }
         "/login" => {
             SlashCommandAction::Login(trimmed.split_whitespace().nth(1).map(str::to_string))
+        }
+        "/logout" => {
+            SlashCommandAction::Logout(trimmed.split_whitespace().nth(1).map(str::to_string))
         }
         other => SlashCommandAction::Unknown(other.to_string()),
     };
@@ -256,6 +265,10 @@ mod tests {
         assert_eq!(
             parse_slash_command("/login kimi"),
             Some(SlashCommandAction::Login(Some("kimi".to_string())))
+        );
+        assert_eq!(
+            parse_slash_command("/logout openai"),
+            Some(SlashCommandAction::Logout(Some("openai".to_string())))
         );
         assert_eq!(parse_slash_command("/q"), Some(SlashCommandAction::Quit));
         assert_eq!(parse_slash_command("hello"), None);
