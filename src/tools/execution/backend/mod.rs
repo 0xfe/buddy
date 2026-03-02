@@ -2,6 +2,7 @@
 //!
 //! Each module implements the shared contracts for one transport domain.
 
+pub(super) mod common;
 pub(super) mod container;
 pub(super) mod local;
 pub(super) mod ssh;

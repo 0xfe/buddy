@@ -6,10 +6,12 @@
 //! - `policy`: provider-specific transport/runtime rules
 //! - `client`: shared auth and dispatch orchestration
 
+use crate::config::{AuthMode, ModelProvider};
 use crate::error::ApiError;
 use crate::types::{ChatRequest, ChatResponse};
 use async_trait::async_trait;
 use reqwest::header::{HeaderMap, RETRY_AFTER};
+use serde_json::Value;
 use std::time::SystemTime;
 
 mod anthropic;
@@ -20,6 +22,38 @@ mod provider_compat;
 mod responses;
 
 pub use client::ApiClient;
+
+/// Return default provider-native built-in tool names for one request profile.
+///
+/// This is used by app orchestration code to keep prompt/tool registration
+/// aligned with the same policy logic used by HTTP request construction.
+pub fn default_builtin_tool_names(
+    provider: ModelProvider,
+    base_url: &str,
+    auth: AuthMode,
+    api_key: &str,
+    model: &str,
+) -> Vec<&'static str> {
+    let options = policy::responses_request_options(provider, base_url, auth, api_key, model);
+    let mut names = Vec::new();
+    for builtin in options.builtin_tools {
+        let kind = builtin
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let name = match kind {
+            "web_search" | "web_search_preview" => Some("web_search"),
+            "code_interpreter" => Some("code_interpreter"),
+            _ => None,
+        };
+        if let Some(name) = name {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+    }
+    names
+}
 
 /// Minimal model API interface used by the agent loop.
 ///
@@ -190,5 +224,31 @@ mod tests {
         .expect("valid responses fixture");
 
         assert_eq!(semantic_shape(&responses), semantic_shape(&completions));
+    }
+
+    // Ensures public builtin-tool helper follows OpenAI reasoning defaults.
+    #[test]
+    fn default_builtin_tool_names_exposes_openai_reasoning_defaults() {
+        let names = default_builtin_tool_names(
+            ModelProvider::Openai,
+            "https://api.openai.com/v1",
+            AuthMode::ApiKey,
+            "sk-test",
+            "gpt-5.3-codex",
+        );
+        assert_eq!(names, vec!["web_search", "code_interpreter"]);
+    }
+
+    // Ensures login-mode responses suppress builtins when policy requires it.
+    #[test]
+    fn default_builtin_tool_names_suppresses_login_mode_builtins() {
+        let names = default_builtin_tool_names(
+            ModelProvider::Openai,
+            "https://api.openai.com/v1",
+            AuthMode::Login,
+            "",
+            "gpt-5.3-codex",
+        );
+        assert!(names.is_empty());
     }
 }

@@ -15,13 +15,16 @@ use crate::app::trace::resolve_trace_path;
 use crate::app::trace_cli::run_trace_command;
 use crate::cli;
 use buddy::agent::Agent;
+use buddy::api::default_builtin_tool_names;
 use buddy::auth::{
     complete_openai_device_login, has_legacy_profile_token_records, provider_login_health,
     reset_provider_tokens, save_provider_tokens, start_openai_device_login, try_open_browser,
 };
 use buddy::config::load_config_with_diagnostics;
 use buddy::config::select_model_profile;
-use buddy::config::{AuthMode, Config, ModelProvider, ToolsConfig};
+#[cfg(test)]
+use buddy::config::ModelProvider;
+use buddy::config::{AuthMode, Config, ToolsConfig};
 use buddy::preflight::validate_active_profile_ready;
 use buddy::prompt::{render_system_prompt, ExecutionTarget, SystemPromptParams};
 #[cfg(test)]
@@ -453,8 +456,9 @@ fn build_tools(
     capture_pane_enabled: bool,
 ) -> ToolSetup {
     let mut tools = ToolRegistry::new();
-    let builtin_tool_names = openai_builtin_tool_names(
+    let builtin_tool_names = default_builtin_tool_names(
         config.api.provider,
+        &config.api.base_url,
         config.api.auth,
         &config.api.api_key,
         &config.api.model,
@@ -685,8 +689,9 @@ fn enabled_tool_names(
         tools.push("read_file");
         tools.push("write_file");
     }
-    let builtin_tool_names = openai_builtin_tool_names(
+    let builtin_tool_names = default_builtin_tool_names(
         config.api.provider,
+        &config.api.base_url,
         config.api.auth,
         &config.api.api_key,
         &config.api.model,
@@ -698,31 +703,6 @@ fn enabled_tool_names(
     tools.extend(builtin_tool_names);
     tools.push("time");
     tools
-}
-
-/// Return OpenAI native built-in tools enabled by default for this profile.
-fn openai_builtin_tool_names(
-    provider: ModelProvider,
-    auth: AuthMode,
-    api_key: &str,
-    model: &str,
-) -> Vec<&'static str> {
-    if provider != ModelProvider::Openai {
-        return Vec::new();
-    }
-    if auth == AuthMode::Login && api_key.trim().is_empty() {
-        return Vec::new();
-    }
-    let normalized = model.trim().to_ascii_lowercase();
-    let reasoning_family = normalized.contains("gpt-5")
-        || normalized.contains("codex")
-        || normalized.starts_with("o1")
-        || normalized.starts_with("o3")
-        || normalized.starts_with("o4");
-    if !reasoning_family {
-        return Vec::new();
-    }
-    vec!["web_search", "code_interpreter"]
 }
 
 #[cfg(test)]
@@ -1061,8 +1041,9 @@ mod tests {
     #[test]
     fn openai_builtin_tool_names_enabled_for_reasoning_profiles() {
         // GPT-5/Codex profiles should expose OpenAI-native web + python tools.
-        let names = openai_builtin_tool_names(
+        let names = default_builtin_tool_names(
             ModelProvider::Openai,
+            "https://api.openai.com/v1",
             AuthMode::ApiKey,
             "sk-test",
             "gpt-5.3-codex",
@@ -1073,8 +1054,9 @@ mod tests {
     #[test]
     fn openai_builtin_tool_names_disabled_for_non_openai_profiles() {
         // Non-OpenAI providers should not advertise OpenAI built-in tools.
-        let names = openai_builtin_tool_names(
+        let names = default_builtin_tool_names(
             ModelProvider::Openrouter,
+            "https://openrouter.ai/api/v1",
             AuthMode::ApiKey,
             "sk-test",
             "gpt-5.3-codex",
@@ -1085,8 +1067,13 @@ mod tests {
     #[test]
     fn openai_builtin_tool_names_disabled_for_login_auth_mode() {
         // ChatGPT/Codex login runtime rejects these built-ins.
-        let names =
-            openai_builtin_tool_names(ModelProvider::Openai, AuthMode::Login, "", "gpt-5.3-codex");
+        let names = default_builtin_tool_names(
+            ModelProvider::Openai,
+            "https://api.openai.com/v1",
+            AuthMode::Login,
+            "",
+            "gpt-5.3-codex",
+        );
         assert!(names.is_empty());
     }
 

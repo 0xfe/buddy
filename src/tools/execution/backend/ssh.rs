@@ -10,12 +10,16 @@ use std::process::Stdio;
 use std::sync::{Mutex as StdMutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use super::common::{
+    parse_created_pane_output, parse_created_session_output, parse_killed_pane_output,
+    parse_killed_session_output, selector_from_capture_options, selector_from_send_keys_options,
+    sent_keys_message, should_fallback_to_default_target,
+};
 use crate::tmux::capture::run_remote_capture_pane;
 use crate::tmux::management::{
     canonical_session_name, create_managed_pane_script, create_managed_session_script,
     is_default_target_alias, kill_managed_pane_script, kill_managed_session_script,
-    parse_created_pane, parse_created_session, parse_killed_pane, parse_resolved_target,
-    resolve_managed_target_script,
+    parse_resolved_target, resolve_managed_target_script,
 };
 use crate::tmux::pane::ensure_tmux_pane;
 use crate::tmux::prompt::ensure_tmux_prompt_setup;
@@ -168,11 +172,6 @@ impl SshContext {
     }
 }
 
-fn should_fallback_to_default_target(err: &ToolError) -> bool {
-    let text = err.to_string();
-    text.contains("tmux target not found") || text.contains("failed to parse managed tmux target")
-}
-
 #[async_trait]
 impl CommandBackend for SshContext {
     async fn run_command(
@@ -214,16 +213,8 @@ impl ExecutionBackendOps for SshContext {
     }
 
     async fn capture_pane(&self, options: CapturePaneOptions) -> Result<String, ToolError> {
-        let resolved = self
-            .resolve_target(
-                TmuxTargetSelector {
-                    target: options.target.clone(),
-                    session: options.session.clone(),
-                    pane: options.pane.clone(),
-                },
-                true,
-            )
-            .await?;
+        let selector = selector_from_capture_options(&options);
+        let resolved = self.resolve_target(selector, true).await?;
         run_remote_capture_pane(
             &self.target,
             &self.control_path,
@@ -234,16 +225,8 @@ impl ExecutionBackendOps for SshContext {
     }
 
     async fn send_keys(&self, options: SendKeysOptions) -> Result<String, ToolError> {
-        let resolved = self
-            .resolve_target(
-                TmuxTargetSelector {
-                    target: options.target.clone(),
-                    session: options.session.clone(),
-                    pane: options.pane.clone(),
-                },
-                true,
-            )
-            .await?;
+        let selector = selector_from_send_keys_options(&options);
+        let resolved = self.resolve_target(selector, true).await?;
         send_remote_tmux_keys(
             &self.target,
             &self.control_path,
@@ -251,10 +234,7 @@ impl ExecutionBackendOps for SshContext {
             &options,
         )
         .await?;
-        Ok(format!(
-            "sent keys to tmux pane {} ({})",
-            resolved.pane_id, resolved.session
-        ))
+        Ok(sent_keys_message(&resolved))
     }
 
     async fn run_shell_command(
@@ -316,9 +296,7 @@ impl ExecutionBackendOps for SshContext {
             output,
             "failed to create managed tmux session".into(),
         )?;
-        let created = parse_created_session(&output.stdout).ok_or_else(|| {
-            ToolError::ExecutionFailed("failed to parse created tmux session".into())
-        })?;
+        let created = parse_created_session_output(&output.stdout)?;
         if created.created {
             ensure_tmux_prompt_setup(&self.target, &self.control_path, &created.pane_id).await?;
         }
@@ -338,13 +316,7 @@ impl ExecutionBackendOps for SshContext {
             output,
             "failed to kill managed tmux session".into(),
         )?;
-        let killed = output.stdout.trim();
-        if killed.is_empty() {
-            return Err(ToolError::ExecutionFailed(
-                "failed to parse killed tmux session".into(),
-            ));
-        }
-        Ok(killed.to_string())
+        parse_killed_session_output(&output.stdout)
     }
 
     async fn create_tmux_pane(
@@ -369,9 +341,7 @@ impl ExecutionBackendOps for SshContext {
             output,
             "failed to create managed tmux pane".into(),
         )?;
-        let created = parse_created_pane(&output.stdout).ok_or_else(|| {
-            ToolError::ExecutionFailed("failed to parse created tmux pane".into())
-        })?;
+        let created = parse_created_pane_output(&output.stdout)?;
         if created.created {
             ensure_tmux_prompt_setup(&self.target, &self.control_path, &created.pane_id).await?;
         }
@@ -395,9 +365,7 @@ impl ExecutionBackendOps for SshContext {
             output,
             "failed to kill managed tmux pane".into(),
         )?;
-        let (session, pane_id) = parse_killed_pane(&output.stdout)
-            .ok_or_else(|| ToolError::ExecutionFailed("failed to parse killed tmux pane".into()))?;
-        Ok(format!("killed pane {pane_id} in session {session}"))
+        parse_killed_pane_output(&output.stdout)
     }
 }
 
@@ -582,15 +550,5 @@ mod tests {
                 .to_string()
                 .contains("requires a tmux-backed execution target")),
         }
-    }
-
-    #[test]
-    fn fallback_detection_matches_target_resolution_errors() {
-        let err = ToolError::ExecutionFailed(
-            "failed to resolve managed tmux target: tmux target not found".to_string(),
-        );
-        assert!(should_fallback_to_default_target(&err));
-        let err = ToolError::ExecutionFailed("different failure".to_string());
-        assert!(!should_fallback_to_default_target(&err));
     }
 }
