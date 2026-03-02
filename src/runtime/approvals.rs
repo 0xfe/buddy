@@ -74,7 +74,7 @@ pub(super) fn handle_approval_request(
         RuntimeEvent::Task(TaskEvent::WaitingApproval {
             task: active_task.task_ref.clone(),
             approval_id: approval_id.clone(),
-            command: truncate_preview(request.command(), 140),
+            command: request.command().to_string(),
             risk: request
                 .metadata()
                 .map(|meta| meta.risk().as_str().to_string()),

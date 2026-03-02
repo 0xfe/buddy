@@ -24,26 +24,26 @@ SESSION={session_q}\n\
 WINDOW={window_q}\n\
 PANE_TITLE={pane_title_q}\n\
 CREATED=0\n\
-if tmux has-session -t \"$SESSION\" 2>/dev/null; then\n\
+if tmux has-session -t \"=$SESSION\" 2>/dev/null; then\n\
   :\n\
 else\n\
   tmux new-session -d -s \"$SESSION\" -n \"$WINDOW\"\n\
   CREATED=1\n\
 fi\n\
-if ! tmux list-windows -t \"$SESSION\" -F '#{{window_name}}' | grep -Fx -- \"$WINDOW\" >/dev/null 2>&1; then\n\
-  tmux new-window -d -t \"$SESSION\" -n \"$WINDOW\"\n\
+if ! tmux list-windows -t \"=$SESSION\" -F '#{{window_name}}' | grep -Fx -- \"$WINDOW\" >/dev/null 2>&1; then\n\
+  tmux new-window -d -t \"=$SESSION\" -n \"$WINDOW\"\n\
   CREATED=1\n\
 fi\n\
-PANE=\"$(tmux list-panes -t \"$SESSION:$WINDOW\" -F '#{{pane_id}}\\t#{{pane_title}}' | awk -F '\\t' '$2==\"'\"$PANE_TITLE\"'\" {{print $1; exit}}')\"\n\
+PANE=\"$(tmux list-panes -t \"=$SESSION:$WINDOW\" -F '#{{pane_id}}\\t#{{pane_title}}' | awk -F '\\t' '$2==\"'\"$PANE_TITLE\"'\" {{print $1; exit}}')\"\n\
 if [ -z \"$PANE\" ]; then\n\
   if [ \"$CREATED\" = \"1\" ]; then\n\
-    PANE=\"$(tmux list-panes -t \"$SESSION:$WINDOW\" -F '#{{pane_id}}' | head -n1)\"\n\
+    PANE=\"$(tmux list-panes -t \"=$SESSION:$WINDOW\" -F '#{{pane_id}}' | head -n1)\"\n\
   else\n\
-    PANE_COUNT=\"$(tmux list-panes -t \"$SESSION:$WINDOW\" -F '#{{pane_id}}' | wc -l | tr -d '[:space:]')\"\n\
+    PANE_COUNT=\"$(tmux list-panes -t \"=$SESSION:$WINDOW\" -F '#{{pane_id}}' | wc -l | tr -d '[:space:]')\"\n\
     if [ \"$PANE_COUNT\" = \"1\" ]; then\n\
-      PANE=\"$(tmux list-panes -t \"$SESSION:$WINDOW\" -F '#{{pane_id}}' | head -n1)\"\n\
+      PANE=\"$(tmux list-panes -t \"=$SESSION:$WINDOW\" -F '#{{pane_id}}' | head -n1)\"\n\
     else\n\
-      PANE=\"$(tmux split-window -d -P -F '#{{pane_id}}' -t \"$SESSION:$WINDOW\")\"\n\
+      PANE=\"$(tmux split-window -d -P -F '#{{pane_id}}' -t \"=$SESSION:$WINDOW\")\"\n\
       CREATED=1\n\
     fi\n\
   fi\n\
@@ -73,8 +73,8 @@ fn mark_managed_tmux_entities_script(
 SESSION={session_q}\n\
 PANE={pane_q}\n\
 OWNER={owner_q}\n\
-tmux set-option -q -t \"$SESSION\" @buddy_managed 1\n\
-tmux set-option -q -t \"$SESSION\" @buddy_owner \"$OWNER\"\n\
+tmux set-option -q -t \"=$SESSION\" @buddy_managed 1\n\
+tmux set-option -q -t \"=$SESSION\" @buddy_owner \"$OWNER\"\n\
 tmux set-option -q -p -t \"$PANE\" @buddy_managed 1\n\
 tmux set-option -q -p -t \"$PANE\" @buddy_owner \"$OWNER\"\n"
     )
@@ -171,8 +171,9 @@ mod tests {
         assert!(script.contains("CREATED=0"));
         assert!(script.contains("CREATED=1"));
         assert!(script.contains("tmux new-session -d -s \"$SESSION\" -n \"$WINDOW\""));
-        assert!(script.contains("tmux new-window -d -t \"$SESSION\" -n \"$WINDOW\""));
-        assert!(script.contains("tmux split-window -d -P -F '#{pane_id}' -t \"$SESSION:$WINDOW\""));
+        assert!(script.contains("tmux has-session -t \"=$SESSION\""));
+        assert!(script.contains("tmux new-window -d -t \"=$SESSION\" -n \"$WINDOW\""));
+        assert!(script.contains("tmux split-window -d -P -F '#{pane_id}' -t \"=$SESSION:$WINDOW\""));
         assert!(script.contains("tmux select-pane -t \"$PANE\" -T \"$PANE_TITLE\""));
     }
 

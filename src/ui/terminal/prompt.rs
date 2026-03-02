@@ -52,7 +52,7 @@ pub fn approval_prompt_text(prompt: &ApprovalPrompt<'_>) -> String {
     if prompt.mutation {
         line.push_str(" (mutation)");
     }
-    line.push_str(" command ? [y/n] ");
+    line.push_str(" command ? [y/n/e] ");
     line
 }
 
@@ -170,7 +170,7 @@ where
                     "command ?".with(settings::color_prompt_approval_command()),
                 ))?;
                 stderr.queue(PrintStyledContent(
-                    " [y/n]".with(settings::color_prompt_approval_command()),
+                    " [y/n/e]".with(settings::color_prompt_approval_command()),
                 ))?;
                 stderr.queue(Print(settings::PROMPT_SPACER))?;
             }
@@ -242,7 +242,7 @@ mod tests {
         };
         assert_eq!(
             approval_prompt_text(&prompt),
-            "• approve (privileged) (mutation) command ? [y/n] "
+            "• approve (privileged) (mutation) command ? [y/n/e] "
         );
     }
 

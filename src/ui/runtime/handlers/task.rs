@@ -64,6 +64,7 @@ pub(in crate::ui::runtime) fn handle_task(
                     mutation,
                     privesc,
                     why,
+                    expanded: false,
                 });
             }
         }

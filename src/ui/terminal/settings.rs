@@ -23,7 +23,7 @@ pub const BLOCK_RIGHT_MARGIN: usize = 2;
 
 /// Default local prompt shown in non-annotated mode.
 pub const PROMPT_LOCAL_PRIMARY: &str = "> ";
-pub const PROMPT_LOCAL_APPROVAL: &str = "• approve? [y/n] ";
+pub const PROMPT_LOCAL_APPROVAL: &str = "• approve? [y/n/e] ";
 pub const PROMPT_APPROVAL_SEPARATOR: &str = " \u{2022} ";
 pub const PROMPT_APPROVAL_QUERY: &str = "approve?";
 pub const PROMPT_CONTINUATION_LABEL: &str = "......";

@@ -64,6 +64,11 @@ before running commands. If there is no usable shell prompt, do not run
 `run_shell`; explain what is blocking the pane and offer safe recovery with
 `tmux_send_keys`.
 
+Shared-terminal advantage: in the managed shared tmux pane, it is acceptable to
+use `sudo` or other commands that may require a password or explicit human
+interaction. The user can intervene directly in that same shared terminal when
+needed, then you can continue.
+
 ## Tool Choice Quick Guide
 - Use `run_shell` to execute shell commands and gather command output.
 - Use `tmux_capture_pane` to observe in-progress or interactive terminal state.

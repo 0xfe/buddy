@@ -48,15 +48,8 @@ impl SshContext {
         if let Some(session) = &self.tmux_session {
             // tmux-backed SSH uses managed pane execution for polling/no-wait behavior.
             let pane_id = self.ensure_prompt_ready(session).await?;
-            run_ssh_tmux_process(
-                &self.target,
-                &self.control_path,
-                &pane_id,
-                remote_command,
-                stdin,
-                wait,
-            )
-            .await
+            self.run_tmux_command_with_recovery(&pane_id, remote_command, stdin, wait, true)
+                .await
         } else {
             if matches!(wait, ShellWait::NoWait) {
                 // No-wait dispatch requires a persistent tmux pane.
@@ -101,6 +94,53 @@ impl SshContext {
             *configured = Some(ensured.pane_id.clone());
         }
         Ok(ensured.pane_id)
+    }
+
+    async fn run_tmux_command_with_recovery(
+        &self,
+        pane_id: &str,
+        remote_command: &str,
+        stdin: Option<&[u8]>,
+        wait: ShellWait,
+        allow_default_recovery: bool,
+    ) -> Result<ExecOutput, ToolError> {
+        let first = run_ssh_tmux_process(
+            &self.target,
+            &self.control_path,
+            pane_id,
+            remote_command,
+            stdin,
+            wait,
+        )
+        .await;
+        let err = match first {
+            Ok(output) => return Ok(output),
+            Err(err) => err,
+        };
+
+        if !allow_default_recovery || !is_tmux_server_missing_error(&err) {
+            return Err(err);
+        }
+        let Some(tmux_session) = self.tmux_session.as_deref() else {
+            return Err(err);
+        };
+
+        // Recover once by recreating/rebinding the default managed pane and retrying.
+        let recovered_pane = self.ensure_prompt_ready(tmux_session).await?;
+        run_ssh_tmux_process(
+            &self.target,
+            &self.control_path,
+            &recovered_pane,
+            remote_command,
+            stdin,
+            wait,
+        )
+        .await
+        .map_err(|retry_err| {
+            ToolError::ExecutionFailed(format!(
+                "{retry_err}; recovery attempted after prior tmux error: {err}"
+            ))
+        })
     }
 
     async fn tmux_pane_exists(&self, pane_id: &str) -> Result<bool, ToolError> {
@@ -251,13 +291,12 @@ impl ExecutionBackendOps for SshContext {
         wait: ShellWait,
         target: ResolvedTmuxTarget,
     ) -> Result<ExecOutput, ToolError> {
-        run_ssh_tmux_process(
-            &self.target,
-            &self.control_path,
+        self.run_tmux_command_with_recovery(
             &target.pane_id,
             command,
             None,
             wait,
+            target.is_default_shared,
         )
         .await
     }
@@ -471,6 +510,13 @@ fn sanitize_tmux_session_suffix(raw: &str) -> String {
     normalized.chars().take(48).collect()
 }
 
+fn is_tmux_server_missing_error(err: &ToolError) -> bool {
+    match err {
+        ToolError::ExecutionFailed(msg) => msg.contains("no server running on /tmp/tmux-"),
+        ToolError::InvalidArguments(_) => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -495,6 +541,19 @@ mod tests {
         // Empty agent names should map to deterministic fallback session suffix.
         assert_eq!(default_tmux_session_name_for_agent(""), "buddy-agent-mo");
         assert_eq!(default_tmux_session_name_for_agent("   "), "buddy-agent-mo");
+    }
+
+    #[test]
+    fn detects_missing_tmux_server_errors() {
+        // Socket-not-found tmux failures should trigger one-shot recovery attempts.
+        let err = ToolError::ExecutionFailed(
+            "failed to send Enter to tmux pane: no server running on /tmp/tmux-1000/default"
+                .to_string(),
+        );
+        assert!(is_tmux_server_missing_error(&err));
+        assert!(!is_tmux_server_missing_error(&ToolError::ExecutionFailed(
+            "failed to resolve managed tmux target: tmux target not found".to_string(),
+        )));
     }
 
     #[test]

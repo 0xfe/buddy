@@ -194,7 +194,7 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
             set_progress_enabled(true);
         }
 
-        if let Some(approval) = pending_approval.take() {
+        if let Some(mut approval) = pending_approval.take() {
             // Approval input mode temporarily replaces normal prompt handling.
             let approval_actor = approval_prompt_actor(
                 cli_args.ssh.as_deref(),
@@ -206,6 +206,7 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
                 renderer,
                 &approval_actor,
                 &approval.command,
+                approval.expanded,
                 approval.risk.as_deref(),
                 approval.why.as_deref(),
             );
@@ -250,6 +251,11 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
 
             let approval_input = approval_input.trim();
             eprintln!();
+            if matches!(approval_input.to_ascii_lowercase().as_str(), "e" | "expand") {
+                approval.expanded = !approval.expanded;
+                pending_approval = Some(approval);
+                continue;
+            }
             if let Some(decision) = parse_approval_decision(approval_input) {
                 // Direct y/n responses resolve the pending runtime approval.
                 let task_id = approval.task_id;
@@ -320,7 +326,7 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
             }
 
             renderer.warn(
-                "Approval required. Reply with y/yes or n/no. You can also use /ps, /kill <id>, /timeout <dur> [id], /approve <mode>, /status, /context, /compact.",
+                "Approval required. Reply with y/yes, n/no, or e/expand. You can also use /ps, /kill <id>, /timeout <dur> [id], /approve <mode>, /status, /context, /compact.",
             );
             pending_approval = Some(approval);
             continue;

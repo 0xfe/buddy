@@ -72,6 +72,8 @@ pub struct PendingApproval {
     pub privesc: Option<bool>,
     /// Optional human-readable rationale for why approval is required.
     pub why: Option<String>,
+    /// Whether the full command is expanded in the approval UI.
+    pub expanded: bool,
 }
 
 /// Cached runtime context usage displayed by REPL status prompt.

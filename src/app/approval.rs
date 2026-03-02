@@ -9,6 +9,9 @@ use buddy::ui::render::RenderSink;
 use buddy::ui::theme::{self, ThemeToken};
 use crossterm::style::{Color, Stylize};
 
+/// Default number of command lines shown in approval preview mode.
+const APPROVAL_PREVIEW_LINES: usize = 5;
+
 /// Build the target label used in approval prompts.
 pub(crate) fn approval_prompt_actor(
     ssh_target: Option<&str>,
@@ -35,6 +38,7 @@ pub(crate) fn render_shell_approval_request(
     renderer: &dyn RenderSink,
     actor: &str,
     command: &str,
+    expanded: bool,
     risk: Option<&str>,
     why: Option<&str>,
 ) {
@@ -57,7 +61,19 @@ pub(crate) fn render_shell_approval_request(
             eprintln!("  {reason}");
         }
     }
-    renderer.approval_block(&format_approval_command_block(command));
+    let (command_text, truncated_lines) = if expanded {
+        (command.to_string(), 0)
+    } else {
+        approval_command_preview(command, APPROVAL_PREVIEW_LINES)
+    };
+    let mut block = format_approval_command_block(&command_text);
+    if truncated_lines > 0 {
+        block.push('\n');
+        block.push_str(&format!(
+            "  ...{truncated_lines} more lines... (press 'e' to expand)"
+        ));
+    }
+    renderer.approval_block(&block);
 }
 
 /// Map risk metadata to a display label/style.
@@ -92,6 +108,24 @@ pub(crate) fn format_approval_command_block(command: &str) -> String {
         out.push_str(line);
     }
     out
+}
+
+/// Build a line-limited preview for approval command rendering.
+pub(crate) fn approval_command_preview(command: &str, max_lines: usize) -> (String, usize) {
+    if max_lines == 0 {
+        return (String::new(), command.lines().count());
+    }
+    let lines = command.lines().collect::<Vec<_>>();
+    if lines.len() <= max_lines {
+        return (command.to_string(), 0);
+    }
+    let preview = lines
+        .iter()
+        .take(max_lines)
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n");
+    (preview, lines.len() - max_lines)
 }
 
 /// Convert CLI-side approval decision into runtime command decision.
@@ -165,5 +199,23 @@ mod tests {
         // Multiline commands should preserve subsequent lines with continuation indent.
         let block = format_approval_command_block("echo 1\necho 2");
         assert_eq!(block, "$ echo 1\n  echo 2");
+    }
+
+    #[test]
+    fn approval_command_preview_limits_to_configured_lines() {
+        // Preview mode should cap output to the first N lines and report remaining lines.
+        let (preview, remaining) =
+            approval_command_preview("a\nb\nc\nd\ne\nf\ng", APPROVAL_PREVIEW_LINES);
+        assert_eq!(preview, "a\nb\nc\nd\ne");
+        assert_eq!(remaining, 2);
+    }
+
+    #[test]
+    fn approval_command_preview_keeps_short_commands_intact() {
+        // Commands with <= max preview lines should remain unchanged.
+        let (preview, remaining) =
+            approval_command_preview("echo 1\necho 2", APPROVAL_PREVIEW_LINES);
+        assert_eq!(preview, "echo 1\necho 2");
+        assert_eq!(remaining, 0);
     }
 }

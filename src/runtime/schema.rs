@@ -267,7 +267,7 @@ pub enum TaskEvent {
         task: TaskRef,
         /// Identifier required for approve/deny command.
         approval_id: String,
-        /// Truncated command preview awaiting approval.
+        /// Full command awaiting approval.
         command: String,
         /// Optional risk classification.
         #[serde(skip_serializing_if = "Option::is_none")]

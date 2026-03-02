@@ -140,8 +140,8 @@ if [ -z \"$SESSION\" ] || [ -z \"$PANE\" ]; then\n\
   echo \"tmux target not found; omit target/session/pane to use the default shared pane, or create one with tmux_create_pane\" >&2\n\
   exit 1\n\
 fi\n\
-SESSION_MANAGED=\"$(tmux show-options -v -t \"$SESSION\" {TMUX_MANAGED_OPTION} 2>/dev/null || true)\"\n\
-SESSION_OWNER=\"$(tmux show-options -v -t \"$SESSION\" {TMUX_OWNER_OPTION} 2>/dev/null || true)\"\n\
+SESSION_MANAGED=\"$(tmux show-options -v -t \"=$SESSION\" {TMUX_MANAGED_OPTION} 2>/dev/null || true)\"\n\
+SESSION_OWNER=\"$(tmux show-options -v -t \"=$SESSION\" {TMUX_OWNER_OPTION} 2>/dev/null || true)\"\n\
 if [ \"$SESSION_MANAGED\" != \"1\" ] || [ \"$SESSION_OWNER\" != \"$OWNER\" ]; then\n\
   echo \"tmux session '$SESSION' is not managed by this buddy instance\" >&2\n\
   exit 1\n\
@@ -177,9 +177,9 @@ PANE_TITLE='{TMUX_PANE_TITLE}'\n\
 MAX_SESSIONS={max_sessions}\n\
 COUNT=\"$(tmux list-sessions -F '#{{session_name}}\\t#{{@buddy_managed}}\\t#{{@buddy_owner}}' 2>/dev/null | awk -F '\\t' -v owner=\"$OWNER\" '$2==\"1\" && $3==owner {{c++}} END {{print c+0}}')\"\n\
 CREATED=0\n\
-if tmux has-session -t \"$SESSION\" 2>/dev/null; then\n\
-  SESSION_MANAGED=\"$(tmux show-options -v -t \"$SESSION\" {TMUX_MANAGED_OPTION} 2>/dev/null || true)\"\n\
-  SESSION_OWNER=\"$(tmux show-options -v -t \"$SESSION\" {TMUX_OWNER_OPTION} 2>/dev/null || true)\"\n\
+if tmux has-session -t \"=$SESSION\" 2>/dev/null; then\n\
+  SESSION_MANAGED=\"$(tmux show-options -v -t \"=$SESSION\" {TMUX_MANAGED_OPTION} 2>/dev/null || true)\"\n\
+  SESSION_OWNER=\"$(tmux show-options -v -t \"=$SESSION\" {TMUX_OWNER_OPTION} 2>/dev/null || true)\"\n\
   if [ \"$SESSION_MANAGED\" != \"1\" ] || [ \"$SESSION_OWNER\" != \"$OWNER\" ]; then\n\
     echo \"tmux session '$SESSION' exists but is not managed by this buddy instance\" >&2\n\
     exit 1\n\
@@ -192,16 +192,16 @@ else\n\
   tmux new-session -d -s \"$SESSION\" -n \"$WINDOW\"\n\
   CREATED=1\n\
 fi\n\
-if ! tmux list-windows -t \"$SESSION\" -F '#{{window_name}}' | grep -Fx -- \"$WINDOW\" >/dev/null 2>&1; then\n\
-  tmux new-window -d -t \"$SESSION\" -n \"$WINDOW\"\n\
+if ! tmux list-windows -t \"=$SESSION\" -F '#{{window_name}}' | grep -Fx -- \"$WINDOW\" >/dev/null 2>&1; then\n\
+  tmux new-window -d -t \"=$SESSION\" -n \"$WINDOW\"\n\
 fi\n\
 PANE=\"$(tmux list-panes -a -F '#{{session_name}}\\t#{{pane_id}}\\t#{{pane_title}}' | awk -F '\\t' -v session=\"$SESSION\" -v pane_title=\"$PANE_TITLE\" '$1==session && $3==pane_title {{print $2; exit}}')\"\n\
 if [ -z \"$PANE\" ]; then\n\
-  PANE=\"$(tmux list-panes -t \"$SESSION:$WINDOW\" -F '#{{pane_id}}' | head -n1)\"\n\
+  PANE=\"$(tmux list-panes -t \"=$SESSION:$WINDOW\" -F '#{{pane_id}}' | head -n1)\"\n\
   tmux select-pane -t \"$PANE\" -T \"$PANE_TITLE\" >/dev/null 2>&1 || true\n\
 fi\n\
-tmux set-option -q -t \"$SESSION\" {TMUX_MANAGED_OPTION} 1\n\
-tmux set-option -q -t \"$SESSION\" {TMUX_OWNER_OPTION} \"$OWNER\"\n\
+tmux set-option -q -t \"=$SESSION\" {TMUX_MANAGED_OPTION} 1\n\
+tmux set-option -q -t \"=$SESSION\" {TMUX_OWNER_OPTION} \"$OWNER\"\n\
 tmux set-option -q -p -t \"$PANE\" {TMUX_MANAGED_OPTION} 1\n\
 tmux set-option -q -p -t \"$PANE\" {TMUX_OWNER_OPTION} \"$OWNER\"\n\
 printf '%s\\n%s\\n%s' \"$SESSION\" \"$PANE\" \"$CREATED\"\n"
@@ -228,12 +228,12 @@ SESSION={session_q}\n\
 PANE_TITLE={pane_q}\n\
 WINDOW='{TMUX_WINDOW_NAME}'\n\
 MAX_PANES={max_panes}\n\
-if ! tmux has-session -t \"$SESSION\" 2>/dev/null; then\n\
+if ! tmux has-session -t \"=$SESSION\" 2>/dev/null; then\n\
   echo \"tmux session '$SESSION' was not found\" >&2\n\
   exit 1\n\
 fi\n\
-SESSION_MANAGED=\"$(tmux show-options -v -t \"$SESSION\" {TMUX_MANAGED_OPTION} 2>/dev/null || true)\"\n\
-SESSION_OWNER=\"$(tmux show-options -v -t \"$SESSION\" {TMUX_OWNER_OPTION} 2>/dev/null || true)\"\n\
+SESSION_MANAGED=\"$(tmux show-options -v -t \"=$SESSION\" {TMUX_MANAGED_OPTION} 2>/dev/null || true)\"\n\
+SESSION_OWNER=\"$(tmux show-options -v -t \"=$SESSION\" {TMUX_OWNER_OPTION} 2>/dev/null || true)\"\n\
 if [ \"$SESSION_MANAGED\" != \"1\" ] || [ \"$SESSION_OWNER\" != \"$OWNER\" ]; then\n\
   echo \"tmux session '$SESSION' is not managed by this buddy instance\" >&2\n\
   exit 1\n\
@@ -246,10 +246,10 @@ if [ -z \"$PANE\" ]; then\n\
     echo \"managed tmux pane limit reached in session '$SESSION' ($COUNT/$MAX_PANES)\" >&2\n\
     exit 1\n\
   fi\n\
-  if ! tmux list-windows -t \"$SESSION\" -F '#{{window_name}}' | grep -Fx -- \"$WINDOW\" >/dev/null 2>&1; then\n\
-    tmux new-window -d -t \"$SESSION\" -n \"$WINDOW\"\n\
+  if ! tmux list-windows -t \"=$SESSION\" -F '#{{window_name}}' | grep -Fx -- \"$WINDOW\" >/dev/null 2>&1; then\n\
+    tmux new-window -d -t \"=$SESSION\" -n \"$WINDOW\"\n\
   fi\n\
-  PANE=\"$(tmux split-window -d -P -F '#{{pane_id}}' -t \"$SESSION:$WINDOW\")\"\n\
+  PANE=\"$(tmux split-window -d -P -F '#{{pane_id}}' -t \"=$SESSION:$WINDOW\")\"\n\
   tmux select-pane -t \"$PANE\" -T \"$PANE_TITLE\" >/dev/null 2>&1 || true\n\
   tmux set-option -q -p -t \"$PANE\" {TMUX_MANAGED_OPTION} 1\n\
   tmux set-option -q -p -t \"$PANE\" {TMUX_OWNER_OPTION} \"$OWNER\"\n\
@@ -278,12 +278,12 @@ OWNER={owner_q}\n\
 SESSION={session_q}\n\
 PANE_TITLE={pane_q}\n\
 DEFAULT_SESSION={default_session_q}\n\
-if ! tmux has-session -t \"$SESSION\" 2>/dev/null; then\n\
+if ! tmux has-session -t \"=$SESSION\" 2>/dev/null; then\n\
   echo \"tmux session '$SESSION' was not found\" >&2\n\
   exit 1\n\
 fi\n\
-SESSION_MANAGED=\"$(tmux show-options -v -t \"$SESSION\" {TMUX_MANAGED_OPTION} 2>/dev/null || true)\"\n\
-SESSION_OWNER=\"$(tmux show-options -v -t \"$SESSION\" {TMUX_OWNER_OPTION} 2>/dev/null || true)\"\n\
+SESSION_MANAGED=\"$(tmux show-options -v -t \"=$SESSION\" {TMUX_MANAGED_OPTION} 2>/dev/null || true)\"\n\
+SESSION_OWNER=\"$(tmux show-options -v -t \"=$SESSION\" {TMUX_OWNER_OPTION} 2>/dev/null || true)\"\n\
 if [ \"$SESSION_MANAGED\" != \"1\" ] || [ \"$SESSION_OWNER\" != \"$OWNER\" ]; then\n\
   echo \"tmux session '$SESSION' is not managed by this buddy instance\" >&2\n\
   exit 1\n\
@@ -327,17 +327,17 @@ if [ \"$SESSION\" = \"$DEFAULT_SESSION\" ]; then\n\
   echo \"cannot kill default managed tmux session\" >&2\n\
   exit 1\n\
 fi\n\
-if ! tmux has-session -t \"$SESSION\" 2>/dev/null; then\n\
+if ! tmux has-session -t \"=$SESSION\" 2>/dev/null; then\n\
   echo \"tmux session '$SESSION' was not found\" >&2\n\
   exit 1\n\
 fi\n\
-SESSION_MANAGED=\"$(tmux show-options -v -t \"$SESSION\" {TMUX_MANAGED_OPTION} 2>/dev/null || true)\"\n\
-SESSION_OWNER=\"$(tmux show-options -v -t \"$SESSION\" {TMUX_OWNER_OPTION} 2>/dev/null || true)\"\n\
+SESSION_MANAGED=\"$(tmux show-options -v -t \"=$SESSION\" {TMUX_MANAGED_OPTION} 2>/dev/null || true)\"\n\
+SESSION_OWNER=\"$(tmux show-options -v -t \"=$SESSION\" {TMUX_OWNER_OPTION} 2>/dev/null || true)\"\n\
 if [ \"$SESSION_MANAGED\" != \"1\" ] || [ \"$SESSION_OWNER\" != \"$OWNER\" ]; then\n\
   echo \"tmux session '$SESSION' is not managed by this buddy instance\" >&2\n\
   exit 1\n\
 fi\n\
-tmux kill-session -t \"$SESSION\"\n\
+tmux kill-session -t \"=$SESSION\"\n\
 printf '%s' \"$SESSION\"\n"
     ))
 }
@@ -466,5 +466,25 @@ mod tests {
         let script =
             resolve_managed_target_script("buddy-agent-mo", "buddy-agent-mo", &selector).unwrap();
         assert!(script.contains("TARGET=''"));
+    }
+
+    #[test]
+    fn lifecycle_scripts_use_exact_session_targets() {
+        // Exact `=$SESSION` targeting avoids accidental prefix matching
+        // (for example, resolving `buddy-agent-mo` to `buddy-agent-mo-default-repair`).
+        let create = create_managed_session_script("buddy-agent-mo", "buddy-agent-mo", 1);
+        assert!(create.contains("tmux has-session -t \"=$SESSION\""));
+        assert!(create.contains("tmux list-windows -t \"=$SESSION\""));
+        assert!(create.contains("tmux set-option -q -t \"=$SESSION\""));
+
+        let pane =
+            create_managed_pane_script("buddy-agent-mo", "buddy-agent-mo", None, "worker", 5)
+                .unwrap();
+        assert!(pane.contains("tmux has-session -t \"=$SESSION\""));
+        assert!(pane.contains("-t \"=$SESSION:$WINDOW\""));
+
+        let kill_session =
+            kill_managed_session_script("buddy-agent-mo", "buddy-agent-mo", "worker").unwrap();
+        assert!(kill_session.contains("tmux kill-session -t \"=$SESSION\""));
     }
 }
