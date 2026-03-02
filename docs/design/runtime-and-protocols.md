@@ -167,6 +167,20 @@ For streaming responses mode:
 - fallback to delta-only message if completed block is missing but text exists
 - error on empty stream or `response.failed`
 
+### `anthropic /messages`
+
+- endpoint: `{base_url}/messages`
+- request translation:
+  - system messages are collapsed into `system`
+  - assistant tool calls map to Anthropic `tool_use` blocks
+  - tool results map to user `tool_result` blocks
+  - function-tool definitions map to Anthropic `tools` schema
+- response normalization:
+  - `text` blocks map to assistant content
+  - `tool_use` blocks map to internal `tool_calls`
+  - usage maps from `input_tokens`/`output_tokens`
+  - thinking/redacted-thinking blocks are preserved in message `extra`
+
 ## Auth-Driven Transport Policy
 
 Per-profile auth/protocol can change runtime transport behavior.
@@ -198,3 +212,4 @@ Diagnostic hints:
 - 404 responses add protocol mismatch hints:
   - `responses` mode suggests trying `api = "completions"`
   - `completions` mode suggests trying `api = "responses"`
+  - `anthropic` mode suggests trying `api = "anthropic"` (for `/messages` endpoints)

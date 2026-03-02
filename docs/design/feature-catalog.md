@@ -26,7 +26,7 @@ For the high-level architecture narrative, see [docs/design/DESIGN.md](DESIGN.md
 - `--base-url <url>`: API base URL override.
 - `--container <name>`: run shell/file tools in a container target.
 - `--ssh <user@host>`: run shell/file tools over SSH.
-- `--tmux [session]`: opt into tmux-backed execution and optionally set session name.
+- `--tmux [session]`: optionally set an explicit managed tmux session name.
 - `--trace <path>`: write runtime events to a JSONL trace file.
 - `-v, --verbose`: increase diagnostics (`-v` info, `-vv` debug, `-vvv` trace).
 - `--no-color`: disable colored output.
@@ -44,11 +44,11 @@ For the high-level architecture narrative, see [docs/design/DESIGN.md](DESIGN.md
 - Config is profile-based under `[models.<name>]`.
 - Active profile is selected via `agent.model`.
 - Per profile:
-  - `provider = "auto" | "openai" | "openrouter" | "moonshot" | "other"`
-  - `api = "completions" | "responses"`
+  - `provider = "auto" | "openai" | "openrouter" | "moonshot" | "anthropic" | "other"`
+  - `api = "completions" | "responses" | "anthropic"`
   - `auth = "api-key" | "login"`
   - `api_base_url`
-  - exactly one key source among `api_key`, `api_key_env`, `api_key_file`
+  - at most one key source among `api_key`, `api_key_env`, `api_key_file` (when omitted for `auth="api-key"`, provider key storage is used)
   - optional `model`
   - optional `context_limit`
 
@@ -106,6 +106,7 @@ Effective behavior is:
 - `auth = "api-key"`: uses resolved API key from env/file/inline source.
 - `auth = "login"`: uses provider-scoped OAuth token store (`~/.config/buddy/auth.json`).
 - OpenAI login runtime can rewrite base URL to ChatGPT Codex backend when required.
+- Login auth is currently supported for OpenAI profiles only.
 - Login flow supports:
   - health checks (`--check`)
   - reset (`--reset`)
@@ -194,7 +195,6 @@ All tool outputs are wrapped as JSON:
 
 - local (non-tmux backend)
 - local tmux-backed managed session
-- container backend
 - container tmux-backed managed session
 - SSH backend with persistent control socket
 - SSH + tmux managed session (auto-enabled when available)
@@ -203,7 +203,8 @@ All tool outputs are wrapped as JSON:
 
 - If shell/files tools are disabled, Buddy uses local non-tmux execution context.
 - If shell/files tools are enabled and no remote target is specified, Buddy initializes local tmux-managed execution.
-- `--container` and `--ssh` select corresponding remote backends.
+- `--container` selects container tmux-managed execution.
+- `--ssh` selects SSH execution (tmux-managed when remote tmux is available, direct SSH otherwise).
 - `--tmux` can provide explicit session name; otherwise defaults to `buddy-<agent.name>`.
 
 ### Managed tmux behavior

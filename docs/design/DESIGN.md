@@ -50,28 +50,26 @@ Detailed inventory: [feature-catalog.md](feature-catalog.md).
   - REPL (`buddy`)
   - one-shot exec (`buddy exec <prompt>`)
   - session resume (`buddy resume <id|--last>`)
-  - setup/login (`buddy init`, `buddy login`)
+  - setup/auth (`buddy init`, `buddy login`, `buddy logout`)
   - trace analysis (`buddy trace summary|replay|context-evolution`)
   - first-run guided init auto-bootstrap when no config exists
 - Global targeting and runtime flags:
   - config/model/base-url overrides
-  - `--ssh`, `--container`, `--tmux [session]`
+  - `--ssh`, `--container`, `--tmux [session]` (`--tmux` optionally sets an explicit managed session name)
   - `--trace <path>` (`BUDDY_TRACE_FILE` fallback) for JSONL runtime event capture
   - `-v/--verbose` (`-vv`, `-vvv`) for structured diagnostics on stderr
   - `--no-color`
   - `--dangerously-auto-approve` for non-interactive exec guardrail override
-- Profile-based config with per-profile provider/protocol/auth mode (`provider`; `completions` vs `responses`; `api-key` vs `login`).
+- Profile-based config with per-profile provider/protocol/auth mode (`provider`; `completions` vs `responses` vs `anthropic`; `api-key` vs `login`).
 - Login auth startup behavior:
   - missing login credentials are surfaced as warnings (non-fatal startup/model-switch),
-  - user guidance points to `/login <profile>` and `buddy login <profile>`.
+  - user guidance points to `/login <provider>` and `buddy login <provider>`.
 - Built-in tools:
   - `run_shell`, `read_file`, `write_file`, `fetch_url`, `web_search`, `capture-pane`, `send-keys`, `time`
   - tmux lifecycle tools: `tmux-create-session`, `tmux-kill-session`, `tmux-create-pane`, `tmux-kill-pane`
   - tmux-aware selectors on shell/capture/send-keys (`session`, `pane`) with shared-pane defaulting
 - Multi-target execution for shell/file workflows:
-  - local
-  - local tmux-managed session
-  - container
+  - local tmux-managed session (default when shell/files are enabled)
   - container tmux-managed session
   - SSH with persistent control socket and optional tmux management
 - REPL interaction model:
@@ -145,7 +143,7 @@ High-level sequence:
 ## High-Level Data Flow
 
 1. CLI loads config, applies overrides, and validates active model profile.
-2. Execution context is selected (local/ssh/container, optionally tmux-backed).
+2. Execution context is selected (local/container default to managed tmux when shell/files are enabled; SSH uses managed tmux when available, otherwise direct SSH).
 3. System prompt is rendered from template with target/tool context.
 4. Runtime actor receives prompt commands and drives one active task at a time.
 5. Agent loop iterates model calls and tool calls until final assistant message.

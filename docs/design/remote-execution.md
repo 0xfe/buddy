@@ -15,13 +15,14 @@ When launched with `--ssh user@host`, the agent:
 
 1. Opens one persistent SSH ControlMaster socket (one TCP connection, reused
    for all subsequent operations).
-2. Creates (or reattaches to) a named tmux session on the remote host.
-3. Ensures a shared tmux window and pane are ready.
-4. Installs a custom shell prompt in that pane that embeds a monotonically
+2. Probes whether remote tmux is available.
+3. If tmux is available, creates (or reattaches to) a named tmux session and
+   ensures a shared tmux window/pane is ready.
+4. Installs a custom shell prompt in the managed pane that embeds a monotonically
    increasing command-id and the last exit code.
-5. Runs all `run_shell` commands by injecting them into the tmux pane (not
-   via fresh SSH processes), so the operator can attach to the session and
-   watch what the agent is doing.
+5. In tmux-backed SSH mode, runs `run_shell` commands by injecting them into
+   the managed tmux pane (not via fresh SSH processes), so the operator can
+   attach to the session and watch what the agent is doing.
 
 The result is a session that is:
 - **Transparent**: the operator can attach to the same tmux session from
@@ -364,7 +365,12 @@ In this mode:
 
 ## Container Mode
 
-`--container <name>` uses the local Docker or Podman daemon instead of SSH:
+`--container <name>` uses the local Docker or Podman daemon instead of SSH.
+In current CLI flows, container execution is tmux-backed by default (shared
+session/pane inside the container), and `--tmux [session]` optionally overrides
+the managed session name.
+
+Container commands run through the container engine:
 
 ```bash
 # auto-detected
@@ -377,13 +383,9 @@ The engine is probed at startup by running `docker --version` and
 `podman --version`. Docker's CLI with Podman's backend (podman-docker) is
 detected by checking the version output for "podman".
 
-With plain `--container`, commands run directly via `exec` and there is no
-tmux backend.
-
-With `--container ... --tmux [session]`, buddy creates/reuses a tmux session
-inside the container and uses the same shared-pane prompt-marker protocol as
-SSH+tmux. In this mode, `wait=false`, `capture-pane`, and `send-keys` are
-available for container execution.
+Buddy creates/reuses a tmux session inside the container and uses the same
+shared-pane prompt-marker protocol as SSH+tmux. In this mode, `wait=false`,
+`capture-pane`, and `send-keys` are available for container execution.
 
 ---
 

@@ -30,11 +30,16 @@ Login soft-fail behavior:
 | `--base-url <url>` | Override API base URL. |
 | `--container <name>` | Execute shell/file tools inside a running container. |
 | `--ssh <user@host>` | Execute shell/file tools over SSH. |
-| `--tmux [session]` | Use tmux-backed execution; optional custom session name. |
+| `--tmux [session]` | Optional explicit managed tmux session name. |
 | `--trace <path>` | Write runtime events to a JSONL trace file. |
 | `-v`, `--verbose` | Increase diagnostics (`-v` info, `-vv` debug, `-vvv` trace). |
 | `--no-color` | Disable ANSI colors. |
 | `--dangerously-auto-approve` | In `exec` mode, bypass shell approvals. |
+
+Execution-target note:
+- When shell/files tools are enabled, local and `--container` execution are tmux-managed by default.
+- `--tmux [session]` sets an explicit managed session name.
+- `--ssh` uses tmux when remote tmux is available, and falls back to direct SSH otherwise.
 
 ## REPL slash commands
 

@@ -19,7 +19,8 @@ This document describes the current module boundaries after the 2026-02-28 modul
    - `src/api/client/{mod,auth,retry,transport}.rs`
    - `src/api/completions.rs`
    - `src/api/responses/{mod,request_builder,response_parser,sse_parser}.rs`
-   - `src/api/policy.rs`
+   - `src/api/anthropic.rs`
+   - `src/api/{provider_compat,policy}.rs`
 5. Config/auth/session primitives:
    - `src/config/*`
    - `src/auth/*`

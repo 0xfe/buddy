@@ -37,7 +37,8 @@ For a high-level overview, see [docs/design/DESIGN.md](DESIGN.md).
   - protocol modules:
     - `completions.rs` (`/chat/completions`)
     - `responses/` (`/responses` request build + parse + SSE handling)
-  - policy module for provider/runtime protocol toggles
+    - `anthropic.rs` (`/v1/messages` request/response/tool mapping)
+  - `provider_compat.rs` + `policy.rs` for provider/runtime protocol toggles
   - retry/backoff and diagnostic hinting
 
 ## Auth and Identity

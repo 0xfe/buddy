@@ -24,7 +24,7 @@ and tool-loop behavior stays consistent across refactors.
 | OpenAI | `/responses` (default for GPT-5 Codex/Spark) | Function tools (`type=function`) plus supported built-in tools (`web_search`, `code_interpreter`) | Responses API function-call + function-call-output flow | `api-key`, `login` |
 | OpenRouter | `/chat/completions` | OpenAI-compatible function tools | OpenAI-compatible tool calls/messages with provider-specific reasoning fields | `api-key` |
 | Moonshot | `/chat/completions` | OpenAI-compatible function tools | OpenAI-compatible tool calls/messages with `reasoning_content` variants | `api-key` |
-| Anthropic (planned) | `/v1/messages` | `tools: [{name, description, input_schema}]` plus supported Anthropic server tools | Assistant `tool_use` blocks followed by user `tool_result` blocks | `api-key` only (`login` not supported) |
+| Anthropic | `/v1/messages` | `tools: [{name, description, input_schema}]` (custom tools) | Assistant `tool_use` blocks followed by user `tool_result` blocks | `api-key` only (`login` not supported) |
 
 ## OpenAI Tooling Contract (Frozen)
 
@@ -43,9 +43,9 @@ For OpenAI Responses API profiles, Buddy should align to these constraints:
   - user/system input as `input_text`,
   - assistant text as `output_text`.
 
-## Anthropic Tooling Contract (Planned)
+## Anthropic Tooling Contract (Implemented)
 
-For Anthropic profiles, Buddy will implement native Messages API semantics:
+For Anthropic profiles, Buddy implements native Messages API semantics:
 
 - Request format:
   - `POST /v1/messages`
@@ -55,13 +55,13 @@ For Anthropic profiles, Buddy will implement native Messages API semantics:
 - Tool-loop behavior:
   - assistant returns `tool_use` content blocks,
   - Buddy executes tool and returns user `tool_result` blocks.
-- Server tools are versioned types (for example):
-  - `web_search_20250305` / `web_search_20260209`
-  - `code_execution_20250522`
+- Current scope:
+  - custom tool declarations are supported and mapped to/from Buddy's normalized tool model,
+  - Anthropic server tools (for example versioned web/code tools) are not currently auto-enabled by Buddy.
 - No login auth support:
   - Anthropic provider is API-key only in Buddy.
 
-## Model IDs (Planning Targets)
+## Model IDs (Configured Defaults)
 
 Anthropic docs currently expose these aliases and snapshots:
 

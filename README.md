@@ -51,7 +51,7 @@ buddy login openai
 
 # Start buddy operating on the local host (and connect to the tmux session)
 buddy
-tmux attach -t buddy # on a separate terminal
+tmux attach -t buddy-agent-mo # on a separate terminal (or use the exact attach command printed at startup)
 
 # Optional: runtime event trace (JSONL) for debugging
 buddy --trace /tmp/buddy.trace.jsonl

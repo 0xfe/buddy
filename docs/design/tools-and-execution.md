@@ -190,12 +190,14 @@ Common operations:
 - Executes commands via container engine (`docker`/`podman`) without tmux mediation.
 - `capture-pane` and `send-keys` unavailable.
 - `wait=false` in `run_shell` rejected.
+- This backend exists for direct construction/tests; CLI container mode uses `ExecutionContext::container_tmux`.
 
 ### Container tmux backend (`ExecutionContext::container_tmux`)
 
 - Requires tmux available inside container.
 - Manages shared session/pane in container tmux namespace.
 - Supports `capture-pane`, `send-keys`, and `wait=false` shell dispatch.
+- This is the default backend for CLI `--container` execution when shell/files are enabled.
 
 ### SSH backend (`ExecutionContext::ssh`)
 

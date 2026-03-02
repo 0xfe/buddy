@@ -265,8 +265,8 @@ result container layout changes.
 
 Capture a snapshot of a tmux pane's visible output. This tool is only
 registered when a tmux pane is available (either locally via `$TMUX_PANE`, or
-in a local `--tmux` session, in a `--container ... --tmux` session, or on an
-SSH target with a tmux session).
+in buddy-managed local/container tmux execution, or on an SSH target with a
+tmux session).
 
 **Arguments:**
 
@@ -456,8 +456,9 @@ Shared command-oriented behavior is factored through a `CommandBackend` trait so
 per backend.
 
 All tools accept an `ExecutionContext` at construction time. The REPL
-constructs the context based on CLI flags (`--container`, `--ssh`, `--tmux`) and passes
-it to every tool.
+constructs the context based on CLI flags (`--container`, `--ssh`, `--tmux`)
+and passes it to every tool. In current CLI flows with shell/files enabled,
+local and container targets are tmux-managed by default.
 
 ### Local Backend
 
@@ -479,7 +480,8 @@ docker exec <container> sh -lc '<command>'
 For commands that need stdin (e.g., `write_file`), the interactive flag is
 added: `-i` for Docker, `--interactive` for Podman.
 
-When `--tmux` is also set, the container backend becomes tmux-backed:
+In current CLI flows, container execution is tmux-backed by default; `--tmux`
+is used to provide an explicit managed session name:
 - a session is created/reused inside the container,
 - commands are dispatched with `tmux send-keys`,
 - `wait=false`, `capture-pane`, and `send-keys` become available.
