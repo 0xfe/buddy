@@ -24,7 +24,7 @@ cargo run -- --trace /tmp/buddy.trace.jsonl
 - History compaction + tool-pair repair: `src/agent/history.rs`, `src/agent/normalization.rs`.
 - API/auth/config: `src/api/`, `src/auth/`, `src/config/`.
 - Tooling: `src/tools/` (+ execution backends under `src/tools/execution/`).
-- Terminal UI layers: `src/ui/`, `src/repl/`, `src/tui/`.
+- Terminal UI layers: `src/ui/`, `src/ui/terminal/`, `src/repl/` (`src/tui/` is compatibility re-export only).
 - Shared tmux domain: `src/tmux/`.
 
 ## Invariants to preserve

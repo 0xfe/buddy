@@ -53,9 +53,9 @@ pub mod tmux;
 pub mod tokens;
 /// Built-in tool implementations and registry.
 pub mod tools;
-/// Terminal UI primitives.
+/// Backward-compatible terminal UI re-exports (`ui::terminal` is canonical).
 pub mod tui;
 /// API model types for chat/completions payloads.
 pub mod types;
-/// UI facade traits and runtime render adapters.
+/// Canonical UI modules (terminal, rendering contracts, runtime event handlers).
 pub mod ui;

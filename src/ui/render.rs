@@ -3,8 +3,8 @@
 //! `RenderSink` is the UI contract consumed by orchestration layers. Keeping it
 //! under `ui` decouples runtime/app logic from a specific renderer module path.
 
-pub use crate::tui::progress::{ProgressHandle, ProgressMetrics};
-pub use crate::tui::renderer::Renderer;
+pub use crate::ui::terminal::progress::{ProgressHandle, ProgressMetrics};
+pub use crate::ui::terminal::renderer::Renderer;
 
 /// Injectable rendering interface used by orchestration code.
 ///

@@ -33,9 +33,9 @@ This document describes the current module boundaries after the 2026-02-28 modul
    - `src/tools/execution/*` (local/container/ssh execution backends)
    - `src/tmux/*` (shared tmux session/pane/capture/send/run domain)
 7. Terminal UI:
-   - `src/ui/{render,terminal}.rs`
+   - `src/ui/render.rs` + `src/ui/terminal/*`
    - `src/ui/runtime/*`
-   - `src/tui/*` (terminal implementation details)
+   - `src/tui/*` (compatibility re-export only)
    - `src/repl/*` (shared REPL/runtime task-state helpers)
 
 ## Source tree (high-level)
@@ -86,7 +86,7 @@ src/
 
 1. Prefer new runtime events in `src/runtime/schema.rs` over direct renderer calls from orchestration.
 2. Handle event-to-UI mapping in `src/ui/runtime/handlers/*`.
-3. Keep text styling/layout details in `src/ui/terminal.rs` + `src/tui/*`.
+3. Keep text styling/layout details in `src/ui/terminal/*`.
 4. Keep prompt/task helper state in `src/repl/*`.
 
 ### Add config fields

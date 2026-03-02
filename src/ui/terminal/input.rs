@@ -4,21 +4,21 @@
 //! so the caller can own task-state decisions while this module owns terminal
 //! editing mechanics.
 
-use crate::tui::commands::{matching_slash_commands, SlashCommand};
-use crate::tui::input_buffer::{
+use crate::ui::terminal::commands::{matching_slash_commands, SlashCommand};
+use crate::ui::terminal::input_buffer::{
     char_count, delete_char_at_cursor, delete_char_before_cursor, delete_char_range, history_down,
     history_up, insert_char_at_cursor, line_end_char_index, line_start_char_index,
     previous_word_start, InputDraft,
 };
-use crate::tui::input_layout::{
+use crate::ui::terminal::input_layout::{
     compute_input_layout, suggestion_rows, terminal_columns, wrapped_rows,
 };
-use crate::tui::prompt::{
+use crate::ui::terminal::prompt::{
     primary_prompt_text, write_continuation_prompt, write_primary_prompt, write_status_line,
     ApprovalPrompt, PromptMode,
 };
-use crate::tui::settings;
-use crate::tui::text::clip_to_width;
+use crate::ui::terminal::settings;
+use crate::ui::terminal::text::clip_to_width;
 use crossterm::cursor::{MoveToColumn, MoveUp};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::style::{Print, PrintStyledContent, Stylize};
@@ -27,7 +27,7 @@ use crossterm::QueueableCommand;
 use std::io::{self, IsTerminal, Write};
 use std::time::Duration;
 
-pub use crate::tui::input_buffer::ReplState;
+pub use crate::ui::terminal::input_buffer::ReplState;
 
 /// Result of reading one interactive input line.
 #[derive(Debug, Clone, PartialEq, Eq)]

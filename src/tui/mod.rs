@@ -1,25 +1,41 @@
-//! Terminal user-interface building blocks.
+//! Backward-compatible terminal-UI namespace.
 //!
-//! This module hosts the REPL editor, slash-command parsing, and terminal
-//! renderer primitives. The split keeps stateful input logic, layout math,
-//! and output styling decoupled so the interface can grow without centralizing
-//! unrelated concerns in one file.
+//! The canonical terminal UI implementation lives in [`crate::ui::terminal`].
+//! This module is a compatibility re-export so existing `buddy::tui::*` users
+//! keep working while internal code is unified under `ui`.
 
-pub mod commands;
-mod highlight;
-pub mod input;
-mod input_buffer;
-mod input_layout;
-mod markdown;
-pub mod progress;
-mod prompt;
-pub mod renderer;
-pub mod settings;
-pub mod text;
-
-pub use commands::{
-    matching_slash_commands, parse_slash_command, SlashCommand, SlashCommandAction, SLASH_COMMANDS,
+pub use crate::ui::terminal::{
+    matching_slash_commands, parse_slash_command, pick_from_list, read_repl_line_with_interrupt,
+    ApprovalPrompt, PromptMode, ReadOutcome, ReadPoll, Renderer, ReplState, SlashCommand,
+    SlashCommandAction, SLASH_COMMANDS,
 };
-pub use input::{pick_from_list, read_repl_line_with_interrupt, ReadOutcome, ReadPoll, ReplState};
-pub use prompt::{ApprovalPrompt, PromptMode};
-pub use renderer::Renderer;
+
+/// Backward-compatible re-export of terminal command metadata.
+pub mod commands {
+    pub use crate::ui::terminal::commands::*;
+}
+
+/// Backward-compatible re-export of progress/spinner primitives.
+pub mod progress {
+    pub use crate::ui::terminal::progress::*;
+}
+
+/// Backward-compatible re-export of interactive input helpers.
+pub mod input {
+    pub use crate::ui::terminal::input::*;
+}
+
+/// Backward-compatible re-export of renderer implementation.
+pub mod renderer {
+    pub use crate::ui::terminal::renderer::*;
+}
+
+/// Backward-compatible re-export of terminal settings constants.
+pub mod settings {
+    pub use crate::ui::terminal::settings::*;
+}
+
+/// Backward-compatible re-export of text helpers.
+pub mod text {
+    pub use crate::ui::terminal::text::*;
+}

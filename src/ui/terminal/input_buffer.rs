@@ -1,6 +1,6 @@
 //! Editable input buffer and history helpers.
 
-use crate::tui::prompt::PromptMode;
+use crate::ui::terminal::prompt::PromptMode;
 use std::fs;
 use std::io;
 use std::path::Path;

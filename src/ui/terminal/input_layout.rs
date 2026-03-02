@@ -1,7 +1,7 @@
 //! Terminal row/column layout helpers for the interactive editor.
 
-use crate::tui::commands::SlashCommand;
-use crate::tui::settings;
+use crate::ui::terminal::commands::SlashCommand;
+use crate::ui::terminal::settings;
 use crossterm::terminal;
 
 /// Computed layout for prompt + input buffer on the terminal surface.

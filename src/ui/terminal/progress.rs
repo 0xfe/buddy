@@ -1,6 +1,6 @@
 //! Spinner/progress primitives for terminal liveness indicators.
 
-use crate::tui::settings;
+use crate::ui::terminal::settings;
 use crossterm::style::Stylize;
 use std::io::{self, IsTerminal, Write};
 use std::sync::{

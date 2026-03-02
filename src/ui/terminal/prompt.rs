@@ -1,6 +1,6 @@
 //! Prompt rendering helpers for the REPL editor.
 
-use crate::tui::settings;
+use crate::ui::terminal::settings;
 use crossterm::style::{Print, PrintStyledContent, Stylize};
 use crossterm::QueueableCommand;
 use std::io::{self, Write};

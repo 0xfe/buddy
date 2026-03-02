@@ -41,7 +41,7 @@ The REPL loop and the agent tasks are deliberately separated:
 
 ---
 
-## The Read Loop — `src/tui/input.rs`
+## The Read Loop — `src/ui/terminal/input.rs`
 
 `read_repl_line_with_interrupt` is the single entry point for reading user
 input. It has two modes:
@@ -127,7 +127,7 @@ History is loaded from/saved to `~/.config/buddy/history` by default. Set
 
 ---
 
-## Prompt Rendering — `src/tui/prompt.rs`
+## Prompt Rendering — `src/ui/terminal/prompt.rs`
 
 ### Normal mode
 
@@ -195,7 +195,7 @@ non-default target context note instead.
 
 ---
 
-## Slash Commands — `src/tui/commands.rs`
+## Slash Commands — `src/ui/terminal/commands.rs`
 
 Slash commands are parsed from any input line that starts with `/`. They
 are processed by the REPL loop before being sent to the agent.
@@ -285,7 +285,7 @@ automatically triggers cancellation as if `/kill` was called. Duration formats:
 
 ---
 
-## Rendering — `src/tui/renderer.rs`
+## Rendering — `src/ui/terminal/renderer.rs`
 
 The `Renderer` struct centralises all terminal output. The key design is:
 
@@ -345,7 +345,7 @@ A global `StreamSpacingState` tracks whether the last line written to stdout
 or stderr was blank. This prevents stacked blank lines between consecutive
 blocks.
 
-### Progress Spinners — `src/tui/progress.rs`
+### Progress Spinners — `src/ui/terminal/progress.rs`
 
 Spinners are RAII: `ProgressHandle` clears the line on drop. They are TTY-only
 and update in place using `\r\x1b[2K` to clear and rewrite. A 100 ms tick
@@ -396,7 +396,7 @@ safe filename characters (`[A-Za-z0-9._-]`).
 
 ---
 
-## Text Utilities — `src/tui/text.rs`
+## Text Utilities — `src/ui/terminal/text.rs`
 
 | Function | Purpose |
 |----------|---------|
@@ -414,7 +414,7 @@ calculations.
 ## Module Map
 
 ```
-src/tui/
+src/ui/terminal/
 ├── mod.rs            Public re-exports
 ├── commands.rs       Slash command registry and parser
 ├── highlight.rs      syntect syntax highlighting wrapper

@@ -1,10 +1,12 @@
 //! Terminal output renderer for status and trace messages.
 
-use crate::tui::highlight::{highlight_lines_for_path, StyledToken};
-use crate::tui::markdown::render_markdown_for_terminal;
-use crate::tui::progress::{set_progress_enabled, start_progress, ProgressHandle, ProgressMetrics};
-use crate::tui::settings;
-use crate::tui::text::{
+use crate::ui::terminal::highlight::{highlight_lines_for_path, StyledToken};
+use crate::ui::terminal::markdown::render_markdown_for_terminal;
+use crate::ui::terminal::progress::{
+    set_progress_enabled, start_progress, ProgressHandle, ProgressMetrics,
+};
+use crate::ui::terminal::settings;
+use crate::ui::terminal::text::{
     clip_to_width, snippet_preview, truncate_single_line, visible_width, wrap_for_block,
 };
 use crossterm::style::{Color, Print, PrintStyledContent, Stylize};
@@ -493,7 +495,7 @@ impl Renderer {
             None => {
                 let lines = text.lines().collect::<Vec<_>>();
                 let remaining_lines = 0;
-                crate::tui::text::SnippetPreview {
+                crate::ui::terminal::text::SnippetPreview {
                     lines,
                     remaining_lines,
                 }

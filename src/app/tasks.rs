@@ -8,9 +8,9 @@ use buddy::repl::{
     RuntimeContextState,
 };
 use buddy::runtime::{BuddyRuntimeHandle, RuntimeCommand, RuntimeEventEnvelope};
-use buddy::tui::progress::spinner_frame_for_elapsed;
 use buddy::ui::render::RenderSink;
 use buddy::ui::runtime;
+use buddy::ui::terminal::progress::spinner_frame_for_elapsed;
 use std::time::Instant;
 use tokio::sync::mpsc;
 

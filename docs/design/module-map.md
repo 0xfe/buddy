@@ -83,7 +83,7 @@ For a high-level overview, see [docs/design/DESIGN.md](DESIGN.md).
 - `src/ui/`
   - stable rendering traits and terminal facade re-exports
   - runtime event rendering adapter and handlers
-- `src/tui/`
+- `src/ui/terminal/`
   - concrete terminal renderer
   - interactive editor/input loop
   - slash-command metadata and autocomplete
