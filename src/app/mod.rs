@@ -25,6 +25,8 @@ pub(crate) mod startup;
 pub(crate) mod tasks;
 /// Runtime event trace-file support.
 pub(crate) mod trace;
+/// `buddy trace` analysis command handlers.
+pub(crate) mod trace_cli;
 
 /// Binary entrypoint used by `main`.
 pub(crate) use entry::run;

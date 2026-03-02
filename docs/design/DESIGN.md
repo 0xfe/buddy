@@ -51,6 +51,7 @@ Detailed inventory: [feature-catalog.md](feature-catalog.md).
   - one-shot exec (`buddy exec <prompt>`)
   - session resume (`buddy resume <id|--last>`)
   - setup/login (`buddy init`, `buddy login`)
+  - trace analysis (`buddy trace summary|replay|context-evolution`)
   - first-run guided init auto-bootstrap when no config exists
 - Global targeting and runtime flags:
   - config/model/base-url overrides
@@ -94,6 +95,7 @@ Detailed inventory: [feature-catalog.md](feature-catalog.md).
   - progress/liveness indicators and structured tool/result rendering
 - Token/context behavior:
   - exact usage tracking when provider returns `usage`
+  - per-request/session cost estimation when model pricing metadata is available
   - heuristic context estimation + warnings
   - per-model runtime calibration of token estimates using observed provider usage
   - automatic and manual history compaction

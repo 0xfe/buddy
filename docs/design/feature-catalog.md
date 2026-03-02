@@ -14,6 +14,9 @@ For the high-level architecture narrative, see [docs/design/DESIGN.md](DESIGN.md
 - `buddy resume <session-id>`: starts REPL after restoring a saved session.
 - `buddy resume --last`: starts REPL using the most recent saved session.
 - `buddy login [model-profile] [--check] [--reset]`: runs login health/reset/device flow for the selected profile.
+- `buddy trace summary <file>`: renders trace-level token/cost/tool/error summary.
+- `buddy trace replay <file> --turn <n>`: renders one prompt-turn reconstruction.
+- `buddy trace context-evolution <file>`: renders context/token/cost/compaction timeline.
 
 ### Global CLI flags
 
@@ -284,6 +287,7 @@ All tool outputs are wrapped as JSON:
 ## Token and Context Behavior
 
 - Exact token accounting from response `usage` when provided.
+- Request/session cost accounting from pricing metadata in `templates/models.toml` (when available).
 - Session totals and last-call counters tracked with saturating updates.
 - Heuristic preflight estimate drives warnings and hard-limit checks.
 - Hard-limit guard attempts automatic compaction before failing.

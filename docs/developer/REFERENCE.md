@@ -10,6 +10,9 @@ This page centralizes command, flag, model, theme, config, and tool reference ma
 - `buddy resume --last`: resume the last session in the current directory.
 - `buddy init [--force]`: guided init flow for `~/.config/buddy/buddy.toml` (update existing config, overwrite with backup, or cancel).
 - `buddy login [model] [--check] [--reset]`: login/check/reset provider credentials for a model profile.
+- `buddy trace summary <file>`: summarize one JSONL runtime trace.
+- `buddy trace replay <file> --turn <n>`: inspect one prompt turn from trace.
+- `buddy trace context-evolution <file>`: inspect context/token/cost evolution over time.
 
 Login soft-fail behavior:
 

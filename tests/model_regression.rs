@@ -10,7 +10,9 @@
 use buddy::api::ApiClient;
 use buddy::auth::{load_provider_tokens, login_provider_key};
 use buddy::config::{load_config, select_model_profile, AuthMode, Config};
-use buddy::types::{ChatRequest, Message};
+use buddy::types::{
+    ChatRequest, FunctionCall, FunctionDefinition, Message, Role, ToolCall, ToolDefinition,
+};
 use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -44,6 +46,40 @@ async fn default_template_profiles_round_trip() {
     if !failures.is_empty() {
         panic!(
             "model regression failures:\n{}",
+            failures
+                .iter()
+                .map(|line| format!("- {line}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+}
+
+#[tokio::test]
+#[ignore = "network regression suite; run explicitly"]
+async fn default_template_profiles_accept_tool_error_history() {
+    // Validate provider-side protocol compatibility for tool-error recovery
+    // histories across all default template profiles.
+    assert_no_global_runtime_overrides().expect("clean runtime env required");
+
+    let path = write_temp_template_config().expect("temp config");
+    let mut config = load_config(Some(path.to_string_lossy().as_ref())).expect("load config");
+    let profile_names = configured_profile_names(&config);
+
+    let mut failures = Vec::<String>::new();
+    for profile in &profile_names {
+        eprintln!("[model-regression:tool-error-history] profile={profile}");
+        match run_profile_tool_error_history_probe(&mut config, profile).await {
+            Ok(()) => eprintln!("[model-regression:tool-error-history] profile={profile} ok"),
+            Err(err) => failures.push(format!("{profile}: {err}")),
+        }
+    }
+
+    let _ = fs::remove_file(&path);
+
+    if !failures.is_empty() {
+        panic!(
+            "model regression failures (tool-error-history):\n{}",
             failures
                 .iter()
                 .map(|line| format!("- {line}"))
@@ -133,6 +169,82 @@ async fn run_profile_probe(config: &mut Config, profile_name: &str) -> Result<()
         ));
     }
 
+    Ok(())
+}
+
+/// Run a minimal probe that injects prior tool-call + tool-error history and
+/// verifies the provider can continue with a normal assistant response.
+async fn run_profile_tool_error_history_probe(
+    config: &mut Config,
+    profile_name: &str,
+) -> Result<(), String> {
+    select_model_profile(config, profile_name)
+        .map_err(|err| format!("failed selecting profile: {err}"))?;
+    profile_auth_preflight(config, profile_name)?;
+
+    let client = ApiClient::new(
+        &config.api,
+        Duration::from_secs(config.network.api_timeout_secs),
+    );
+    let request = ChatRequest {
+        model: config.api.model.clone(),
+        messages: vec![
+            Message::system("You are a regression probe. Reply with exactly: RECOVERED"),
+            Message::user("Use a tool and then continue."),
+            Message {
+                role: Role::Assistant,
+                content: None,
+                tool_calls: Some(vec![ToolCall {
+                    id: "call_regression".to_string(),
+                    call_type: "function".to_string(),
+                    function: FunctionCall {
+                        name: "run_shell".to_string(),
+                        arguments: "{\"command\":\"false\"}".to_string(),
+                    },
+                }]),
+                tool_call_id: None,
+                name: None,
+                extra: Default::default(),
+            },
+            Message::tool_result("call_regression", "Tool error: command failed (regression)"),
+            Message::user("Ignoring previous tool error, reply with exactly RECOVERED."),
+        ],
+        tools: Some(vec![ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "run_shell".to_string(),
+                description: "Runs a shell command and returns output".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "command": { "type": "string" }
+                    },
+                    "required": ["command"],
+                    "additionalProperties": false
+                }),
+            },
+        }]),
+        temperature: None,
+        top_p: None,
+    };
+
+    let response = timeout(Duration::from_secs(90), client.chat(&request))
+        .await
+        .map_err(|_| "request timed out after 90s".to_string())
+        .and_then(|result| result.map_err(|err| err.to_string()))?;
+
+    let choice = response
+        .choices
+        .into_iter()
+        .next()
+        .ok_or_else(|| "provider returned empty choices".to_string())?;
+    let text = choice.message.content.unwrap_or_default();
+    if text.trim().is_empty() {
+        return Err(format!(
+            "empty assistant content for tool-error-history probe (finish_reason={:?})",
+            choice.finish_reason
+        ));
+    }
     Ok(())
 }
 

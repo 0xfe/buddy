@@ -40,5 +40,23 @@ pub(in crate::ui::runtime) fn handle_metrics(
             ctx.runtime_context.used_percent = used_percent;
         }
         MetricsEvent::PhaseDuration { .. } => {}
+        MetricsEvent::Cost {
+            task,
+            request_total_usd,
+            session_total_cost_usd,
+            ..
+        } => {
+            ctx.runtime_context.last_request_cost_usd = request_total_usd;
+            ctx.runtime_context.session_total_cost_usd = session_total_cost_usd;
+            ctx.renderer.section("task");
+            ctx.renderer.field(
+                "cost",
+                &format!(
+                    "#{} request:${request_total_usd:.6} session:${session_total_cost_usd:.6}",
+                    task.task_id
+                ),
+            );
+            eprintln!();
+        }
     }
 }

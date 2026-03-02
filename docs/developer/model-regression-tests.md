@@ -4,7 +4,10 @@
 
 `tests/model_regression.rs` is a live network regression suite for provider/model compatibility checks.
 
-It verifies that the default model profiles shipped in `src/templates/buddy.toml` can each complete a tiny prompt round-trip using the current auth and protocol logic.
+It verifies that the default model profiles shipped in `src/templates/buddy.toml` can each complete:
+
+1. a tiny plain-text round-trip, and
+2. a protocol-valid follow-up turn that includes prior assistant tool-calls plus a tool-error result.
 
 This suite is intentionally separate from normal unit tests because it requires network access and real credentials.
 
@@ -21,6 +24,13 @@ For each profile in the default template:
    - response has at least one choice,
    - no unexpected tool calls are returned,
    - assistant text content is non-empty.
+5. Send a second probe with injected tool history:
+   - assistant tool-call message,
+   - matching tool-result message containing an error payload,
+   - user follow-up requesting a plain text reply.
+6. Assert:
+   - provider accepts the history shape,
+   - assistant text content is still non-empty (error recovery path remains viable).
 
 ## Why It Is Ignored By Default
 
@@ -51,7 +61,8 @@ These overrides intentionally fail the suite because they mask per-profile behav
 
 ## Cost/Token Discipline
 
-The suite uses one very short request per profile and avoids tools to keep token usage and runtime cost low.
+The suite uses two short requests per profile and keeps prompts minimal.
+The tool-error-history probe uses synthetic tool history in the message list (it does not actually execute shell commands).
 
 ## Failure Triage
 
@@ -61,5 +72,6 @@ Common failure classes:
 - provider timeout / transport error
 - provider accepted request but returned empty assistant content
 - unexpected tool-call response for a no-tools probe
+- provider rejected prior tool-call/tool-result history shape
 
 When a failure appears, rerun the single suite command with `--nocapture` to see per-profile logs.

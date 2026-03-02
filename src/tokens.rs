@@ -62,6 +62,67 @@ pub fn calibrated_estimate(
         .unwrap_or(raw_estimate)
 }
 
+/// Per-model pricing rates used for request/session cost estimation.
+///
+/// Values are expressed in USD per 1M tokens (`per_mtok`) so downstream code
+/// can estimate request cost from provider usage telemetry.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ModelPricing {
+    /// Input-token price in USD per 1M tokens.
+    pub input_price_per_mtok: f64,
+    /// Output-token price in USD per 1M tokens.
+    pub output_price_per_mtok: f64,
+    /// Optional cache-read input price in USD per 1M tokens.
+    pub cache_read_price_per_mtok: Option<f64>,
+}
+
+/// One request-level cost estimate in USD.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UsageCostEstimate {
+    /// Input-token cost in USD.
+    pub input_usd: f64,
+    /// Output-token cost in USD.
+    pub output_usd: f64,
+    /// Cache-read-token cost in USD.
+    pub cache_read_usd: f64,
+    /// Total request cost in USD.
+    pub total_usd: f64,
+}
+
+/// Estimate request cost from usage totals and model pricing.
+///
+/// `cached_prompt_tokens` is optional because many providers do not report it.
+/// When unavailable, all prompt tokens are priced using `input_price_per_mtok`.
+pub fn estimate_usage_cost(
+    pricing: &ModelPricing,
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    cached_prompt_tokens: Option<u64>,
+) -> UsageCostEstimate {
+    let cached_tokens = cached_prompt_tokens.unwrap_or(0).min(prompt_tokens);
+    let billable_input_tokens = prompt_tokens.saturating_sub(cached_tokens);
+
+    let input_usd = tokens_to_mtok(billable_input_tokens) * pricing.input_price_per_mtok;
+    let output_usd = tokens_to_mtok(completion_tokens) * pricing.output_price_per_mtok;
+    let cache_read_usd = pricing
+        .cache_read_price_per_mtok
+        .map(|rate| tokens_to_mtok(cached_tokens) * rate)
+        .unwrap_or(0.0);
+    let total_usd = input_usd + output_usd + cache_read_usd;
+
+    UsageCostEstimate {
+        input_usd,
+        output_usd,
+        cache_read_usd,
+        total_usd,
+    }
+}
+
+/// Convert raw token count into "millions of tokens" units.
+fn tokens_to_mtok(tokens: u64) -> f64 {
+    tokens as f64 / 1_000_000.0
+}
+
 /// Tracks token usage across a conversation session.
 #[derive(Debug, Clone)]
 pub struct TokenTracker {
@@ -184,6 +245,26 @@ struct ModelContextRule {
     pattern: String,
     /// Context window applied when the rule matches.
     context_window: usize,
+    /// Optional input-token price in USD per 1M tokens.
+    #[serde(default)]
+    input_price_per_mtok: Option<f64>,
+    /// Optional output-token price in USD per 1M tokens.
+    #[serde(default)]
+    output_price_per_mtok: Option<f64>,
+    /// Optional cache-read input price in USD per 1M tokens.
+    #[serde(default)]
+    cache_read_price_per_mtok: Option<f64>,
+}
+
+impl ModelContextRule {
+    /// Return pricing when both input/output rates are present.
+    fn pricing(&self) -> Option<ModelPricing> {
+        Some(ModelPricing {
+            input_price_per_mtok: self.input_price_per_mtok?,
+            output_price_per_mtok: self.output_price_per_mtok?,
+            cache_read_price_per_mtok: self.cache_read_price_per_mtok,
+        })
+    }
 }
 
 /// Embedded model context catalog loaded from `templates/models.toml`.
@@ -199,7 +280,7 @@ struct ModelCatalog {
 
 impl ModelCatalog {
     /// Find the first matching rule for the given model id.
-    fn lookup(&self, model: &str) -> Option<usize> {
+    fn lookup_rule(&self, model: &str) -> Option<&ModelContextRule> {
         let normalized = normalize_model_name(model);
         if normalized.is_empty() {
             return None;
@@ -214,18 +295,27 @@ impl ModelCatalog {
             }
         }
 
-        self.rule.iter().find_map(|rule| {
+        self.rule.iter().find(|rule| {
             let pattern = normalize_model_name(&rule.pattern);
             if pattern.is_empty() {
-                return None;
+                return false;
             }
-            let matched = match rule.kind {
+            match rule.kind {
                 ModelMatchKind::Exact => candidates.iter().any(|c| c == &pattern),
                 ModelMatchKind::Prefix => candidates.iter().any(|c| c.starts_with(&pattern)),
                 ModelMatchKind::Contains => candidates.iter().any(|c| c.contains(&pattern)),
-            };
-            matched.then_some(rule.context_window)
+            }
         })
+    }
+
+    /// Return context-window size for first matching rule.
+    fn lookup_context(&self, model: &str) -> Option<usize> {
+        self.lookup_rule(model).map(|rule| rule.context_window)
+    }
+
+    /// Return pricing for first matching rule when rates are available.
+    fn lookup_pricing(&self, model: &str) -> Option<ModelPricing> {
+        self.lookup_rule(model).and_then(ModelContextRule::pricing)
     }
 }
 
@@ -296,12 +386,19 @@ fn legacy_default_context_limit(model: &str) -> usize {
 /// Can always be overridden via `config.api.context_limit`.
 pub fn default_context_limit(model: &str) -> usize {
     if let Some(catalog) = model_catalog() {
-        if let Some(context_window) = catalog.lookup(model) {
+        if let Some(context_window) = catalog.lookup_context(model) {
             return context_window;
         }
         return catalog.default_context_window;
     }
     legacy_default_context_limit(model)
+}
+
+/// Best-effort pricing lookup for one model id.
+///
+/// Returns `None` when no pricing metadata exists in the embedded catalog.
+pub fn model_pricing(model: &str) -> Option<ModelPricing> {
+    model_catalog().and_then(|catalog| catalog.lookup_pricing(model))
 }
 
 // ---------------------------------------------------------------------------
@@ -371,12 +468,54 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(catalog.lookup("foo-model"), Some(100));
-        assert_eq!(catalog.lookup("provider/foo-model"), Some(100));
-        assert_eq!(catalog.lookup("bar-v2"), Some(200));
-        assert_eq!(catalog.lookup("provider/bar-v2"), Some(200));
-        assert_eq!(catalog.lookup("something-baz-here"), Some(300));
-        assert_eq!(catalog.lookup("no-match"), None);
+        assert_eq!(catalog.lookup_context("foo-model"), Some(100));
+        assert_eq!(catalog.lookup_context("provider/foo-model"), Some(100));
+        assert_eq!(catalog.lookup_context("bar-v2"), Some(200));
+        assert_eq!(catalog.lookup_context("provider/bar-v2"), Some(200));
+        assert_eq!(catalog.lookup_context("something-baz-here"), Some(300));
+        assert_eq!(catalog.lookup_context("no-match"), None);
+    }
+
+    // Ensures pricing metadata can be resolved from matching catalog rules.
+    #[test]
+    fn catalog_pricing_lookup() {
+        let catalog: ModelCatalog = toml::from_str(
+            r#"
+            default_context_window = 42
+
+            [[rule]]
+            match = "prefix"
+            pattern = "gpt-x"
+            context_window = 100000
+            input_price_per_mtok = 1.5
+            output_price_per_mtok = 6.0
+            cache_read_price_per_mtok = 0.5
+            "#,
+        )
+        .unwrap();
+
+        let pricing = catalog.lookup_pricing("gpt-x-1").expect("pricing");
+        assert_eq!(pricing.input_price_per_mtok, 1.5);
+        assert_eq!(pricing.output_price_per_mtok, 6.0);
+        assert_eq!(pricing.cache_read_price_per_mtok, Some(0.5));
+    }
+
+    // Ensures request-cost estimation computes each price bucket consistently.
+    #[test]
+    fn usage_cost_estimation_splits_input_output_and_cache() {
+        let pricing = ModelPricing {
+            input_price_per_mtok: 2.0,
+            output_price_per_mtok: 8.0,
+            cache_read_price_per_mtok: Some(0.5),
+        };
+        let estimate = estimate_usage_cost(&pricing, 2_000, 500, Some(400));
+        // Input billed tokens = 1600 => 0.0016 * $2.0
+        assert!((estimate.input_usd - 0.0032).abs() < 1e-9);
+        // Output billed tokens = 500 => 0.0005 * $8.0
+        assert!((estimate.output_usd - 0.004).abs() < 1e-9);
+        // Cache billed tokens = 400 => 0.0004 * $0.5
+        assert!((estimate.cache_read_usd - 0.0002).abs() < 1e-9);
+        assert!((estimate.total_usd - 0.0074).abs() < 1e-9);
     }
 
     // Ensures heuristic estimation produces plausible non-zero token counts.

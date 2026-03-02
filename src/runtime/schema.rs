@@ -477,6 +477,30 @@ pub enum MetricsEvent {
         /// Elapsed duration in milliseconds.
         elapsed_ms: u64,
     },
+    /// Estimated request/session cost update derived from model pricing.
+    Cost {
+        /// Logical task reference.
+        task: TaskRef,
+        /// Model identifier used for this estimate.
+        model: String,
+        /// Prompt tokens used in this request.
+        prompt_tokens: u64,
+        /// Completion tokens used in this request.
+        completion_tokens: u64,
+        /// Prompt tokens billed at cache-read pricing, when known.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cached_tokens: Option<u64>,
+        /// Request input-token cost in USD.
+        request_input_cost_usd: f64,
+        /// Request output-token cost in USD.
+        request_output_cost_usd: f64,
+        /// Request cache-read-token cost in USD.
+        request_cache_read_cost_usd: f64,
+        /// Request total cost in USD.
+        request_total_usd: f64,
+        /// Running session total cost in USD.
+        session_total_cost_usd: f64,
+    },
 }
 
 /// Non-fatal warning surfaced to frontends.

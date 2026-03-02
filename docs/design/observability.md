@@ -10,6 +10,14 @@ Buddy supports optional runtime-event tracing for debugging and replay.
   - startup open failures are warnings (runtime continues),
   - write failures disable tracing and emit one warning.
 
+## Trace Analysis CLI
+
+Buddy can analyze trace files offline:
+
+- `buddy trace summary <file>`
+- `buddy trace replay <file> --turn <n>`
+- `buddy trace context-evolution <file>`
+
 ## Verbose Logging
 
 - `-v` enables `info` logs.
@@ -71,6 +79,8 @@ Milestone-1 runtime traces include:
   - `Metrics.PhaseDuration` (`phase = "tool:<name>"`)
 - compaction lifecycle:
   - `Session.Compacted` with pre/post token estimate fields and removal counts
+- cost lifecycle:
+  - `Metrics.Cost` with request/session USD estimates when pricing metadata exists
 
 ## Span Model
 

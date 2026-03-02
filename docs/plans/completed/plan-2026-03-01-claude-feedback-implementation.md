@@ -2,9 +2,9 @@
 
 ## Status
 
-- Program status: Active
+- Program status: Completed
 - Scope status: Locked to actionable items from `docs/plans/review-2026-03-01-claude-feedback.md`, sequenced for lowest-risk delivery.
-- Current focus: Milestone 7 (evaluation, trace tooling, cost visibility, and closure) is next.
+- Current focus: Plan closure and archival.
 - Completed so far:
   1. Reviewed `docs/plans/review-2026-03-01-claude-feedback.md` end-to-end.
   2. Mapped priority recommendations into an execution board with validation gates.
@@ -15,9 +15,9 @@
   7. Completed Milestone 4: pair-safe compaction units, orphan tool-call/result repair passes, structured compaction summaries, and failed-tool retention guarantees.
   8. Completed Milestone 5: explicit prompt-priority sectioning, additive operator-instructions conflict policy, planning-before-tools guidance, and structured tool-definition disambiguation metadata.
   9. Completed Milestone 6: explicit provider field support with fallback detection, provider-priority reasoning extraction, and per-model token-estimation calibration.
+  10. Completed Milestone 7: trace analysis CLI (`summary`, `replay`, `context-evolution`), pricing-backed cost metrics, and expanded model regression probes for tool-error history compatibility.
 - Next steps:
-  1. Start Milestone 7 (`buddy trace` analysis CLI, cost metrics, expanded eval coverage, and plan closure).
-  2. Keep Milestone 1-6 observability/context/compatibility guarantees stable while Milestone 7 lands.
+  1. Move this completed plan to `docs/plans/completed/` after commit.
 
 ## Goal
 
@@ -71,14 +71,14 @@ Out of scope for this plan:
 
 ## Integrated Program Board
 
-- [ ] Milestone 0: Baseline, Repro Matrix, and Design Freeze
+- [x] Milestone 0: Baseline, Repro Matrix, and Design Freeze
 - [x] Milestone 1: Tracing Foundation (`--trace`, JSONL sink, event completeness)
 - [x] Milestone 2: Logging/Verbosity and Span Model
 - [x] Milestone 3: Prompt Context Architecture (static system + dynamic snapshot as turn context)
 - [x] Milestone 4: Compaction Integrity and Error-Preserving Memory
 - [x] Milestone 5: Prompt and Tooling Reliability Hardening
 - [x] Milestone 6: Provider/Model Compatibility and Token Accuracy
-- [ ] Milestone 7: Evaluation, Trace Tooling, Cost Visibility, and Closure
+- [x] Milestone 7: Evaluation, Trace Tooling, Cost Visibility, and Closure
 
 ## Milestone 0: Baseline, Repro Matrix, and Design Freeze
 
@@ -499,3 +499,11 @@ Close the loop with analysis tooling, cost metrics, and regression confidence.
    - added/updated provider and reasoning regression tests plus token calibration unit coverage,
    - validated with `cargo fmt`, `cargo test` (full suite), and `cargo test --test model_regression -- --ignored --nocapture` (all default template profiles passing).
    - commit: `82255ae`.
+9. 2026-03-02: Finished Milestone 7:
+   - added `buddy trace` subcommands (`summary`, `replay --turn`, `context-evolution`) with strict JSONL parsing and turn/timeline reconstruction in `src/app/trace_cli.rs`,
+   - added pricing-aware request/session cost metrics (`Metrics.Cost`) and runtime emission from agent usage telemetry when `templates/models.toml` provides pricing metadata,
+   - added baseline pricing metadata for `gpt-5*` rules in `src/templates/models.toml`,
+   - expanded ignored model regression coverage with a provider-compatibility probe that injects tool-call + tool-error history and verifies follow-up response continuity across default profiles,
+   - updated observability/reference/model docs and added `docs/developer/tracing-cli.md`,
+   - validated with `cargo fmt`, `cargo test -q`, and `cargo test --test model_regression -- --ignored --nocapture` (both ignored model-regression tests passing).
+   - commit: `TBD`.

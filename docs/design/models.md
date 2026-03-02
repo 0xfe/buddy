@@ -110,6 +110,15 @@ Token estimation:
 - Raw heuristic estimates (character-based) are adjusted using observed provider `usage.prompt_tokens`.
 - Calibration is bounded and smoothed to avoid overreacting to one outlier response.
 
+Pricing/cost estimation:
+
+- `src/templates/models.toml` can attach pricing metadata to model-match rules:
+  - `input_price_per_mtok`
+  - `output_price_per_mtok`
+  - `cache_read_price_per_mtok` (optional)
+- When pricing metadata exists and provider returns usage totals, Buddy emits `Metrics.Cost` runtime events with request/session USD estimates.
+- Missing pricing metadata is non-fatal; cost metrics are omitted for those requests.
+
 ## Sources
 
 - OpenAI Python SDK generated response types (reasoning config + response stream event schema):

@@ -104,11 +104,40 @@ pub enum Command {
         #[arg(long = "check", default_value_t = false)]
         check: bool,
     },
+    /// Analyze runtime trace JSONL files.
+    Trace {
+        /// Trace analysis command.
+        #[command(subcommand)]
+        command: TraceCommand,
+    },
+}
+
+/// Trace analysis subcommands.
+#[derive(Debug, Clone, Subcommand)]
+pub enum TraceCommand {
+    /// Show a high-level summary for a trace file.
+    Summary {
+        /// Path to JSONL trace file.
+        file: String,
+    },
+    /// Replay one prompt turn from a trace file.
+    Replay {
+        /// Path to JSONL trace file.
+        file: String,
+        /// 1-based prompt turn index to replay.
+        #[arg(long = "turn")]
+        turn: usize,
+    },
+    /// Show context/token/cost timeline evolution for a trace file.
+    ContextEvolution {
+        /// Path to JSONL trace file.
+        file: String,
+    },
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Args, Command};
+    use super::{Args, Command, TraceCommand};
     use clap::{CommandFactory, Parser};
 
     // Verifies the baseline UX contract: no subcommand means "start REPL".
@@ -239,5 +268,53 @@ mod tests {
         let args = Args::parse_from(["buddy", "--version"]);
         assert!(args.version);
         assert!(args.command.is_none());
+    }
+
+    // Verifies trace summary command parses with file path positional argument.
+    #[test]
+    fn trace_summary_subcommand_parses() {
+        let args = Args::parse_from(["buddy", "trace", "summary", "/tmp/buddy.trace.jsonl"]);
+        assert!(matches!(
+            args.command,
+            Some(Command::Trace {
+                command: TraceCommand::Summary { file }
+            }) if file == "/tmp/buddy.trace.jsonl"
+        ));
+    }
+
+    // Verifies trace replay command requires a 1-based turn selector.
+    #[test]
+    fn trace_replay_subcommand_parses() {
+        let args = Args::parse_from([
+            "buddy",
+            "trace",
+            "replay",
+            "/tmp/buddy.trace.jsonl",
+            "--turn",
+            "3",
+        ]);
+        assert!(matches!(
+            args.command,
+            Some(Command::Trace {
+                command: TraceCommand::Replay { file, turn }
+            }) if file == "/tmp/buddy.trace.jsonl" && turn == 3
+        ));
+    }
+
+    // Verifies trace context-evolution command parsing.
+    #[test]
+    fn trace_context_evolution_subcommand_parses() {
+        let args = Args::parse_from([
+            "buddy",
+            "trace",
+            "context-evolution",
+            "/tmp/buddy.trace.jsonl",
+        ]);
+        assert!(matches!(
+            args.command,
+            Some(Command::Trace {
+                command: TraceCommand::ContextEvolution { file }
+            }) if file == "/tmp/buddy.trace.jsonl"
+        ));
     }
 }

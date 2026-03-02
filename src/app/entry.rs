@@ -12,6 +12,7 @@ use crate::app::tasks::background_liveness_line;
 #[cfg(test)]
 use crate::app::tasks::{process_runtime_events, ProcessRuntimeEventsContext};
 use crate::app::trace::resolve_trace_path;
+use crate::app::trace_cli::run_trace_command;
 use crate::cli;
 use buddy::agent::Agent;
 use buddy::auth::{
@@ -104,6 +105,14 @@ pub(crate) async fn run(args: crate::cli::Args) -> i32 {
             &bootstrap_renderer,
             InitInvocation::Manual { force: *force },
         ) {
+            bootstrap_renderer.error(&msg);
+            return 1;
+        }
+        return 0;
+    }
+
+    if let Some(cli::Command::Trace { command }) = args.command.as_ref() {
+        if let Err(msg) = run_trace_command(&bootstrap_renderer, command) {
             bootstrap_renderer.error(&msg);
             return 1;
         }
