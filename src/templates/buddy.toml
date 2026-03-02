@@ -7,49 +7,38 @@
 # Profile fields:
 # - provider: "auto" | "openai" | "openrouter" | "moonshot" | "other"
 # - api: "completions" | "responses"
-# - auth: "api-key" | "login"
-# - only one of api_key, api_key_env, api_key_file may be set.
+# - auth: "api-key" | "login" (set by `buddy init`)
+# - one optional key source: api_key, api_key_env, or api_key_file
+#   (if omitted for auth="api-key", buddy uses encrypted provider key storage).
 
 [models.gpt-codex]
 api_base_url = "https://api.openai.com/v1"
 provider = "openai"
 api = "responses"
-auth = "login"
 model = "gpt-5.3-codex"
-# If you prefer API-key auth for OpenAI, switch auth = "api-key" and set one:
-# api_key_env = "OPENAI_API_KEY"
-# api_key = "sk-..."
-# api_key_file = "/path/to/key.txt"
 
 [models.gpt-spark]
 api_base_url = "https://api.openai.com/v1"
 provider = "openai"
 api = "responses"
-auth = "login"
 model = "gpt-5.3-codex-spark"
 
 [models.openrouter-deepseek]
 api_base_url = "https://openrouter.ai/api/v1"
 provider = "openrouter"
 api = "completions"
-auth = "api-key"
-api_key_env = "OPENROUTER_API_KEY"
 model = "deepseek/deepseek-v3.2"
 
 [models.openrouter-glm]
 api_base_url = "https://openrouter.ai/api/v1"
 provider = "openrouter"
 api = "completions"
-auth = "api-key"
-api_key_env = "OPENROUTER_API_KEY"
 model = "z-ai/glm-5"
 
 [models.kimi]
 api_base_url = "https://api.moonshot.ai/v1"
 provider = "moonshot"
 api = "completions"
-auth = "api-key"
-api_key_env = "MOONSHOT_API_KEY"
 model = "kimi-k2.5"
 
 [agent]

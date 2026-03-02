@@ -27,7 +27,7 @@ Options:
   -h, --help                Show this help
 
 Examples:
-  curl -fsSL https://raw.githubusercontent.com/0xfe/buddy/main/scripts/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/0xfe/buddy/master/scripts/install.sh | bash
   ./scripts/install.sh --version v0.1.0
   ./scripts/install.sh --from-dist dist --version v0.1.0
 USAGE
@@ -173,6 +173,80 @@ run_post_install_init() {
   log "no config found; run '${bin_path} init' (or just 'buddy' for auto-init) on first use"
 }
 
+path_contains_dir() {
+  local needle="$1"
+  local path_list="${PATH:-}"
+  local old_ifs="$IFS"
+  IFS=':'
+  for entry in $path_list; do
+    if [[ "$entry" == "$needle" ]]; then
+      IFS="$old_ifs"
+      return 0
+    fi
+  done
+  IFS="$old_ifs"
+  return 1
+}
+
+detect_shell_rc() {
+  local shell_name
+  shell_name="$(basename "${SHELL:-}")"
+  case "$shell_name" in
+    zsh) echo "$HOME/.zshrc" ;;
+    bash) echo "$HOME/.bashrc" ;;
+    *) echo "$HOME/.profile" ;;
+  esac
+}
+
+path_export_line_for_dir() {
+  local dir="$1"
+  if [[ "$dir" == "$HOME"* ]]; then
+    local suffix="${dir#$HOME}"
+    echo "export PATH=\"\$HOME${suffix}:\$PATH\""
+  else
+    echo "export PATH=\"${dir}:\$PATH\""
+  fi
+}
+
+offer_path_setup() {
+  local install_dir="$1"
+  if path_contains_dir "$install_dir"; then
+    return 0
+  fi
+
+  log "${BIN_NAME} is installed in ${install_dir}, but that directory is not on your PATH."
+  log "add it manually: export PATH=\"${install_dir}:\$PATH\""
+
+  if [[ ! -t 1 || ! -r /dev/tty ]]; then
+    return 0
+  fi
+
+  local rc_file path_line response
+  rc_file="$(detect_shell_rc)"
+  path_line="$(path_export_line_for_dir "$install_dir")"
+  if [[ -f "$rc_file" ]] && grep -Fq "$path_line" "$rc_file"; then
+    log "PATH export already present in ${rc_file}"
+    return 0
+  fi
+
+  printf "• append PATH setup to %s? [y/N] " "$rc_file" >/dev/tty
+  read -r response </dev/tty || response="n"
+  case "$response" in
+    y|Y|yes|YES)
+      {
+        echo ""
+        echo "# >>> buddy PATH >>>"
+        echo "$path_line"
+        echo "# <<< buddy PATH <<<"
+      } >>"$rc_file"
+      log "updated ${rc_file} (restart shell or run: source ${rc_file})"
+      ;;
+    *)
+      log "skipped shell rc update"
+      ;;
+  esac
+}
+
 TARGET="$(detect_target)"
 TAG="$(normalize_tag "$VERSION")"
 if [[ -z "$TAG" ]]; then
@@ -225,6 +299,7 @@ if [[ -x "$DEST_BIN" ]]; then
   if [[ -n "$INSTALLED_VER" && "v${INSTALLED_VER}" == "$TAG" ]]; then
     log "${BIN_NAME} ${INSTALLED_VER} already installed at ${DEST_BIN}"
     run_post_install_init "$DEST_BIN"
+    offer_path_setup "$INSTALL_DIR"
     exit 0
   fi
   if [[ "$FORCE" -ne 1 ]]; then
@@ -235,3 +310,4 @@ fi
 install -m 0755 "$NEW_BIN" "$DEST_BIN" || err "failed to install ${BIN_NAME} into ${INSTALL_DIR}"
 log "installed ${BIN_NAME} ${TAG} to ${DEST_BIN}"
 run_post_install_init "$DEST_BIN"
+offer_path_setup "$INSTALL_DIR"

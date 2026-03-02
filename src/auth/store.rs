@@ -19,6 +19,9 @@ pub(crate) struct AuthStore {
     /// Provider-scoped token map (`providers.<name>`).
     #[serde(default)]
     pub(crate) providers: BTreeMap<String, OAuthTokens>,
+    /// Provider-scoped API key map (`api_keys.<provider>`).
+    #[serde(default)]
+    pub(crate) api_keys: BTreeMap<String, String>,
     // Legacy profile-scoped token storage from older buddy builds.
     #[serde(default)]
     pub(crate) profiles: BTreeMap<String, OAuthTokens>,
@@ -39,6 +42,19 @@ pub fn load_provider_tokens(provider: &str) -> Result<Option<OAuthTokens>, AuthE
     };
     let store = load_store(&path)?;
     Ok(resolve_provider_tokens(&store, provider))
+}
+
+/// Load a stored API key for one provider.
+pub fn load_provider_api_key(provider: &str) -> Result<Option<String>, AuthError> {
+    let Some(path) = default_auth_store_path() else {
+        return Ok(None);
+    };
+    let store = load_store(&path)?;
+    Ok(store
+        .api_keys
+        .get(provider)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty()))
 }
 
 /// True when the auth store still contains legacy profile-scoped records.
@@ -64,6 +80,28 @@ pub fn save_provider_tokens(provider: &str, tokens: OAuthTokens) -> Result<(), A
     let mut store = load_store(&path)?;
     store.version = 2;
     store.providers.insert(provider.to_string(), tokens);
+    write_store(&path, &store)?;
+    Ok(())
+}
+
+/// Save a provider-scoped API key to the encrypted auth store.
+pub fn save_provider_api_key(provider: &str, api_key: &str) -> Result<(), AuthError> {
+    let Some(path) = default_auth_store_path() else {
+        return Err(AuthError::Invalid(
+            "unable to resolve config root for auth token storage".to_string(),
+        ));
+    };
+    let trimmed = api_key.trim();
+    if trimmed.is_empty() {
+        return Err(AuthError::Invalid(
+            "API key cannot be empty when saving provider secret".to_string(),
+        ));
+    }
+    let mut store = load_store(&path)?;
+    store.version = 3;
+    store
+        .api_keys
+        .insert(provider.to_string(), trimmed.to_string());
     write_store(&path, &store)?;
     Ok(())
 }
@@ -177,7 +215,10 @@ pub(crate) fn load_store(path: &Path) -> Result<AuthStore, AuthError> {
                     path.display()
                 ))
             })?;
-            if !parsed.providers.is_empty() || !parsed.profiles.is_empty() {
+            if !parsed.providers.is_empty()
+                || !parsed.profiles.is_empty()
+                || !parsed.api_keys.is_empty()
+            {
                 // Best-effort migration. If re-write fails, keep loading plaintext.
                 let _ = write_store(path, &parsed);
             }

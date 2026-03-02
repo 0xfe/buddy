@@ -4,7 +4,8 @@
 //! configuration/auth mistakes as actionable errors instead of raw API failures.
 
 use crate::auth::{
-    load_provider_tokens, login_provider_key, supports_login_for_provider, AuthError, OAuthTokens,
+    api_key_provider_key, load_provider_api_key, load_provider_tokens, login_provider_key,
+    supports_login_for_provider, AuthError, OAuthTokens,
 };
 use crate::config::{AuthMode, Config, ModelConfig, ModelProvider};
 use std::net::IpAddr;
@@ -118,6 +119,17 @@ fn validate_api_key_mode(
         return Ok(());
     }
 
+    let provider_key = api_key_provider_key(config.api.provider, base_url);
+    match load_provider_api_key(&provider_key) {
+        Ok(Some(_)) => return Ok(()),
+        Ok(None) => {}
+        Err(err) => {
+            return Err(format!(
+                "failed to read stored API key for provider `{provider_key}`: {err}"
+            ));
+        }
+    }
+
     // No configured key source. Allow localhost-style endpoints where auth is
     // often intentionally disabled, but otherwise fail early.
     if is_localhost_endpoint(base_url) {
@@ -125,7 +137,7 @@ fn validate_api_key_mode(
     }
 
     Err(format!(
-        "profile `{}` uses auth=api-key but no API key is configured. Set `models.{}.api_key`, `api_key_env`, or `api_key_file`.",
+        "profile `{}` uses auth=api-key but no API key is configured. Set `models.{}.api_key`, `api_key_env`, or `api_key_file`, or run `buddy init` to save an encrypted provider key.",
         config.api.profile, config.api.profile
     ))
 }

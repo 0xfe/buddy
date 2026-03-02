@@ -3,16 +3,18 @@
 //! The flow is intentionally state-oriented:
 //! - first-run auto bootstrap only triggers when no config source exists,
 //! - explicit `buddy init` supports update/overwrite/cancel for existing files,
-//! - interactive questions stay narrow (model selection + login guidance).
+//! - interactive questions stay narrow (model selection + auth setup).
 
 use crate::app::commands::model::{configured_model_profile_names, model_picker_options};
 use crate::cli;
+use buddy::auth::{api_key_provider_key, save_provider_api_key, supports_login_for_provider};
 use buddy::config::{
     default_global_config_path, initialize_default_global_config, load_config, persist_agent_model,
-    AuthMode, Config, GlobalConfigInitResult,
+    persist_model_profile_auth, Config, GlobalConfigInitResult,
 };
 use buddy::ui::render::RenderSink;
 use buddy::ui::terminal as term_ui;
+use rpassword::prompt_password;
 use std::io::IsTerminal;
 use std::path::Path;
 
@@ -37,7 +39,7 @@ pub(crate) enum InitInvocation {
 }
 
 /// Run first-run bootstrap only when no config source is currently present.
-pub(crate) fn maybe_run_auto_init(
+pub(crate) async fn maybe_run_auto_init(
     renderer: &dyn RenderSink,
     args: &cli::Args,
 ) -> Result<(), String> {
@@ -57,11 +59,11 @@ pub(crate) fn maybe_run_auto_init(
     renderer.section("first-run setup");
     renderer.detail("No buddy config was found. Starting guided setup.");
     eprintln!();
-    run_init_flow(renderer, InitInvocation::AutoBootstrap)
+    run_init_flow(renderer, InitInvocation::AutoBootstrap).await
 }
 
 /// Run the user-facing init flow.
-pub(crate) fn run_init_flow(
+pub(crate) async fn run_init_flow(
     renderer: &dyn RenderSink,
     invocation: InitInvocation,
 ) -> Result<(), String> {
@@ -79,7 +81,7 @@ pub(crate) fn run_init_flow(
                     .map_err(|e| format!("failed to initialize ~/.config/buddy: {e}"))?,
             );
             if interactive {
-                run_interactive_update(renderer, &path_display)?;
+                run_interactive_update(renderer, &path_display).await?;
             } else {
                 renderer
                     .detail("Non-interactive terminal detected; keeping default config values.");
@@ -95,7 +97,7 @@ pub(crate) fn run_init_flow(
                         .map_err(|e| format!("failed to initialize ~/.config/buddy: {e}"))?,
                 );
                 if interactive {
-                    run_interactive_update(renderer, &path_display)?;
+                    run_interactive_update(renderer, &path_display).await?;
                 }
                 return Ok(());
             }
@@ -107,7 +109,7 @@ pub(crate) fn run_init_flow(
                         .map_err(|e| format!("failed to initialize ~/.config/buddy: {e}"))?,
                 );
                 if interactive {
-                    run_interactive_update(renderer, &path_display)?;
+                    run_interactive_update(renderer, &path_display).await?;
                 }
                 return Ok(());
             }
@@ -125,7 +127,7 @@ pub(crate) fn run_init_flow(
                     renderer.section("updating buddy config");
                     renderer.field("path", &path_display);
                     eprintln!();
-                    run_interactive_update(renderer, &path_display)
+                    run_interactive_update(renderer, &path_display).await
                 }
                 ExistingConfigAction::Overwrite => {
                     apply_init_result(
@@ -133,7 +135,7 @@ pub(crate) fn run_init_flow(
                         initialize_default_global_config(true)
                             .map_err(|e| format!("failed to initialize ~/.config/buddy: {e}"))?,
                     );
-                    run_interactive_update(renderer, &path_display)
+                    run_interactive_update(renderer, &path_display).await
                 }
                 ExistingConfigAction::Cancel => {
                     renderer.warn("init cancelled. No changes were made.");
@@ -183,7 +185,10 @@ fn apply_init_result(renderer: &dyn RenderSink, result: GlobalConfigInitResult) 
 }
 
 /// Run interactive model-selection + login-guidance update for one config path.
-fn run_interactive_update(renderer: &dyn RenderSink, config_path: &str) -> Result<(), String> {
+async fn run_interactive_update(
+    renderer: &dyn RenderSink,
+    config_path: &str,
+) -> Result<(), String> {
     let mut config = load_config(Some(config_path))
         .map_err(|err| format!("failed to load config for init update: {err}"))?;
     let names = configured_model_profile_names(&config);
@@ -222,7 +227,7 @@ fn run_interactive_update(renderer: &dyn RenderSink, config_path: &str) -> Resul
         }
     }
 
-    render_login_guidance(renderer, &config);
+    run_auth_setup(renderer, &config, config_path).await?;
     Ok(())
 }
 
@@ -249,40 +254,111 @@ fn prompt_existing_config_action() -> Result<ExistingConfigAction, String> {
 }
 
 /// Render model-auth guidance and prompt for optional immediate login action.
-fn render_login_guidance(renderer: &dyn RenderSink, config: &Config) {
+/// Ask for auth mode after model selection, then execute login/key setup.
+async fn run_auth_setup(
+    renderer: &dyn RenderSink,
+    config: &Config,
+    config_path: &str,
+) -> Result<(), String> {
     let Some(active_profile) = config.models.get(&config.agent.model) else {
-        return;
+        return Ok(());
     };
-    if active_profile.auth != AuthMode::Login {
-        renderer.section("login setup");
-        renderer.detail("Selected profile uses API-key auth.");
-        renderer.detail("Set api_key, api_key_env, or api_key_file in buddy.toml.");
-        eprintln!();
-        return;
-    }
-
-    let login_now = term_ui::pick_from_list(
-        config.display.color,
-        "login setup",
-        "Selected profile uses auth=login. Do you want login instructions now?",
-        &["1. Yes".to_string(), "2. Not now".to_string()],
-        0,
-    );
-    let wants_login_now = matches!(login_now, Ok(Some(0)));
-    renderer.section("login setup");
-    renderer.field("profile", &config.agent.model);
-    if wants_login_now {
-        renderer.detail(&format!(
-            "run `buddy login {}` now (or `/login {}` inside REPL).",
-            config.agent.model, config.agent.model
-        ));
+    let provider = active_profile
+        .provider
+        .resolved(&active_profile.api_base_url);
+    let supports_login = supports_login_for_provider(provider, &active_profile.api_base_url);
+    let options = if supports_login {
+        vec![
+            "1. Login".to_string(),
+            "2. API key".to_string(),
+            "3. Skip for now".to_string(),
+        ]
     } else {
-        renderer.detail(&format!(
-            "when ready, run `buddy login {}` (or `/login {}` inside REPL).",
-            config.agent.model, config.agent.model
-        ));
+        vec!["1. API key".to_string(), "2. Skip for now".to_string()]
+    };
+    let selected = term_ui::pick_from_list(
+        config.display.color,
+        "authentication",
+        "Choose auth mode for this provider.",
+        &options,
+        0,
+    )
+    .map_err(|err| format!("failed to read auth-mode selection: {err}"))?;
+
+    let Some(choice) = selected else {
+        renderer.section("auth setup");
+        renderer.detail("skipped (selection cancelled)");
+        eprintln!();
+        return Ok(());
+    };
+
+    if supports_login {
+        match choice {
+            0 => {
+                persist_model_profile_auth(Some(config_path), &config.agent.model, "login", true)
+                    .map_err(|err| format!("failed to persist profile auth mode: {err}"))?;
+                let refreshed = load_config(Some(config_path))
+                    .map_err(|err| format!("failed to reload config after auth update: {err}"))?;
+                crate::app::entry::run_login_flow(
+                    renderer,
+                    &refreshed,
+                    Some(&config.agent.model),
+                    false,
+                    false,
+                )
+                .await
+            }
+            1 => configure_api_key_auth(renderer, config, config_path),
+            _ => {
+                renderer.section("auth setup");
+                renderer.detail("skipped (you can run `/login` later or update buddy.toml)");
+                eprintln!();
+                Ok(())
+            }
+        }
+    } else {
+        match choice {
+            0 => configure_api_key_auth(renderer, config, config_path),
+            _ => {
+                renderer.section("auth setup");
+                renderer.detail("skipped (you can configure auth later)");
+                eprintln!();
+                Ok(())
+            }
+        }
     }
+}
+
+/// Configure API-key auth and store the key in encrypted provider storage.
+fn configure_api_key_auth(
+    renderer: &dyn RenderSink,
+    config: &Config,
+    config_path: &str,
+) -> Result<(), String> {
+    persist_model_profile_auth(Some(config_path), &config.agent.model, "api-key", true)
+        .map_err(|err| format!("failed to persist profile auth mode: {err}"))?;
+    let Some(profile) = config.models.get(&config.agent.model) else {
+        return Err(format!("unknown active profile `{}`", config.agent.model));
+    };
+    let provider_key = api_key_provider_key(profile.provider, &profile.api_base_url);
+    let api_key = prompt_password("Enter API key (input hidden): ")
+        .map_err(|err| format!("failed to read API key from terminal: {err}"))?;
+    let trimmed = api_key.trim();
+    if trimmed.is_empty() {
+        renderer.warn("empty API key entered; no key was saved.");
+        renderer.detail("set BUDDY_API_KEY, or re-run `buddy init` to configure auth.");
+        eprintln!();
+        return Ok(());
+    }
+    save_provider_api_key(&provider_key, trimmed)
+        .map_err(|err| format!("failed to save API key for provider `{provider_key}`: {err}"))?;
+    renderer.section("api key saved");
+    renderer.field("profile", &config.agent.model);
+    renderer.field("provider", &provider_key);
+    renderer.detail("Stored in encrypted auth store under ~/.config/buddy/auth.json.");
+    renderer.detail("Env vars (for example BUDDY_API_KEY) still override stored keys.");
     eprintln!();
+    Ok(())
 }
 
 /// True when stdin/stderr support interactive terminal UI.

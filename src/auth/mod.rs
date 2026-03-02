@@ -18,13 +18,13 @@ pub use openai::{
     start_openai_device_login,
 };
 pub use provider::{
-    login_provider_key, login_provider_key_for_base_url, openai_login_runtime_base_url,
-    supports_login_for_provider, supports_openai_login,
+    api_key_provider_key, login_provider_key, login_provider_key_for_base_url,
+    openai_login_runtime_base_url, supports_login_for_provider, supports_openai_login,
 };
 pub use store::{
     default_auth_store_path, has_legacy_profile_token_records, load_profile_tokens,
-    load_provider_tokens, provider_login_health, reset_provider_tokens, save_profile_tokens,
-    save_provider_tokens,
+    load_provider_api_key, load_provider_tokens, provider_login_health, reset_provider_tokens,
+    save_profile_tokens, save_provider_api_key, save_provider_tokens,
 };
 pub use types::{OAuthTokens, OpenAiDeviceLogin, ProviderLoginHealth};
 
@@ -153,6 +153,32 @@ mod tests {
                 "https://api.openai.com/v1"
             ),
             None
+        );
+    }
+
+    // Verifies provider-scoped API key aliases remain stable across providers.
+    #[test]
+    fn api_key_provider_key_mapping_is_stable() {
+        assert_eq!(
+            api_key_provider_key(
+                crate::config::ModelProvider::Openai,
+                "https://api.openai.com/v1"
+            ),
+            "openai"
+        );
+        assert_eq!(
+            api_key_provider_key(
+                crate::config::ModelProvider::Openrouter,
+                "https://openrouter.ai/api/v1"
+            ),
+            "openrouter"
+        );
+        assert_eq!(
+            api_key_provider_key(
+                crate::config::ModelProvider::Moonshot,
+                "https://api.moonshot.ai/v1"
+            ),
+            "moonshot"
         );
     }
 
@@ -312,6 +338,29 @@ mod tests {
         let path = temp_auth_store_path();
         let loaded = load_store(&path).expect("missing file should load default store");
         assert!(loaded.providers.is_empty());
+        assert!(loaded.api_keys.is_empty());
         assert!(loaded.profiles.is_empty());
+    }
+
+    // Verifies provider API keys are persisted encrypted and can be loaded.
+    #[test]
+    fn save_and_load_provider_api_key_round_trip() {
+        let path = temp_auth_store_path();
+        let mut store = AuthStore::default();
+        store
+            .api_keys
+            .insert("openrouter".to_string(), "or-secret".to_string());
+        write_store(&path, &store).expect("write encrypted auth store");
+        let loaded = load_store(&path).expect("load encrypted auth store");
+        assert_eq!(
+            loaded.api_keys.get("openrouter").map(String::as_str),
+            Some("or-secret")
+        );
+
+        let raw = std::fs::read_to_string(&path).expect("read encrypted auth store");
+        assert!(
+            !raw.contains("or-secret"),
+            "api key leaked in encrypted auth file"
+        );
     }
 }

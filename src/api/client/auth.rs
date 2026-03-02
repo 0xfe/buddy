@@ -5,8 +5,8 @@
 
 use crate::api::policy;
 use crate::auth::{
-    load_provider_tokens, login_provider_key, refresh_openai_tokens_with_client,
-    save_provider_tokens,
+    api_key_provider_key, load_provider_api_key, load_provider_tokens, login_provider_key,
+    refresh_openai_tokens_with_client, save_provider_tokens,
 };
 use crate::config::{AuthMode, ModelProvider};
 use crate::error::ApiError;
@@ -29,6 +29,17 @@ pub(super) async fn resolve_bearer_token(
     // Explicit keys always win over login token resolution.
     if !api_key.is_empty() {
         return Ok(Some(api_key.to_string()));
+    }
+    if auth == AuthMode::ApiKey {
+        let provider_key = api_key_provider_key(provider, base_url);
+        if let Some(stored_key) = load_provider_api_key(&provider_key).map_err(|err| {
+            ApiError::InvalidResponse(format!(
+                "failed to load stored API key for provider `{provider_key}`: {err}"
+            ))
+        })? {
+            return Ok(Some(stored_key));
+        }
+        return Ok(None);
     }
     if !policy::uses_login_auth(auth, api_key) {
         return Ok(None);

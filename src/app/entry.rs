@@ -104,7 +104,9 @@ pub(crate) async fn run(args: crate::cli::Args) -> i32 {
         if let Err(msg) = run_init_flow(
             &bootstrap_renderer,
             InitInvocation::Manual { force: *force },
-        ) {
+        )
+        .await
+        {
             bootstrap_renderer.error(&msg);
             return 1;
         }
@@ -119,7 +121,7 @@ pub(crate) async fn run(args: crate::cli::Args) -> i32 {
         return 0;
     }
 
-    if let Err(msg) = maybe_run_auto_init(&bootstrap_renderer, &args) {
+    if let Err(msg) = maybe_run_auto_init(&bootstrap_renderer, &args).await {
         bootstrap_renderer.error(&msg);
         return 1;
     }

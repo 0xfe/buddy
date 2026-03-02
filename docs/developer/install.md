@@ -5,7 +5,7 @@ Buddy ships release tarballs for supported host targets and includes a curl-styl
 ## Quick install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/0xfe/buddy/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/0xfe/buddy/master/scripts/install.sh | bash
 ```
 
 Default behavior:
@@ -14,7 +14,8 @@ Default behavior:
 2. Download the matching release artifact from GitHub.
 3. Verify checksum when available.
 4. Install `buddy` to `~/.local/bin`.
-5. Run `buddy init` when possible (or print first-run guidance when non-interactive).
+5. Run `buddy init` when possible (includes model + auth setup and immediate login/API-key capture).
+6. If `~/.local/bin` is not on `PATH`, offer to append it to `~/.zshrc`/`~/.bashrc` idempotently.
 
 ## Installer options
 
@@ -53,6 +54,6 @@ make test-installer-smoke
 
 ## Troubleshooting
 
-- Ensure `~/.local/bin` is on `PATH`.
+- Ensure `~/.local/bin` is on `PATH` (the installer can append this for you interactively).
 - If checksum verification is skipped, install `shasum` or `sha256sum`.
 - On unsupported platforms, build from source with `make build` and `make install`.

@@ -37,6 +37,9 @@ pub(crate) struct EncryptedAuthStore {
     /// Provider-scoped encrypted token records.
     #[serde(default)]
     pub(crate) providers: BTreeMap<String, EncryptedTokenRecord>,
+    /// Provider-scoped encrypted API key records.
+    #[serde(default)]
+    pub(crate) api_keys: BTreeMap<String, EncryptedTextRecord>,
     /// Legacy profile-scoped encrypted token records.
     #[serde(default)]
     pub(crate) profiles: BTreeMap<String, EncryptedTokenRecord>,
@@ -63,6 +66,17 @@ pub(crate) struct EncryptedTokenRecord {
     #[serde(default)]
     pub(crate) nonce: String,
     /// Base64-encoded encrypted token payload.
+    #[serde(default)]
+    pub(crate) ciphertext: String,
+}
+
+/// Encrypted text record used for provider API keys.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub(crate) struct EncryptedTextRecord {
+    /// Base64-encoded nonce used for this text record.
+    #[serde(default)]
+    pub(crate) nonce: String,
+    /// Base64-encoded encrypted text payload.
     #[serde(default)]
     pub(crate) ciphertext: String,
 }
@@ -100,6 +114,12 @@ pub(crate) fn encrypt_store(store: &AuthStore) -> Result<EncryptedAuthStore, Aut
         profiles.insert(profile.clone(), record);
     }
 
+    let mut api_keys = BTreeMap::new();
+    for (provider, api_key) in &store.api_keys {
+        let record = encrypt_text_record(&dek, api_key)?;
+        api_keys.insert(provider.clone(), record);
+    }
+
     Ok(EncryptedAuthStore {
         version: AUTH_STORE_VERSION_ENCRYPTED,
         encryption: EncryptedAuthEnvelope {
@@ -108,6 +128,7 @@ pub(crate) fn encrypt_store(store: &AuthStore) -> Result<EncryptedAuthStore, Aut
             wrapped_dek_ciphertext: B64.encode(wrapped_dek_ciphertext),
         },
         providers,
+        api_keys,
         profiles,
     })
 }
@@ -159,9 +180,20 @@ pub(crate) fn decrypt_store(store: &EncryptedAuthStore) -> Result<AuthStore, Aut
         profiles.insert(profile.clone(), tokens);
     }
 
+    let mut api_keys = BTreeMap::new();
+    for (provider, record) in &store.api_keys {
+        let api_key = decrypt_text_record(&dek, record).map_err(|_| {
+            AuthError::Invalid(format!(
+                "failed to decrypt api key for provider `{provider}`. Re-run `buddy init` or configure API key via env var."
+            ))
+        })?;
+        api_keys.insert(provider.clone(), api_key);
+    }
+
     Ok(AuthStore {
         version: store.version.max(AUTH_STORE_VERSION_ENCRYPTED),
         providers,
+        api_keys,
         profiles,
     })
 }
@@ -191,6 +223,34 @@ fn decrypt_token_record(
         .map_err(|_| AuthError::Invalid("failed to decrypt token record".to_string()))?;
     serde_json::from_slice(&payload).map_err(|err| {
         AuthError::Invalid(format!("failed to decode decrypted token record: {err}"))
+    })
+}
+
+/// Encrypt one text payload using the provided DEK.
+fn encrypt_text_record(
+    key: &[u8; AUTH_STORE_KEY_LEN],
+    value: &str,
+) -> Result<EncryptedTextRecord, AuthError> {
+    let (nonce, ciphertext) = encrypt_blob(key, value.as_bytes())?;
+    Ok(EncryptedTextRecord {
+        nonce: B64.encode(nonce),
+        ciphertext: B64.encode(ciphertext),
+    })
+}
+
+/// Decrypt one text payload using the provided DEK.
+fn decrypt_text_record(
+    key: &[u8; AUTH_STORE_KEY_LEN],
+    record: &EncryptedTextRecord,
+) -> Result<String, AuthError> {
+    let nonce = decode_fixed::<AUTH_STORE_NONCE_LEN>(&record.nonce, "nonce")?;
+    let ciphertext = decode_bytes(&record.ciphertext, "ciphertext")?;
+    let payload = decrypt_blob(key, &nonce, &ciphertext)
+        .map_err(|_| AuthError::Invalid("failed to decrypt text record".to_string()))?;
+    String::from_utf8(payload).map_err(|err| {
+        AuthError::Invalid(format!(
+            "failed to decode decrypted text record as utf-8: {err}"
+        ))
     })
 }
 

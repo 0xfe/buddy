@@ -1,6 +1,7 @@
 //! Provider detection and compatibility helpers.
 
 use crate::config::ModelProvider;
+use reqwest::Url;
 
 /// Stable provider key used for OpenAI login token records.
 pub(crate) const OPENAI_PROVIDER_KEY: &str = "openai";
@@ -49,5 +50,24 @@ pub fn openai_login_runtime_base_url(base_url: &str) -> String {
         OPENAI_CHATGPT_CODEX_BASE_URL.to_string()
     } else {
         base_url.trim_end_matches('/').to_string()
+    }
+}
+
+/// Resolve provider key used for API-key secret storage.
+///
+/// Keys are provider-scoped so multiple model profiles on the same provider
+/// can share one stored API key.
+pub fn api_key_provider_key(provider: ModelProvider, base_url: &str) -> String {
+    match provider.resolved(base_url) {
+        ModelProvider::Openai => OPENAI_PROVIDER_KEY.to_string(),
+        ModelProvider::Openrouter => "openrouter".to_string(),
+        ModelProvider::Moonshot => "moonshot".to_string(),
+        ModelProvider::Other | ModelProvider::Auto => {
+            let host = Url::parse(base_url)
+                .ok()
+                .and_then(|url| url.host_str().map(|value| value.to_string()))
+                .unwrap_or_else(|| "unknown".to_string());
+            format!("other:{host}")
+        }
     }
 }

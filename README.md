@@ -6,7 +6,7 @@ Buddy is written in Rust and comes with first-class `tmux` support to allow for 
 
 ```bash
 # Install on macOS or Linux
-curl -fsSL https://raw.githubusercontent.com/0xfe/buddy/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/0xfe/buddy/master/scripts/install.sh | bash
 ```
 
 Buddy works with most OpenAI-compatible APIs and works extremely well with fast models like OpenAI Spark and Claude Haiku, and open-weight models like Kimi k2.5 and GLM-5.
@@ -31,7 +31,7 @@ The default config template (`src/templates/buddy.toml`) includes tested profile
 
 ```bash
 # Option A: install from release (curl-style)
-curl -fsSL https://raw.githubusercontent.com/0xfe/buddy/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/0xfe/buddy/master/scripts/install.sh | bash
 
 # Option B: build from source and install
 make build
@@ -39,11 +39,12 @@ make install
 
 # First run auto-starts guided init when no config exists.
 # You can run init again later to update/overwrite settings.
+# Init now includes auth setup and will start login/API-key capture immediately.
 buddy
 buddy init
 $EDITOR ~/.config/buddy/buddy.toml
 
-# Optional: login flow for auth = "login" profiles
+# Optional: login flow later (for auth = "login" profiles)
 buddy login
 
 # Start buddy operating on the local host (and connect to the tmux session)
