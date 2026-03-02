@@ -62,7 +62,7 @@ fn default_join_wrapped_lines() -> bool {
 #[async_trait]
 impl Tool for CapturePaneTool {
     fn name(&self) -> &'static str {
-        "capture-pane"
+        "tmux_capture_pane"
     }
 
     fn definition(&self) -> ToolDefinition {
@@ -77,11 +77,11 @@ impl Tool for CapturePaneTool {
                     "- Inspecting interactive/stuck terminal state before deciding next action.\n",
                     "When NOT to use:\n",
                     "- Executing commands (use run_shell).\n",
-                    "- Sending control input (use send-keys).\n",
+                    "- Sending control input (use tmux_send_keys).\n",
                     "Disambiguation:\n",
-                    "- capture-pane reads pane state only.\n",
+                    "- tmux_capture_pane reads pane state only.\n",
                     "- run_shell executes commands.\n",
-                    "- send-keys changes interactive program state.\n",
+                    "- tmux_send_keys changes interactive program state.\n",
                     "Examples:\n",
                     "- {\"delay\":\"2s\"}\n",
                     "- {\"session\":\"build\",\"pane\":\"worker\",\"start\":\"-200\",\"end\":\"-\"}"
@@ -249,7 +249,7 @@ mod tests {
                 execution: ExecutionContext::local(),
             }
             .name(),
-            "capture-pane"
+            "tmux_capture_pane"
         );
     }
 

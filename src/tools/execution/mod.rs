@@ -1,6 +1,6 @@
 //! Shared execution backends for tools.
 //!
-//! The `run_shell`, `read_file`, `write_file`, and tmux `capture-pane` support
+//! The `run_shell`, `read_file`, `write_file`, and tmux `tmux_capture_pane` support
 //! can run against:
 //! - the local machine (default)
 //! - a running container (`docker exec` / `podman exec`)
@@ -376,7 +376,7 @@ impl ExecutionContext {
             && !options.press_enter
         {
             return Err(ToolError::InvalidArguments(
-                "send-keys requires at least one of: keys, literal_text, or enter=true".into(),
+                "tmux_send_keys requires at least one of: keys, literal_text, or enter=true".into(),
             ));
         }
         if options.delay > Duration::ZERO {

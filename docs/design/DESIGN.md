@@ -65,9 +65,9 @@ Detailed inventory: [feature-catalog.md](feature-catalog.md).
   - missing login credentials are surfaced as warnings (non-fatal startup/model-switch),
   - user guidance points to `/login <provider>` and `buddy login <provider>`.
 - Built-in tools:
-  - `run_shell`, `read_file`, `write_file`, `fetch_url`, `web_search`, `capture-pane`, `send-keys`, `time`
-  - tmux lifecycle tools: `tmux-create-session`, `tmux-kill-session`, `tmux-create-pane`, `tmux-kill-pane`
-  - tmux-aware selectors on shell/capture/send-keys (`session`, `pane`) with shared-pane defaulting
+  - `run_shell`, `read_file`, `write_file`, `fetch_url`, `web_search`, `tmux_capture_pane`, `tmux_send_keys`, `time`
+  - tmux lifecycle tools: `tmux_create_session`, `tmux_kill_session`, `tmux_create_pane`, `tmux_kill_pane`
+  - tmux-aware selectors on shell/capture/send tools (`session`, `pane`) with shared-pane defaulting
 - Multi-target execution for shell/file workflows:
   - local tmux-managed session (default when shell/files are enabled)
   - container tmux-managed session

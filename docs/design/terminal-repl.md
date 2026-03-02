@@ -176,15 +176,15 @@ In tmux-backed execution contexts, these tools support optional managed
 selectors:
 
 - `run_shell` (`session`, `pane`)
-- `capture-pane` (`session`, `pane`)
-- `send-keys` (`session`, `pane`)
+- `tmux_capture_pane` (`session`, `pane`)
+- `tmux_send_keys` (`session`, `pane`)
 
 Selector behavior:
 
 - If selectors are omitted, tooling defaults to the managed shared pane.
 - Explicit selectors are validated against buddy-managed ownership metadata.
-- First-class lifecycle tools (`tmux-create-session`, `tmux-kill-session`,
-  `tmux-create-pane`, `tmux-kill-pane`) are available and require approval
+- First-class lifecycle tools (`tmux_create_session`, `tmux_kill_session`,
+  `tmux_create_pane`, `tmux_kill_pane`) are available and require approval
   metadata (`risk`, `mutation`, `privesc`, `why`).
 
 For model guidance, Buddy injects a request-scoped tmux context message with

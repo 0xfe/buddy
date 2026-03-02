@@ -53,7 +53,7 @@ pub(crate) struct ReplModeInputs<'a> {
     pub config: Config,
     /// Prepared execution context (local/ssh/container + optional tmux).
     pub execution: ExecutionContext,
-    /// Whether capture-pane/send-keys tools are available in this context.
+    /// Whether tmux capture/send tools are available in this context.
     pub capture_pane_enabled: bool,
     /// Bootstrapped agent instance.
     pub agent: Agent,
@@ -732,8 +732,8 @@ fn enabled_tool_names(config: &Config, capture_pane_enabled: bool) -> Vec<&'stat
         tools.push("run_shell");
     }
     if capture_pane_enabled {
-        tools.push("capture-pane");
-        tools.push("send-keys");
+        tools.push("tmux_capture_pane");
+        tools.push("tmux_send_keys");
     }
     if config.tools.fetch_enabled {
         tools.push("fetch_url");

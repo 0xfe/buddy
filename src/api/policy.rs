@@ -1,7 +1,7 @@
 //! Provider-specific API transport/runtime rules.
 
+use super::protocols::responses::ResponsesRequestOptions;
 use super::provider_compat;
-use super::responses::ResponsesRequestOptions;
 use crate::auth::{
     openai_login_runtime_base_url, supports_login_for_provider as auth_supports_login_for_provider,
 };

@@ -49,7 +49,7 @@ struct Args {
 #[async_trait]
 impl Tool for SendKeysTool {
     fn name(&self) -> &'static str {
-        "send-keys"
+        "tmux_send_keys"
     }
 
     fn definition(&self) -> ToolDefinition {
@@ -64,12 +64,12 @@ impl Tool for SendKeysTool {
                     "- Sending Ctrl-C/Ctrl-Z/Enter/arrows to an already-running program.\n",
                     "When NOT to use:\n",
                     "- Starting new non-interactive commands (use run_shell).\n",
-                    "- Reading pane output (use capture-pane).\n",
-                    "- Managing tmux structure (use tmux-create/kill tools).\n",
+                    "- Reading pane output (use tmux_capture_pane).\n",
+                    "- Managing tmux structure (use tmux_create/tmux_kill tools).\n",
                     "Disambiguation:\n",
-                    "- send-keys controls current pane state.\n",
+                    "- tmux_send_keys controls current pane state.\n",
                     "- run_shell launches commands.\n",
-                    "- capture-pane observes output.\n",
+                    "- tmux_capture_pane observes output.\n",
                     "Examples:\n",
                     "- {\"keys\":[\"C-c\"],\"risk\":\"low\",\"mutation\":false,\"privesc\":false,\"why\":\"Stop hung process\"}\n",
                     "- {\"literal_text\":\"q\",\"enter\":true,\"risk\":\"low\",\"mutation\":false,\"privesc\":false,\"why\":\"Exit pager\"}"
@@ -136,7 +136,7 @@ impl Tool for SendKeysTool {
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
         if args.why.trim().is_empty() {
             return Err(ToolError::InvalidArguments(
-                "send-keys.why must be a non-empty string".to_string(),
+                "tmux_send_keys.why must be a non-empty string".to_string(),
             ));
         }
         // Risk metadata is currently validated-for-presence and forwarded to policy layers.
@@ -164,7 +164,7 @@ fn resolve_delay(delay: Option<&str>) -> Result<Duration, ToolError> {
 }
 
 fn parse_delay_duration(raw: &str) -> Result<Duration, String> {
-    // Shared parser semantics with capture-pane delay handling.
+    // Shared parser semantics with tmux_capture_pane delay handling.
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err("delay cannot be empty".to_string());
@@ -206,7 +206,7 @@ mod tests {
                 execution: ExecutionContext::local(),
             }
             .name(),
-            "send-keys"
+            "tmux_send_keys"
         );
     }
 

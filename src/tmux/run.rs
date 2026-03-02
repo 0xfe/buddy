@@ -35,7 +35,7 @@ pub(crate) async fn run_ssh_tmux_process(
         return Ok(ExecOutput {
             exit_code: 0,
             stdout: format!(
-                "command dispatched to tmux pane {pane_id}; still running in background. Use capture-pane (optionally with delay) to poll output."
+                "command dispatched to tmux pane {pane_id}; still running in background. Use tmux_capture_pane (optionally with delay) to poll output."
             ),
             stderr: String::new(),
         });
@@ -110,7 +110,7 @@ pub(crate) async fn run_local_tmux_process(
         return Ok(ExecOutput {
             exit_code: 0,
             stdout: format!(
-                "command dispatched to tmux pane {pane_id}; still running in background. Use capture-pane (optionally with delay) to poll output."
+                "command dispatched to tmux pane {pane_id}; still running in background. Use tmux_capture_pane (optionally with delay) to poll output."
             ),
             stderr: String::new(),
         });
@@ -179,7 +179,7 @@ pub(crate) async fn run_container_tmux_process(
         return Ok(ExecOutput {
             exit_code: 0,
             stdout: format!(
-                "command dispatched to tmux pane {pane_id}; still running in background. Use capture-pane (optionally with delay) to poll output."
+                "command dispatched to tmux pane {pane_id}; still running in background. Use tmux_capture_pane (optionally with delay) to poll output."
             ),
             stderr: String::new(),
         });

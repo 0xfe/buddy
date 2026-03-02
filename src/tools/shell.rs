@@ -240,16 +240,16 @@ impl Tool for ShellTool {
                     "- Running diagnostics, inspections, builds, tests, or admin commands.\n",
                     "- Any non-interactive command where direct shell output is needed.\n",
                     "When NOT to use:\n",
-                    "- Tmux lifecycle management (use tmux-create-session/create-pane/kill-* tools).\n",
-                    "- Interactive key control (use send-keys).\n",
-                    "- Polling terminal state without new execution (use capture-pane).\n",
+                    "- Tmux lifecycle management (use tmux_create_session/tmux_create_pane/tmux_kill_* tools).\n",
+                    "- Interactive key control (use tmux_send_keys).\n",
+                    "- Polling terminal state without new execution (use tmux_capture_pane).\n",
                     "Disambiguation:\n",
                     "- run_shell executes commands.\n",
-                    "- capture-pane reads existing terminal output.\n",
-                    "- send-keys controls interactive programs in an existing pane.\n",
+                    "- tmux_capture_pane reads existing terminal output.\n",
+                    "- tmux_send_keys controls interactive programs in an existing pane.\n",
                     "Examples:\n",
                     "- {\"command\":\"ls -la\",\"risk\":\"low\",\"mutation\":false,\"privesc\":false,\"why\":\"List working directory\"}\n",
-                    "- {\"command\":\"npm run build\",\"wait\":false,\"risk\":\"low\",\"mutation\":false,\"privesc\":false,\"why\":\"Start long build and poll with capture-pane\"}"
+                    "- {\"command\":\"npm run build\",\"wait\":false,\"risk\":\"low\",\"mutation\":false,\"privesc\":false,\"why\":\"Start long build and poll with tmux_capture_pane\"}"
                 ).into(),
                 parameters: serde_json::json!({
                     "type": "object",
@@ -317,7 +317,7 @@ impl Tool for ShellTool {
             && looks_like_raw_tmux_lifecycle_command(&args.command)
         {
             return Err(ToolError::ExecutionFailed(
-                "tmux lifecycle commands should use first-class tools (`tmux-create-session`, `tmux-create-pane`, `tmux-kill-pane`, `tmux-kill-session`) instead of run_shell"
+                "tmux lifecycle commands should use first-class tools (`tmux_create_session`, `tmux_create_pane`, `tmux_kill_pane`, `tmux_kill_session`) instead of run_shell"
                     .to_string(),
             ));
         }

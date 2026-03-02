@@ -83,7 +83,7 @@ struct CreateSessionArgs {
 #[async_trait]
 impl Tool for TmuxCreateSessionTool {
     fn name(&self) -> &'static str {
-        "tmux-create-session"
+        "tmux_create_session"
     }
 
     fn definition(&self) -> ToolDefinition {
@@ -97,10 +97,10 @@ impl Tool for TmuxCreateSessionTool {
                     "- Exceptional isolation where default managed session is insufficient.\n",
                     "When NOT to use:\n",
                     "- Normal work (use default managed session and omit selectors).\n",
-                    "- Adding parallel workspace inside default session (use tmux-create-pane).\n",
+                    "- Adding parallel workspace inside default session (use tmux_create_pane).\n",
                     "Disambiguation:\n",
-                    "- tmux-create-session adds session-level isolation.\n",
-                    "- tmux-create-pane adds workspace within a session.\n",
+                    "- tmux_create_session adds session-level isolation.\n",
+                    "- tmux_create_pane adds workspace within a session.\n",
                     "Example:\n",
                     "- {\"session\":\"investigation\",\"risk\":\"medium\",\"mutation\":true,\"privesc\":false,\"why\":\"Need isolated workspace for parallel long task\"}"
                 ).into(),
@@ -156,7 +156,7 @@ struct KillSessionArgs {
 #[async_trait]
 impl Tool for TmuxKillSessionTool {
     fn name(&self) -> &'static str {
-        "tmux-kill-session"
+        "tmux_kill_session"
     }
 
     fn definition(&self) -> ToolDefinition {
@@ -169,10 +169,10 @@ impl Tool for TmuxKillSessionTool {
                     "When to use:\n",
                     "- Cleaning up no-longer-needed managed sessions.\n",
                     "When NOT to use:\n",
-                    "- Ending one pane in a still-useful session (use tmux-kill-pane).\n",
+                    "- Ending one pane in a still-useful session (use tmux_kill_pane).\n",
                     "Disambiguation:\n",
-                    "- tmux-kill-session removes the whole session.\n",
-                    "- tmux-kill-pane removes a single pane.\n",
+                    "- tmux_kill_session removes the whole session.\n",
+                    "- tmux_kill_pane removes a single pane.\n",
                     "Example:\n",
                     "- {\"session\":\"investigation\",\"risk\":\"medium\",\"mutation\":true,\"privesc\":false,\"why\":\"Cleanup finished temporary session\"}"
                 ).into(),
@@ -230,7 +230,7 @@ struct CreatePaneArgs {
 #[async_trait]
 impl Tool for TmuxCreatePaneTool {
     fn name(&self) -> &'static str {
-        "tmux-create-pane"
+        "tmux_create_pane"
     }
 
     fn definition(&self) -> ToolDefinition {
@@ -243,11 +243,11 @@ impl Tool for TmuxCreatePaneTool {
                     "When to use:\n",
                     "- Adding parallel workspace, usually in the default managed session.\n",
                     "When NOT to use:\n",
-                    "- Creating isolated session boundaries (use tmux-create-session).\n",
+                    "- Creating isolated session boundaries (use tmux_create_session).\n",
                     "- Running commands directly (use run_shell).\n",
                     "Disambiguation:\n",
-                    "- tmux-create-pane extends a session.\n",
-                    "- tmux-create-session creates session isolation.\n",
+                    "- tmux_create_pane extends a session.\n",
+                    "- tmux_create_session creates session isolation.\n",
                     "Example:\n",
                     "- {\"pane\":\"build\",\"risk\":\"low\",\"mutation\":true,\"privesc\":false,\"why\":\"Need extra pane for parallel build logs\"}"
                 ).into(),
@@ -310,7 +310,7 @@ struct KillPaneArgs {
 #[async_trait]
 impl Tool for TmuxKillPaneTool {
     fn name(&self) -> &'static str {
-        "tmux-kill-pane"
+        "tmux_kill_pane"
     }
 
     fn definition(&self) -> ToolDefinition {
@@ -323,10 +323,10 @@ impl Tool for TmuxKillPaneTool {
                     "When to use:\n",
                     "- Cleaning up temporary panes after work completes.\n",
                     "When NOT to use:\n",
-                    "- Removing the entire session (use tmux-kill-session).\n",
+                    "- Removing the entire session (use tmux_kill_session).\n",
                     "Disambiguation:\n",
-                    "- tmux-kill-pane removes one pane.\n",
-                    "- tmux-kill-session removes the full session.\n",
+                    "- tmux_kill_pane removes one pane.\n",
+                    "- tmux_kill_session removes the full session.\n",
                     "Example:\n",
                     "- {\"pane\":\"build\",\"risk\":\"low\",\"mutation\":true,\"privesc\":false,\"why\":\"No longer need temporary build pane\"}"
                 ).into(),

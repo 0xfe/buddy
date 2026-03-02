@@ -163,7 +163,7 @@ impl ExecutionBackendOps for LocalBackend {
     async fn capture_pane(&self, options: CapturePaneOptions) -> Result<String, ToolError> {
         if options.session.is_some() || options.pane.is_some() {
             return Err(ToolError::ExecutionFailed(
-                "capture-pane session/pane selectors require --tmux".into(),
+                "tmux_capture_pane session/pane selectors require --tmux".into(),
             ));
         }
         // Local non-tmux backend can only capture when currently inside a tmux pane.
@@ -173,7 +173,9 @@ impl ExecutionBackendOps for LocalBackend {
             .map(str::to_string)
             .or_else(local_tmux_pane_target)
             .ok_or_else(|| {
-                ToolError::ExecutionFailed("capture-pane requires an active tmux session".into())
+                ToolError::ExecutionFailed(
+                    "tmux_capture_pane requires an active tmux session".into(),
+                )
             })?;
         run_local_capture_pane(&pane_target, &options).await
     }
@@ -181,7 +183,7 @@ impl ExecutionBackendOps for LocalBackend {
     async fn send_keys(&self, options: SendKeysOptions) -> Result<String, ToolError> {
         if options.session.is_some() || options.pane.is_some() {
             return Err(ToolError::ExecutionFailed(
-                "send-keys session/pane selectors require --tmux".into(),
+                "tmux_send_keys session/pane selectors require --tmux".into(),
             ));
         }
         // Local non-tmux backend can only inject keys when currently inside tmux.
@@ -191,7 +193,7 @@ impl ExecutionBackendOps for LocalBackend {
             .map(str::to_string)
             .or_else(local_tmux_pane_target)
             .ok_or_else(|| {
-                ToolError::ExecutionFailed("send-keys requires an active tmux session".into())
+                ToolError::ExecutionFailed("tmux_send_keys requires an active tmux session".into())
             })?;
         send_local_tmux_keys(&pane_target, &options).await?;
         Ok(format!("sent keys to tmux pane {pane_target}"))
@@ -213,7 +215,7 @@ impl ExecutionBackendOps for LocalBackend {
             return Ok(ExecOutput {
                 exit_code: 0,
                 stdout: format!(
-                    "command dispatched to tmux pane {pane_id}; still running in background. Use capture-pane (optionally with delay) to poll output."
+                    "command dispatched to tmux pane {pane_id}; still running in background. Use tmux_capture_pane (optionally with delay) to poll output."
                 ),
                 stderr: String::new(),
             });

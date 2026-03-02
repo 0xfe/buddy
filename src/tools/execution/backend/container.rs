@@ -198,14 +198,14 @@ impl ExecutionBackendOps for ContainerContext {
     async fn capture_pane(&self, _options: CapturePaneOptions) -> Result<String, ToolError> {
         // Raw container backend has no persistent pane to capture.
         Err(ToolError::ExecutionFailed(
-            "capture-pane is unavailable for container execution targets".into(),
+            "tmux_capture_pane is unavailable for container execution targets".into(),
         ))
     }
 
     async fn send_keys(&self, _options: SendKeysOptions) -> Result<String, ToolError> {
         // Raw container backend has no persistent pane for key injection.
         Err(ToolError::ExecutionFailed(
-            "send-keys is unavailable for container execution targets".into(),
+            "tmux_send_keys is unavailable for container execution targets".into(),
         ))
     }
 

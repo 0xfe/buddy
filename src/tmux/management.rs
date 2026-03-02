@@ -137,7 +137,7 @@ else\n\
   PANE=\"$(tmux list-panes -a -F '#{{session_name}}\\t#{{pane_id}}\\t#{{pane_title}}' 2>/dev/null | awk -F '\\t' -v session=\"$SESSION\" -v pane_title=\"$PANE_TITLE\" '$1==session && $3==pane_title {{print $2; exit}}')\"\n\
 fi\n\
 if [ -z \"$SESSION\" ] || [ -z \"$PANE\" ]; then\n\
-  echo \"tmux target not found; omit target/session/pane to use the default shared pane, or create one with tmux-create-pane\" >&2\n\
+  echo \"tmux target not found; omit target/session/pane to use the default shared pane, or create one with tmux_create_pane\" >&2\n\
   exit 1\n\
 fi\n\
 SESSION_MANAGED=\"$(tmux show-options -v -t \"$SESSION\" {TMUX_MANAGED_OPTION} 2>/dev/null || true)\"\n\

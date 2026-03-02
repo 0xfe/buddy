@@ -1,8 +1,9 @@
 //! HTTP client for OpenAI-compatible APIs.
 //!
 //! The API layer is split into cohesive protocol modules:
-//! - `completions`: `/chat/completions`
-//! - `responses`: `/responses`
+//! - `protocols/completions`: `/chat/completions`
+//! - `protocols/responses`: `/responses`
+//! - `protocols/messages`: `/messages`
 //! - `policy`: provider-specific transport/runtime rules
 //! - `client`: shared auth and dispatch orchestration
 
@@ -14,12 +15,10 @@ use reqwest::header::{HeaderMap, RETRY_AFTER};
 use serde_json::Value;
 use std::time::SystemTime;
 
-mod anthropic;
 mod client;
-mod completions;
 mod policy;
+mod protocols;
 mod provider_compat;
-mod responses;
 
 pub use client::ApiClient;
 
@@ -175,7 +174,7 @@ mod tests {
             }],
             "usage": { "prompt_tokens": 9, "completion_tokens": 3, "total_tokens": 12 }
         }));
-        let responses = responses::parse_responses_payload(&json!({
+        let responses = protocols::responses::parse_responses_payload(&json!({
             "id": "resp_1",
             "status": "completed",
             "output": [{
@@ -210,7 +209,7 @@ mod tests {
             }],
             "usage": { "prompt_tokens": 20, "completion_tokens": 5, "total_tokens": 25 }
         }));
-        let responses = responses::parse_responses_payload(&json!({
+        let responses = protocols::responses::parse_responses_payload(&json!({
             "id": "resp_2",
             "status": "completed",
             "output": [{

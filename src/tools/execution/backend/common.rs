@@ -16,7 +16,7 @@ pub(super) fn should_fallback_to_default_target(err: &ToolError) -> bool {
     text.contains("tmux target not found") || text.contains("failed to parse managed tmux target")
 }
 
-/// Build a managed tmux selector from `capture-pane` options.
+/// Build a managed tmux selector from `tmux_capture_pane` options.
 pub(super) fn selector_from_capture_options(options: &CapturePaneOptions) -> TmuxTargetSelector {
     TmuxTargetSelector {
         target: options.target.clone(),
@@ -25,7 +25,7 @@ pub(super) fn selector_from_capture_options(options: &CapturePaneOptions) -> Tmu
     }
 }
 
-/// Build a managed tmux selector from `send-keys` options.
+/// Build a managed tmux selector from `tmux_send_keys` options.
 pub(super) fn selector_from_send_keys_options(options: &SendKeysOptions) -> TmuxTargetSelector {
     TmuxTargetSelector {
         target: options.target.clone(),

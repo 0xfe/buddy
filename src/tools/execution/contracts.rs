@@ -18,7 +18,7 @@ pub(super) trait ExecutionBackendOps: Send + Sync {
     fn tmux_attach_info(&self) -> Option<TmuxAttachInfo>;
     /// Startup pane reused from an existing managed session, if any.
     fn startup_existing_tmux_pane(&self) -> Option<String>;
-    /// Whether capture-pane operations are supported.
+    /// Whether tmux capture-pane operations are supported.
     fn capture_pane_available(&self) -> bool;
     /// Capture tmux pane text according to options.
     async fn capture_pane(&self, options: CapturePaneOptions) -> Result<String, ToolError>;

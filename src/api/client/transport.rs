@@ -1,9 +1,9 @@
 //! HTTP transport helpers for protocol-specific API requests.
 
-use crate::api::anthropic;
-use crate::api::completions;
 use crate::api::policy;
-use crate::api::responses::{self, ResponsesRequestOptions};
+use crate::api::protocols::completions;
+use crate::api::protocols::messages;
+use crate::api::protocols::responses::{self, ResponsesRequestOptions};
 use crate::config::{ApiProtocol, AuthMode, ModelProvider, ReasoningEffort};
 use crate::error::ApiError;
 use crate::types::{ChatRequest, ChatResponse};
@@ -73,7 +73,7 @@ pub(super) async fn dispatch_request(args: DispatchRequest<'_>) -> Result<ChatRe
             let api_key = bearer
                 .filter(|value| !value.trim().is_empty())
                 .or_else(|| (!api_key.trim().is_empty()).then_some(api_key));
-            anthropic::request(http, base_url, request, api_key).await
+            messages::request(http, base_url, request, api_key).await
         }
     }
 }

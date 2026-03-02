@@ -244,8 +244,8 @@ max_panes = 5
 | `read_file` | Read files (8K truncation). Respects local/container/ssh execution context. |
 | `write_file` | Create/overwrite files with path safety policies and optional allowlist roots. |
 | `web_search` | DuckDuckGo search and return top results. |
-| `capture-pane` | Capture tmux pane output (optionally delayed) for terminal-state inspection. |
-| `send-keys` | Send keys/text to tmux panes for interactive control. Requires `risk`, `mutation`, `privesc`, and `why`. |
+| `tmux_capture_pane` | Capture tmux pane output (optionally delayed) for terminal-state inspection. |
+| `tmux_send_keys` | Send keys/text to tmux panes for interactive control. Requires `risk`, `mutation`, `privesc`, and `why`. |
 | `time` | Return harness-recorded wall clock time in multiple formats. |
 
 All tool responses return a JSON envelope with `result` and `harness_timestamp`.

@@ -26,7 +26,7 @@ pub enum ShellWait {
     NoWait,
 }
 
-/// Options for tmux `capture-pane` operations.
+/// Options for tmux `tmux_capture_pane` operations.
 ///
 /// These options are intentionally close to tmux's native flags so tool-level
 /// callers can expose common capture behaviors without coupling to shell text.

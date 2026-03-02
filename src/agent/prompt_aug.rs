@@ -30,13 +30,13 @@ impl Agent {
         Some(Message::user(content))
     }
 
-    /// Capture default-shared-pane screenshot text using the `capture-pane` tool.
+    /// Capture default-shared-pane screenshot text using the `tmux_capture_pane` tool.
     async fn capture_default_tmux_snapshot_text(&self) -> Option<String> {
-        if !self.tools.has_tool("capture-pane") {
+        if !self.tools.has_tool("tmux_capture_pane") {
             return None;
         }
 
-        let result = self.tools.execute("capture-pane", "{}").await.ok()?;
+        let result = self.tools.execute("tmux_capture_pane", "{}").await.ok()?;
         let snapshot = tool_result_text(&result).trim().to_string();
         if snapshot.is_empty() {
             return None;
@@ -87,7 +87,7 @@ capture_timing: captured immediately before this model request\n\
 ```text\n{clipped}\n```\n\
 [DEFAULT_SHARED_PANE_SNAPSHOT_END]\n\
 Before running any command, inspect this default shared-pane screenshot. If it does not show a usable shell prompt, \
-do not run commands yet. Explain what is blocking the pane and offer to recover control via `send-keys`.\n\
+do not run commands yet. Explain what is blocking the pane and offer to recover control via `tmux_send_keys`.\n\
 When running commands in normal mode, omit `session`, `pane`, and `target` so tools use the default shared pane."
     )
 }
@@ -123,7 +123,7 @@ fn resolve_tool_call_routing(message: &Message) -> Option<SnapshotRouting> {
 /// Resolve routing mode from one tool call, when it is tmux-aware.
 fn routing_from_tool_call(call: &crate::types::ToolCall) -> Option<SnapshotRouting> {
     match call.function.name.as_str() {
-        "capture-pane" | "send-keys" | "run_shell" => {}
+        "tmux_capture_pane" | "tmux_send_keys" | "run_shell" => {}
         _ => return None,
     }
     let Some(target_label) = non_default_tmux_target_label(&call.function.arguments) else {
@@ -233,7 +233,7 @@ mod tests {
                 id: "call-1".to_string(),
                 call_type: "function".to_string(),
                 function: FunctionCall {
-                    name: "capture-pane".to_string(),
+                    name: "tmux_capture_pane".to_string(),
                     arguments: r#"{"session":"build","pane":"worker"}"#.to_string(),
                 },
             }]),
@@ -244,7 +244,7 @@ mod tests {
         assert_eq!(
             resolve_tmux_snapshot_routing(&messages),
             SnapshotRouting::NonDefaultTarget {
-                tool_name: "capture-pane".to_string(),
+                tool_name: "tmux_capture_pane".to_string(),
                 target_label: "session=build pane=worker".to_string(),
             }
         );
@@ -253,9 +253,9 @@ mod tests {
     /// Verifies non-default context block clearly labels the latest explicit target.
     #[test]
     fn non_default_tmux_target_context_labels_source() {
-        let rendered = render_non_default_tmux_target_context("capture-pane", "pane=worker");
+        let rendered = render_non_default_tmux_target_context("tmux_capture_pane", "pane=worker");
         assert!(rendered.contains("default shared-pane snapshot is intentionally omitted"));
-        assert!(rendered.contains("last_tool: capture-pane"));
+        assert!(rendered.contains("last_tool: tmux_capture_pane"));
         assert!(rendered.contains("last_target: pane=worker"));
     }
 }

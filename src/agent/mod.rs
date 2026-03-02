@@ -1270,14 +1270,14 @@ mod tests {
     #[async_trait]
     impl crate::tools::Tool for SnapshotCaptureTool {
         fn name(&self) -> &'static str {
-            "capture-pane"
+            "tmux_capture_pane"
         }
 
         fn definition(&self) -> ToolDefinition {
             ToolDefinition {
                 tool_type: "function".to_string(),
                 function: FunctionDefinition {
-                    name: "capture-pane".to_string(),
+                    name: "tmux_capture_pane".to_string(),
                     description: "capture pane".to_string(),
                     parameters: json!({
                         "type": "object",

@@ -237,7 +237,7 @@ struct RuntimeSetup {
     config: Config,
     /// Execution backend context (local/ssh/container/tmux).
     execution: ExecutionContext,
-    /// Whether capture-pane/send-keys can be exposed.
+    /// Whether tmux capture/send tools can be exposed.
     capture_pane_enabled: bool,
     /// Agent instance bound to the configured tool registry.
     agent: Agent,
@@ -673,13 +673,13 @@ fn enabled_tool_names(
         tools.push("run_shell");
     }
     if capture_pane_enabled {
-        tools.push("capture-pane");
-        tools.push("send-keys");
+        tools.push("tmux_capture_pane");
+        tools.push("tmux_send_keys");
         if tmux_management_enabled {
-            tools.push("tmux-create-session");
-            tools.push("tmux-kill-session");
-            tools.push("tmux-create-pane");
-            tools.push("tmux-kill-pane");
+            tools.push("tmux_create_session");
+            tools.push("tmux_kill_session");
+            tools.push("tmux_create_pane");
+            tools.push("tmux_kill_pane");
         }
     }
     if config.tools.fetch_enabled {

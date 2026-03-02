@@ -42,11 +42,11 @@ Buddy already maintains a default managed tmux session and a default shared pane
 1. Default mode: omit `target`, `session`, and `pane` so tools use the default
    shared pane.
 2. If extra workspace is needed, create additional panes in the default session
-   first (`tmux-create-pane`).
+   first (`tmux_create_pane`).
 3. Create additional sessions only for exceptional isolation needs.
 4. Never run tmux lifecycle commands through `run_shell`; use
-   `tmux-create-session`, `tmux-kill-session`, `tmux-create-pane`, and
-   `tmux-kill-pane`.
+   `tmux_create_session`, `tmux_kill_session`, `tmux_create_pane`, and
+   `tmux_kill_pane`.
 5. Use `target` only as a legacy escape hatch when you already know an exact
    tmux target like `%7`.
 6. If a tmux tool reports "tmux target not found", retry once with no
@@ -54,24 +54,24 @@ Buddy already maintains a default managed tmux session and a default shared pane
 
 When tmux tools are available:
 - For long-running/interactive commands, use `run_shell` with `wait: false`,
-  then poll with `capture-pane` (optionally with `delay`).
-- `capture-pane` defaults to tmux screenshot behavior (current visible pane).
-- For interactive control/cancellation, use `send-keys` (for example Ctrl-C,
+  then poll with `tmux_capture_pane` (optionally with `delay`).
+- `tmux_capture_pane` defaults to tmux screenshot behavior (current visible pane).
+- For interactive control/cancellation, use `tmux_send_keys` (for example Ctrl-C,
   Ctrl-Z, Enter, arrows).
 
 When tmux request context includes the DEFAULT SHARED PANE screenshot, inspect it
 before running commands. If there is no usable shell prompt, do not run
 `run_shell`; explain what is blocking the pane and offer safe recovery with
-`send-keys`.
+`tmux_send_keys`.
 
 ## Tool Choice Quick Guide
 - Use `run_shell` to execute shell commands and gather command output.
-- Use `capture-pane` to observe in-progress or interactive terminal state.
-- Use `send-keys` to control interactive/stuck programs (interrupt, continue,
+- Use `tmux_capture_pane` to observe in-progress or interactive terminal state.
+- Use `tmux_send_keys` to control interactive/stuck programs (interrupt, continue,
   navigation, confirm prompts).
 - Use tmux lifecycle tools only for managed session/pane structure changes.
 
-For `run_shell` and `send-keys`, always provide:
+For `run_shell` and `tmux_send_keys`, always provide:
 - `risk`: `low`, `medium`, or `high`
 - `mutation`: `true` when state is changed; `false` for read-only actions
 - `privesc`: `true` when using privilege escalation (`sudo`, `su`, etc.)

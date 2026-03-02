@@ -68,7 +68,7 @@ fn render_remote_target_note(target: ExecutionTarget<'_>) -> String {
         ExecutionTarget::Container(name) => format!(
             "You are currently operating against a remote container target (`{name}`).\n\
              The `run_shell`, `read_file`, and `write_file` tools (plus tmux tools like \
-             `capture-pane`/`send-keys` when available) act on that remote target, not on \
+             `tmux_capture_pane`/`tmux_send_keys` when available) act on that remote target, not on \
              the local host running this agent.\n\
              Treat this conversation as targeting the remote environment unless the user \
              explicitly says otherwise."
@@ -76,7 +76,7 @@ fn render_remote_target_note(target: ExecutionTarget<'_>) -> String {
         ExecutionTarget::Ssh(name) => format!(
             "You are currently operating against a remote SSH host target (`{name}`).\n\
              The `run_shell`, `read_file`, and `write_file` tools (plus tmux tools like \
-             `capture-pane`/`send-keys` when available) act on that remote target, not on \
+             `tmux_capture_pane`/`tmux_send_keys` when available) act on that remote target, not on \
              the local host running this agent.\n\
              Treat this conversation as targeting the remote environment unless the user \
              explicitly says otherwise."
@@ -188,11 +188,11 @@ mod tests {
     fn prompt_renders_enabled_tools_list() {
         let prompt = render_system_prompt(SystemPromptParams {
             execution_target: ExecutionTarget::Local,
-            enabled_tools: vec!["run_shell", "capture-pane", "time"],
+            enabled_tools: vec!["run_shell", "tmux_capture_pane", "time"],
             custom_instructions: None,
         });
         assert!(prompt.contains("- `run_shell`"));
-        assert!(prompt.contains("- `capture-pane`"));
+        assert!(prompt.contains("- `tmux_capture_pane`"));
         assert!(prompt.contains("- `time`"));
     }
 
@@ -244,17 +244,17 @@ mod tests {
         assert!(enabled < final_checklist);
     }
 
-    // Ensures run_shell vs send-keys guidance remains explicit for tool routing.
+    // Ensures run_shell vs tmux_send_keys guidance remains explicit for tool routing.
     #[test]
     fn prompt_contains_tool_choice_scenarios() {
         let prompt = render_system_prompt(SystemPromptParams {
             execution_target: ExecutionTarget::Local,
-            enabled_tools: vec!["run_shell", "capture-pane", "send-keys"],
+            enabled_tools: vec!["run_shell", "tmux_capture_pane", "tmux_send_keys"],
             custom_instructions: None,
         });
         assert!(prompt.contains("Use `run_shell` to execute shell commands"));
-        assert!(prompt.contains("Use `capture-pane` to observe in-progress"));
-        assert!(prompt.contains("Use `send-keys` to control interactive/stuck"));
+        assert!(prompt.contains("Use `tmux_capture_pane` to observe in-progress"));
+        assert!(prompt.contains("Use `tmux_send_keys` to control interactive/stuck"));
         assert!(prompt.contains("Before the first tool call for a non-trivial request"));
     }
 
@@ -263,7 +263,7 @@ mod tests {
     fn prompt_matches_local_snapshot() {
         let prompt = render_system_prompt(SystemPromptParams {
             execution_target: ExecutionTarget::Local,
-            enabled_tools: vec!["run_shell", "read_file", "capture-pane"],
+            enabled_tools: vec!["run_shell", "read_file", "tmux_capture_pane"],
             custom_instructions: None,
         });
         let expected = include_str!("templates/system_prompt.snapshot.local.txt")

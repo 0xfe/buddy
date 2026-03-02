@@ -46,7 +46,7 @@ src/
   app/            App orchestration (entry, REPL/exec mode, approvals, startup)
   runtime/        Runtime command/event actor + schemas
   agent/          Core agentic loop + history/normalization/prompt augmentation
-  api/            Model transport (completions + responses + retries/policy)
+  api/            Model transport (protocols/{completions,responses,messages} + retries/policy)
   auth/           Login flows + encrypted credential storage
   config/         TOML/env config loading + resolution + init
   prompt.rs       System prompt template renderer
@@ -76,12 +76,12 @@ src/
   tools/
     mod.rs        Tool trait (async) + ToolRegistry
     execution/    Local/container/ssh execution backends
-    capture_pane.rs capture-pane tool (tmux pane snapshots with optional delay)
+    capture_pane.rs tmux_capture_pane tool (tmux pane snapshots with optional delay)
     shell.rs      run_shell tool
     fetch.rs      fetch_url tool
     files.rs      read_file / write_file tools
     search.rs     web_search tool (DuckDuckGo)
-    send_keys.rs  send-keys tool (tmux key injection for interactive control)
+    send_keys.rs  tmux_send_keys tool (tmux key injection for interactive control)
     time.rs       time tool (harness-recorded wall-clock formats)
   tmux/           Shared tmux session/pane/capture/send/run domain
 ```
