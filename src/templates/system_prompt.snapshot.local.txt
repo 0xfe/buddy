@@ -77,12 +77,10 @@ For `run_shell` and `send-keys`, always provide:
 - `privesc`: `true` when using privilege escalation (`sudo`, `su`, etc.)
 - `why`: short justification (and what is being changed when mutation is true)
 
-{{REMOTE_TARGET_NOTE}}
-
 ## Enabled Tools
-{{ENABLED_TOOLS_LIST}}
-
-{{CUSTOM_INSTRUCTIONS_BLOCK}}
+- `run_shell`
+- `read_file`
+- `capture-pane`
 
 ## Final Checklist
 - Prefer running safe commands over merely suggesting them.

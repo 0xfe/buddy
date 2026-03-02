@@ -82,6 +82,9 @@ Detailed inventory: [feature-catalog.md](feature-catalog.md).
 - Prompt behavior:
   - one template render path with runtime tool/target context
   - static system prompt across turns
+  - explicit system prompt priority sections + end-of-prompt reinforcement
+  - structured additive operator-instructions block with conflict policy
+  - lightweight planning-before-tools guidance for non-trivial requests
   - request-scoped tmux context message refresh before each model request when available
 - Output/rendering behavior:
   - semantic theme-token rendering with built-in `dark`/`light` palettes and optional `[themes.<name>]` overrides
@@ -98,6 +101,7 @@ Detailed inventory: [feature-catalog.md](feature-catalog.md).
   - round-trip provider-specific message extras
   - sanitize malformed/empty assistant turns
   - legacy config/env/session/auth fallback paths with deprecation warnings
+  - tool definitions include explicit use/not-use/disambiguation/examples guidance
 
 ### Developer-facing
 

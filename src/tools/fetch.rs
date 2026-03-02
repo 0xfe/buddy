@@ -87,8 +87,22 @@ impl Tool for FetchTool {
             tool_type: "function".into(),
             function: FunctionDefinition {
                 name: self.name().into(),
-                description: "Fetch the contents of a URL and return the response body as text."
-                    .into(),
+                description: concat!(
+                    "Fetch a URL over HTTP/HTTPS and return response body text.\n",
+                    "When to use:\n",
+                    "- Downloading docs/pages/api responses for analysis.\n",
+                    "- Verifying reachable content at a known URL.\n",
+                    "When NOT to use:\n",
+                    "- Broad discovery queries (use web_search first).\n",
+                    "- Reading local files or executing commands.\n",
+                    "Disambiguation:\n",
+                    "- fetch_url retrieves one specific URL.\n",
+                    "- web_search discovers candidate URLs.\n",
+                    "Examples:\n",
+                    "- {\"url\":\"https://example.com\"}\n",
+                    "- {\"url\":\"https://api.github.com/repos/owner/repo\"}"
+                )
+                .into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -426,5 +440,16 @@ mod tests {
             parse_envelope(&result)["result"],
             "Fetch request denied by user."
         );
+    }
+
+    #[test]
+    fn definition_description_contains_guidance_sections() {
+        // Description should include usage/disambiguation/examples blocks.
+        let definition = FetchTool::default().definition();
+        let description = definition.function.description;
+        assert!(description.contains("When to use:"));
+        assert!(description.contains("When NOT to use:"));
+        assert!(description.contains("Disambiguation:"));
+        assert!(description.contains("Examples:"));
     }
 }

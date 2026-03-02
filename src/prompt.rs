@@ -102,7 +102,19 @@ fn render_custom_instructions(custom: Option<&str>) -> String {
     let Some(custom) = custom.map(str::trim).filter(|s| !s.is_empty()) else {
         return String::new();
     };
-    format!("Additional operator instructions:\n{custom}")
+    format!(
+        "## Operator Instructions (Additive)\n\
+The following operator instructions are additional constraints for this run:\n\
+```text\n\
+{custom}\n\
+```\n\
+Conflict policy:\n\
+- Apply these only when consistent with higher-priority safety/protocol rules.\n\
+- If they conflict with an explicit user request, ask for clarification unless \
+safety requires immediate refusal.\n\
+- If they conflict with system/tool policy, follow system/tool policy and state \
+that briefly."
+    )
 }
 
 /// Collapse repeated blank lines and trim trailing whitespace per line.
@@ -138,10 +150,11 @@ mod tests {
             custom_instructions: None,
         });
 
+        assert!(prompt.contains("## Role"));
         assert!(prompt.contains("friendly systems engineer"));
-        assert!(prompt.contains("on-call sysadmin"));
+        assert!(prompt.contains("## Rule Priority"));
         assert!(prompt.contains("Default to action over suggestion"));
-        assert!(prompt.contains("try `rg` before `grep`"));
+        assert!(prompt.contains("prefer `rg` before `grep`"));
         assert!(prompt.contains("`wc`"));
         assert!(prompt.contains("`cat -l`"));
         assert!(prompt.contains("`patch`"));
@@ -191,7 +204,71 @@ mod tests {
             enabled_tools: vec![],
             custom_instructions: Some("Always summarize in one sentence."),
         });
-        assert!(prompt.contains("Additional operator instructions:"));
+        assert!(prompt.contains("## Operator Instructions (Additive)"));
+        assert!(prompt.contains("Conflict policy:"));
+        assert!(prompt.contains("```text"));
         assert!(prompt.contains("Always summarize in one sentence."));
+    }
+
+    // Ensures prompt sections render in stable priority-first order.
+    #[test]
+    fn prompt_sections_render_in_deterministic_order() {
+        let prompt = render_system_prompt(SystemPromptParams {
+            execution_target: ExecutionTarget::Local,
+            enabled_tools: vec!["run_shell"],
+            custom_instructions: None,
+        });
+        let role = prompt.find("## Role").expect("role section");
+        let priority = prompt.find("## Rule Priority").expect("priority section");
+        let behavior = prompt.find("## Core Behavior").expect("behavior section");
+        let planning = prompt
+            .find("## Plan Before Tool Actions")
+            .expect("planning section");
+        let tmux = prompt
+            .find("## tmux Execution Model")
+            .expect("tmux section");
+        let guide = prompt
+            .find("## Tool Choice Quick Guide")
+            .expect("guide section");
+        let enabled = prompt
+            .find("## Enabled Tools")
+            .expect("enabled tools section");
+        let final_checklist = prompt.find("## Final Checklist").expect("final checklist");
+
+        assert!(role < priority);
+        assert!(priority < behavior);
+        assert!(behavior < planning);
+        assert!(planning < tmux);
+        assert!(tmux < guide);
+        assert!(guide < enabled);
+        assert!(enabled < final_checklist);
+    }
+
+    // Ensures run_shell vs send-keys guidance remains explicit for tool routing.
+    #[test]
+    fn prompt_contains_tool_choice_scenarios() {
+        let prompt = render_system_prompt(SystemPromptParams {
+            execution_target: ExecutionTarget::Local,
+            enabled_tools: vec!["run_shell", "capture-pane", "send-keys"],
+            custom_instructions: None,
+        });
+        assert!(prompt.contains("Use `run_shell` to execute shell commands"));
+        assert!(prompt.contains("Use `capture-pane` to observe in-progress"));
+        assert!(prompt.contains("Use `send-keys` to control interactive/stuck"));
+        assert!(prompt.contains("Before the first tool call for a non-trivial request"));
+    }
+
+    // Snapshot guard for the default local prompt shape and wording.
+    #[test]
+    fn prompt_matches_local_snapshot() {
+        let prompt = render_system_prompt(SystemPromptParams {
+            execution_target: ExecutionTarget::Local,
+            enabled_tools: vec!["run_shell", "read_file", "capture-pane"],
+            custom_instructions: None,
+        });
+        let expected = include_str!("templates/system_prompt.snapshot.local.txt")
+            .trim()
+            .to_string();
+        assert_eq!(prompt, expected);
     }
 }

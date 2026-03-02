@@ -26,8 +26,21 @@ impl Tool for TimeTool {
             tool_type: "function".into(),
             function: FunctionDefinition {
                 name: self.name().into(),
-                description: "Return the current wall-clock time as recorded by the harness running this agent (not by the model, and not by remote shells). Includes Unix epoch and common UTC text formats."
-                    .into(),
+                description: concat!(
+                    "Return current harness wall-clock time in multiple machine-readable formats.\n",
+                    "When to use:\n",
+                    "- When precise current time/date values are required for reasoning.\n",
+                    "- When you need explicit UTC and epoch fields.\n",
+                    "When NOT to use:\n",
+                    "- When envelope harness_timestamp is already sufficient.\n",
+                    "- For remote host clock checks (use run_shell on that target).\n",
+                    "Disambiguation:\n",
+                    "- time reports harness process time.\n",
+                    "- run_shell `date` reports target environment time.\n",
+                    "Examples:\n",
+                    "- {}\n",
+                    "- {}  // parse unix_millis and iso_8601_utc from result"
+                ).into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {},
@@ -245,5 +258,16 @@ mod tests {
         assert_eq!(snapshot.date_utc, "2024-02-28");
         assert_eq!(snapshot.time_utc, "14:22:03");
         assert_eq!(snapshot.iso_8601_utc, "2024-02-28T14:22:03Z");
+    }
+
+    #[test]
+    fn definition_description_contains_guidance_sections() {
+        // Description should include usage/disambiguation/examples blocks.
+        let definition = TimeTool.definition();
+        let description = definition.function.description;
+        assert!(description.contains("When to use:"));
+        assert!(description.contains("When NOT to use:"));
+        assert!(description.contains("Disambiguation:"));
+        assert!(description.contains("Examples:"));
     }
 }

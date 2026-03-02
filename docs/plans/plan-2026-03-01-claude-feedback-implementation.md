@@ -4,7 +4,7 @@
 
 - Program status: Active
 - Scope status: Locked to actionable items from `docs/plans/review-2026-03-01-claude-feedback.md`, sequenced for lowest-risk delivery.
-- Current focus: Milestone 5 (prompt/tooling reliability hardening) is next.
+- Current focus: Milestone 6 (provider/model compatibility and token accuracy) is next.
 - Completed so far:
   1. Reviewed `docs/plans/review-2026-03-01-claude-feedback.md` end-to-end.
   2. Mapped priority recommendations into an execution board with validation gates.
@@ -13,6 +13,7 @@
   5. Completed Milestone 2: `-v/-vv/-vvv`, structured logging subscriber wiring, and span instrumentation for runtime commands, turns, model requests/responses, tool calls, and compaction paths.
   6. Completed Milestone 3: static system prompt + request-scoped tmux snapshot context injection with non-default target labeling and prompt-architecture docs updates.
   7. Completed Milestone 4: pair-safe compaction units, orphan tool-call/result repair passes, structured compaction summaries, and failed-tool retention guarantees.
+  8. Completed Milestone 5: explicit prompt-priority sectioning, additive operator-instructions conflict policy, planning-before-tools guidance, and structured tool-definition disambiguation metadata.
 - Next steps:
   1. Start Milestone 5 (prompt structure + tool description hardening).
   2. Keep Milestone 1-4 observability/context/compaction guarantees stable while prompt/tool guidance changes land.
@@ -74,7 +75,7 @@ Out of scope for this plan:
 - [x] Milestone 2: Logging/Verbosity and Span Model
 - [x] Milestone 3: Prompt Context Architecture (static system + dynamic snapshot as turn context)
 - [x] Milestone 4: Compaction Integrity and Error-Preserving Memory
-- [ ] Milestone 5: Prompt and Tooling Reliability Hardening
+- [x] Milestone 5: Prompt and Tooling Reliability Hardening
 - [ ] Milestone 6: Provider/Model Compatibility and Token Accuracy
 - [ ] Milestone 7: Evaluation, Trace Tooling, Cost Visibility, and Closure
 
@@ -479,3 +480,12 @@ Close the loop with analysis tooling, cost metrics, and regression confidence.
    - added `docs/design/context-management.md` and refreshed design/feature docs for new guarantees,
    - validated with `cargo fmt` and `cargo test` (full suite).
    - commit: `37a4d82`.
+7. 2026-03-02: Finished Milestone 5:
+   - restructured `src/templates/system_prompt.template` into explicit priority-ordered sections with rule reinforcement and a deterministic final checklist,
+   - added additive operator-instructions block framing with explicit conflict policy in prompt rendering (`src/prompt.rs`),
+   - added explicit planning-before-tools guidance and run_shell-vs-send-keys-vs-capture-pane decision guidance in the system prompt,
+   - enriched built-in tool definitions with structured `When to use` / `When NOT to use` / `Disambiguation` / `Examples` guidance across shell, tmux, file, fetch, search, time, and capture/send tools,
+   - added prompt snapshot/ordering tests and tool-definition guidance/schema regression tests across tool modules,
+   - updated prompt/tools/design docs to match the new behavior,
+   - validated with `cargo fmt` and `cargo test` (full suite).
+   - commit: `<pending>`

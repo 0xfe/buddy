@@ -57,8 +57,23 @@ impl Tool for SendKeysTool {
             tool_type: "function".into(),
             function: FunctionDefinition {
                 name: self.name().into(),
-                description: "Send keys directly to a tmux pane (for example Ctrl-C/Ctrl-Z/Enter/arrows) to control interactive or stuck terminal programs. Common flow: run_shell with wait=false, poll with capture-pane, and send keys as needed."
-                    .into(),
+                description: concat!(
+                    "Send keys directly to a tmux pane to control interactive/stuck terminal programs.\n",
+                    "When to use:\n",
+                    "- Interrupting, confirming, or navigating an existing interactive process.\n",
+                    "- Sending Ctrl-C/Ctrl-Z/Enter/arrows to an already-running program.\n",
+                    "When NOT to use:\n",
+                    "- Starting new non-interactive commands (use run_shell).\n",
+                    "- Reading pane output (use capture-pane).\n",
+                    "- Managing tmux structure (use tmux-create/kill tools).\n",
+                    "Disambiguation:\n",
+                    "- send-keys controls current pane state.\n",
+                    "- run_shell launches commands.\n",
+                    "- capture-pane observes output.\n",
+                    "Examples:\n",
+                    "- {\"keys\":[\"C-c\"],\"risk\":\"low\",\"mutation\":false,\"privesc\":false,\"why\":\"Stop hung process\"}\n",
+                    "- {\"literal_text\":\"q\",\"enter\":true,\"risk\":\"low\",\"mutation\":false,\"privesc\":false,\"why\":\"Exit pager\"}"
+                ).into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -218,5 +233,19 @@ mod tests {
         .await
         .expect_err("missing metadata should fail");
         assert!(err.to_string().contains("invalid arguments"));
+    }
+
+    #[test]
+    fn definition_description_contains_guidance_sections() {
+        // Description should include structured usage guidance and examples.
+        let definition = SendKeysTool {
+            execution: ExecutionContext::local(),
+        }
+        .definition();
+        let description = definition.function.description;
+        assert!(description.contains("When to use:"));
+        assert!(description.contains("When NOT to use:"));
+        assert!(description.contains("Disambiguation:"));
+        assert!(description.contains("Examples:"));
     }
 }

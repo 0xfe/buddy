@@ -234,8 +234,23 @@ impl Tool for ShellTool {
             tool_type: "function".into(),
             function: FunctionDefinition {
                 name: self.name().into(),
-                description:
-                    "Run a shell command and return its output (stdout, stderr, exit code). The optional `wait` argument controls waiting behavior: `true` (default) waits until completion, `false` returns immediately (tmux-backed targets only) so you can poll with `capture-pane`, and a duration string like `10m` waits up to that timeout. Do not use this for tmux lifecycle management; use `tmux-create-session`, `tmux-create-pane`, `tmux-kill-pane`, and `tmux-kill-session`.".into(),
+                description: concat!(
+                    "Run a shell command and return stdout/stderr/exit_code.\n",
+                    "When to use:\n",
+                    "- Running diagnostics, inspections, builds, tests, or admin commands.\n",
+                    "- Any non-interactive command where direct shell output is needed.\n",
+                    "When NOT to use:\n",
+                    "- Tmux lifecycle management (use tmux-create-session/create-pane/kill-* tools).\n",
+                    "- Interactive key control (use send-keys).\n",
+                    "- Polling terminal state without new execution (use capture-pane).\n",
+                    "Disambiguation:\n",
+                    "- run_shell executes commands.\n",
+                    "- capture-pane reads existing terminal output.\n",
+                    "- send-keys controls interactive programs in an existing pane.\n",
+                    "Examples:\n",
+                    "- {\"command\":\"ls -la\",\"risk\":\"low\",\"mutation\":false,\"privesc\":false,\"why\":\"List working directory\"}\n",
+                    "- {\"command\":\"npm run build\",\"wait\":false,\"risk\":\"low\",\"mutation\":false,\"privesc\":false,\"why\":\"Start long build and poll with capture-pane\"}"
+                ).into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -591,6 +606,46 @@ mod tests {
             .name(),
             "run_shell"
         );
+    }
+
+    #[test]
+    fn definition_description_contains_guidance_sections() {
+        // Description should keep structured guidance for model reliability.
+        let definition = ShellTool {
+            confirm: false,
+            denylist: Vec::new(),
+            color: false,
+            execution: ExecutionContext::local(),
+            approval: None,
+        }
+        .definition();
+        let description = definition.function.description;
+        assert!(description.contains("When to use:"));
+        assert!(description.contains("When NOT to use:"));
+        assert!(description.contains("Disambiguation:"));
+        assert!(description.contains("Examples:"));
+    }
+
+    #[test]
+    fn definition_requires_command_and_metadata_fields() {
+        // Required schema fields must keep safety metadata mandatory.
+        let definition = ShellTool {
+            confirm: false,
+            denylist: Vec::new(),
+            color: false,
+            execution: ExecutionContext::local(),
+            approval: None,
+        }
+        .definition();
+        let required = definition.function.parameters["required"]
+            .as_array()
+            .expect("required array");
+        for field in ["command", "risk", "mutation", "privesc", "why"] {
+            assert!(
+                required.iter().any(|entry| entry.as_str() == Some(field)),
+                "missing required field `{field}`"
+            );
+        }
     }
 
     #[test]

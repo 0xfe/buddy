@@ -44,7 +44,21 @@ impl Tool for ReadFileTool {
             tool_type: "function".into(),
             function: FunctionDefinition {
                 name: self.name().into(),
-                description: "Read the contents of a file at the given path.".into(),
+                description: concat!(
+                    "Read file contents at a path.\n",
+                    "When to use:\n",
+                    "- Inspecting configuration, logs, source files, or command outputs saved to disk.\n",
+                    "When NOT to use:\n",
+                    "- Running shell commands (use run_shell).\n",
+                    "- Editing files (use write_file).\n",
+                    "Disambiguation:\n",
+                    "- read_file is read-only and returns file text.\n",
+                    "- write_file mutates file contents.\n",
+                    "Examples:\n",
+                    "- {\"path\":\"/etc/hosts\"}\n",
+                    "- {\"path\":\"./src/main.rs\"}"
+                )
+                .into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -108,7 +122,22 @@ impl Tool for WriteFileTool {
             tool_type: "function".into(),
             function: FunctionDefinition {
                 name: self.name().into(),
-                description: "Write content to a file at the given path. Creates the file if it doesn't exist, overwrites if it does.".into(),
+                description: concat!(
+                    "Write full content to a file path (create or overwrite).\n",
+                    "When to use:\n",
+                    "- Creating/updating files where full replacement is intended.\n",
+                    "- Persisting generated config/source/text artifacts.\n",
+                    "When NOT to use:\n",
+                    "- Reading files (use read_file).\n",
+                    "- Running shell edits when a direct write is clearer.\n",
+                    "Disambiguation:\n",
+                    "- write_file replaces whole file content.\n",
+                    "- run_shell may edit via shell tools but is less structured.\n",
+                    "Examples:\n",
+                    "- {\"path\":\"/tmp/note.txt\",\"content\":\"hello\\n\"}\n",
+                    "- {\"path\":\"./buddy.toml\",\"content\":\"[agent]\\nname=\\\"ops\\\"\\n\"}"
+                )
+                .into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -434,5 +463,34 @@ mod tests {
             &[allowed.to_string_lossy().to_string()]
         )
         .is_ok());
+    }
+
+    #[test]
+    fn read_definition_description_contains_guidance_sections() {
+        // Read tool description should keep structured guidance and examples.
+        let definition = ReadFileTool {
+            execution: ExecutionContext::local(),
+        }
+        .definition();
+        let description = definition.function.description;
+        assert!(description.contains("When to use:"));
+        assert!(description.contains("When NOT to use:"));
+        assert!(description.contains("Disambiguation:"));
+        assert!(description.contains("Examples:"));
+    }
+
+    #[test]
+    fn write_definition_description_contains_guidance_sections() {
+        // Write tool description should keep structured guidance and examples.
+        let definition = WriteFileTool {
+            execution: ExecutionContext::local(),
+            allowed_paths: Vec::new(),
+        }
+        .definition();
+        let description = definition.function.description;
+        assert!(description.contains("When to use:"));
+        assert!(description.contains("When NOT to use:"));
+        assert!(description.contains("Disambiguation:"));
+        assert!(description.contains("Examples:"));
     }
 }

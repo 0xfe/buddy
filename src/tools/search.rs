@@ -57,7 +57,22 @@ impl Tool for WebSearchTool {
             tool_type: "function".into(),
             function: FunctionDefinition {
                 name: self.name().into(),
-                description: "Search the web for a query and return the top results with titles, URLs, and snippets.".into(),
+                description: concat!(
+                    "Search the web for a query and return top result titles/URLs/snippets.\n",
+                    "When to use:\n",
+                    "- Discovering relevant sources before fetching a specific page.\n",
+                    "- Getting quick candidate links for user questions.\n",
+                    "When NOT to use:\n",
+                    "- Fetching contents from a known URL (use fetch_url).\n",
+                    "- Executing local/remote system commands.\n",
+                    "Disambiguation:\n",
+                    "- web_search discovers links.\n",
+                    "- fetch_url retrieves one chosen link's content.\n",
+                    "Examples:\n",
+                    "- {\"query\":\"rust tokio tutorial\"}\n",
+                    "- {\"query\":\"openrouter deepseek v3.2 model id\"}"
+                )
+                .into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -392,5 +407,16 @@ mod tests {
     fn web_search_tool_name() {
         // Exported tool name must match the declared function name.
         assert_eq!(WebSearchTool::default().name(), "web_search");
+    }
+
+    #[test]
+    fn definition_description_contains_guidance_sections() {
+        // Description should include usage/disambiguation/examples sections.
+        let definition = WebSearchTool::default().definition();
+        let description = definition.function.description;
+        assert!(description.contains("When to use:"));
+        assert!(description.contains("When NOT to use:"));
+        assert!(description.contains("Disambiguation:"));
+        assert!(description.contains("Examples:"));
     }
 }

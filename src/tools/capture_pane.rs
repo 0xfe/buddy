@@ -70,8 +70,22 @@ impl Tool for CapturePaneTool {
             tool_type: "function".into(),
             function: FunctionDefinition {
                 name: self.name().into(),
-                description: "Capture the current tmux pane output. Useful for interactive terminal apps, polling screen state, or checking whether commands are stuck. By default this captures tmux's visible screenshot for the pane. This pairs naturally with `run_shell` using `wait: false`: dispatch first, then poll with this tool (optionally after a delay)."
-                    .into(),
+                description: concat!(
+                    "Capture tmux pane output (default: visible screenshot range).\n",
+                    "When to use:\n",
+                    "- Polling output for long-running commands started with run_shell wait=false.\n",
+                    "- Inspecting interactive/stuck terminal state before deciding next action.\n",
+                    "When NOT to use:\n",
+                    "- Executing commands (use run_shell).\n",
+                    "- Sending control input (use send-keys).\n",
+                    "Disambiguation:\n",
+                    "- capture-pane reads pane state only.\n",
+                    "- run_shell executes commands.\n",
+                    "- send-keys changes interactive program state.\n",
+                    "Examples:\n",
+                    "- {\"delay\":\"2s\"}\n",
+                    "- {\"session\":\"build\",\"pane\":\"worker\",\"start\":\"-200\",\"end\":\"-\"}"
+                ).into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -287,5 +301,19 @@ mod tests {
         let input = "🙂".repeat(MAX_CAPTURE_LEN + 2);
         let out = truncate_output_tail(&input, MAX_CAPTURE_LEN + 1);
         assert!(out.starts_with("[truncated "), "got: {out}");
+    }
+
+    #[test]
+    fn definition_description_contains_guidance_sections() {
+        // Description should include structured tool-choice guidance.
+        let definition = CapturePaneTool {
+            execution: ExecutionContext::local(),
+        }
+        .definition();
+        let description = definition.function.description;
+        assert!(description.contains("When to use:"));
+        assert!(description.contains("When NOT to use:"));
+        assert!(description.contains("Disambiguation:"));
+        assert!(description.contains("Examples:"));
     }
 }

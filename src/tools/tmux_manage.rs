@@ -91,8 +91,19 @@ impl Tool for TmuxCreateSessionTool {
             tool_type: "function".into(),
             function: FunctionDefinition {
                 name: self.name().into(),
-                description: "Create or reuse a buddy-managed tmux session and ensure its shared pane is ready. Prefer `tmux-create-pane` in the default session first; extra sessions should be uncommon."
-                    .into(),
+                description: concat!(
+                    "Create or reuse one buddy-managed tmux session and ensure shared pane exists.\n",
+                    "When to use:\n",
+                    "- Exceptional isolation where default managed session is insufficient.\n",
+                    "When NOT to use:\n",
+                    "- Normal work (use default managed session and omit selectors).\n",
+                    "- Adding parallel workspace inside default session (use tmux-create-pane).\n",
+                    "Disambiguation:\n",
+                    "- tmux-create-session adds session-level isolation.\n",
+                    "- tmux-create-pane adds workspace within a session.\n",
+                    "Example:\n",
+                    "- {\"session\":\"investigation\",\"risk\":\"medium\",\"mutation\":true,\"privesc\":false,\"why\":\"Need isolated workspace for parallel long task\"}"
+                ).into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -153,9 +164,18 @@ impl Tool for TmuxKillSessionTool {
             tool_type: "function".into(),
             function: FunctionDefinition {
                 name: self.name().into(),
-                description:
-                    "Kill a buddy-managed tmux session (cannot kill the default shared session)."
-                        .into(),
+                description: concat!(
+                    "Kill one buddy-managed tmux session (default shared session is protected).\n",
+                    "When to use:\n",
+                    "- Cleaning up no-longer-needed managed sessions.\n",
+                    "When NOT to use:\n",
+                    "- Ending one pane in a still-useful session (use tmux-kill-pane).\n",
+                    "Disambiguation:\n",
+                    "- tmux-kill-session removes the whole session.\n",
+                    "- tmux-kill-pane removes a single pane.\n",
+                    "Example:\n",
+                    "- {\"session\":\"investigation\",\"risk\":\"medium\",\"mutation\":true,\"privesc\":false,\"why\":\"Cleanup finished temporary session\"}"
+                ).into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -218,8 +238,19 @@ impl Tool for TmuxCreatePaneTool {
             tool_type: "function".into(),
             function: FunctionDefinition {
                 name: self.name().into(),
-                description: "Create or reuse a buddy-managed tmux pane in a managed session. When `session` is omitted, this uses the default managed session (preferred)."
-                    .into(),
+                description: concat!(
+                    "Create or reuse a buddy-managed tmux pane in a managed session.\n",
+                    "When to use:\n",
+                    "- Adding parallel workspace, usually in the default managed session.\n",
+                    "When NOT to use:\n",
+                    "- Creating isolated session boundaries (use tmux-create-session).\n",
+                    "- Running commands directly (use run_shell).\n",
+                    "Disambiguation:\n",
+                    "- tmux-create-pane extends a session.\n",
+                    "- tmux-create-session creates session isolation.\n",
+                    "Example:\n",
+                    "- {\"pane\":\"build\",\"risk\":\"low\",\"mutation\":true,\"privesc\":false,\"why\":\"Need extra pane for parallel build logs\"}"
+                ).into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -287,8 +318,18 @@ impl Tool for TmuxKillPaneTool {
             tool_type: "function".into(),
             function: FunctionDefinition {
                 name: self.name().into(),
-                description: "Kill one buddy-managed tmux pane (default shared pane is protected)."
-                    .into(),
+                description: concat!(
+                    "Kill one buddy-managed tmux pane (default shared pane is protected).\n",
+                    "When to use:\n",
+                    "- Cleaning up temporary panes after work completes.\n",
+                    "When NOT to use:\n",
+                    "- Removing the entire session (use tmux-kill-session).\n",
+                    "Disambiguation:\n",
+                    "- tmux-kill-pane removes one pane.\n",
+                    "- tmux-kill-session removes the full session.\n",
+                    "Example:\n",
+                    "- {\"pane\":\"build\",\"risk\":\"low\",\"mutation\":true,\"privesc\":false,\"why\":\"No longer need temporary build pane\"}"
+                ).into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -325,5 +366,44 @@ impl Tool for TmuxKillPaneTool {
             .kill_tmux_pane(args.session, args.pane)
             .await?;
         wrap_result(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn shared() -> TmuxToolShared {
+        TmuxToolShared {
+            execution: ExecutionContext::local(),
+            confirm: false,
+            approval: None,
+        }
+    }
+
+    #[test]
+    fn create_session_definition_description_contains_guidance_sections() {
+        // Session lifecycle descriptions should stay structured for model routing.
+        let description = TmuxCreateSessionTool { shared: shared() }
+            .definition()
+            .function
+            .description;
+        assert!(description.contains("When to use:"));
+        assert!(description.contains("When NOT to use:"));
+        assert!(description.contains("Disambiguation:"));
+        assert!(description.contains("Example:"));
+    }
+
+    #[test]
+    fn create_pane_definition_description_contains_guidance_sections() {
+        // Pane lifecycle descriptions should stay structured for model routing.
+        let description = TmuxCreatePaneTool { shared: shared() }
+            .definition()
+            .function
+            .description;
+        assert!(description.contains("When to use:"));
+        assert!(description.contains("When NOT to use:"));
+        assert!(description.contains("Disambiguation:"));
+        assert!(description.contains("Example:"));
     }
 }

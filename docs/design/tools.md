@@ -82,6 +82,26 @@ If `definitions()` is called with no tools registered, the agent omits the
 
 ---
 
+## Tool Definition Guidance Contract
+
+To improve tool-selection reliability across providers/models, each tool
+definition description now includes explicit mini-sections:
+
+- `When to use`
+- `When NOT to use`
+- `Disambiguation`
+- `Example` or `Examples`
+
+This content is sent in function definitions and acts as an in-band routing
+guide for the model (for example, `run_shell` vs `capture-pane` vs `send-keys`,
+or `web_search` vs `fetch_url`).
+
+Schema-level safety requirements (for example required metadata on `run_shell`
+and `send-keys`) remain encoded in each tool's JSON schema `required` list and
+are covered by unit tests.
+
+---
+
 ## Built-in Tools
 
 Twelve tools ship with the agent. Each is conditionally registered based on
