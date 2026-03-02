@@ -8,6 +8,26 @@ use crate::error::ApiError;
 use crate::types::{ChatRequest, ChatResponse};
 use std::time::Duration;
 
+/// Borrowed request parameters required for one protocol dispatch.
+pub(super) struct DispatchRequest<'a> {
+    /// Shared reqwest client used for HTTP calls.
+    pub(super) http: &'a reqwest::Client,
+    /// Selected wire protocol for this profile.
+    pub(super) protocol: ApiProtocol,
+    /// Resolved provider family for compatibility behavior.
+    pub(super) provider: ModelProvider,
+    /// Selected auth mode for this profile.
+    pub(super) auth: AuthMode,
+    /// Configured API key value (can be empty under login auth).
+    pub(super) api_key: &'a str,
+    /// Runtime base URL (already normalized).
+    pub(super) base_url: &'a str,
+    /// Normalized chat request payload.
+    pub(super) request: &'a ChatRequest,
+    /// Optional resolved bearer token.
+    pub(super) bearer: Option<&'a str>,
+}
+
 /// Build an HTTP client with timeout applied.
 pub(super) fn build_http_client(timeout: Duration) -> reqwest::Client {
     // Fall back to reqwest defaults if builder creation fails for any reason.
@@ -18,16 +38,17 @@ pub(super) fn build_http_client(timeout: Duration) -> reqwest::Client {
 }
 
 /// Dispatch one API request for the configured wire protocol.
-pub(super) async fn dispatch_request(
-    http: &reqwest::Client,
-    protocol: ApiProtocol,
-    provider: ModelProvider,
-    auth: AuthMode,
-    api_key: &str,
-    base_url: &str,
-    request: &ChatRequest,
-    bearer: Option<&str>,
-) -> Result<ChatResponse, ApiError> {
+pub(super) async fn dispatch_request(args: DispatchRequest<'_>) -> Result<ChatResponse, ApiError> {
+    let DispatchRequest {
+        http,
+        protocol,
+        provider,
+        auth,
+        api_key,
+        base_url,
+        request,
+        bearer,
+    } = args;
     // Dispatch by wire protocol while keeping a single normalized return type.
     match protocol {
         ApiProtocol::Completions => {

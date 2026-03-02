@@ -4,16 +4,18 @@ PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
 BIN_NAME := buddy
 DIST_DIR ?= dist
+RELEASE_REMOTE ?= origin
 
 CRATE_VERSION := $(shell awk -F'"' '/^version = / { print $$2; exit }' Cargo.toml)
 HOST_TRIPLE := $(shell rustc -vV | awk '/^host:/ { print $$2; exit }')
 ARTIFACT_STEM := $(BIN_NAME)-v$(CRATE_VERSION)-$(HOST_TRIPLE)
+RELEASE_TAG := v$(CRATE_VERSION)
 SHA256_CMD := $(shell if command -v shasum >/dev/null 2>&1; then echo "shasum -a 256"; elif command -v sha256sum >/dev/null 2>&1; then echo "sha256sum"; else echo ""; fi)
 
 .PHONY: help build build-debug run run-exec install clean \
 	test test-ui-regression test-model-regression test-installer-smoke \
 	fmt fmt-check clippy check release release-artifacts version \
-	bump-patch bump-minor bump-major bump-set install-from-release
+	bump-patch bump-minor bump-major bump-set install-from-release release-tag
 
 help:
 	@echo "buddy make targets:"
@@ -34,6 +36,7 @@ help:
 	@echo "  make bump-minor          Bump minor version in Cargo.toml"
 	@echo "  make bump-major          Bump major version in Cargo.toml"
 	@echo "  make bump-set VERSION=x.y.z  Set explicit semver version"
+	@echo "  make release-tag         Auto-commit version files, then create + push v<version> tag"
 
 build:
 	cargo build --release
@@ -114,3 +117,31 @@ bump-major:
 bump-set:
 	@if [[ -z "$(VERSION)" ]]; then echo "usage: make bump-set VERSION=x.y.z"; exit 1; fi
 	./scripts/bump-version.sh set "$(VERSION)"
+
+release-tag:
+	@if ! git rev-parse --verify HEAD >/dev/null 2>&1; then \
+		echo "error: no git HEAD found"; \
+		exit 1; \
+	fi
+	@if ! git diff --quiet -- . ':(exclude)Cargo.toml' ':(exclude)Cargo.lock' || ! git diff --cached --quiet -- . ':(exclude)Cargo.toml' ':(exclude)Cargo.lock'; then \
+		echo "error: only Cargo.toml/Cargo.lock may be dirty when running release-tag"; \
+		exit 1; \
+	fi
+	@if git rev-parse -q --verify "refs/tags/$(RELEASE_TAG)" >/dev/null 2>&1; then \
+		echo "error: tag $(RELEASE_TAG) already exists"; \
+		exit 1; \
+	fi
+	@current_branch="$$(git branch --show-current)"; \
+	if [[ -z "$$current_branch" ]]; then \
+		echo "error: cannot release from detached HEAD"; \
+		exit 1; \
+	fi; \
+	git add Cargo.toml; \
+	if [[ -f Cargo.lock ]]; then git add Cargo.lock; fi; \
+	if ! git diff --cached --quiet; then \
+		git commit -m "release: $(RELEASE_TAG)"; \
+	fi; \
+	git push "$(RELEASE_REMOTE)" "$$current_branch"
+	git tag -a "$(RELEASE_TAG)" -m "Release $(RELEASE_TAG)"
+	git push "$(RELEASE_REMOTE)" "$(RELEASE_TAG)"
+	@echo "pushed $(RELEASE_TAG) to $(RELEASE_REMOTE)"

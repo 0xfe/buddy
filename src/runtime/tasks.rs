@@ -29,17 +29,38 @@ pub(super) struct TaskDone {
     pub(super) result: Result<String, crate::error::AgentError>,
 }
 
+/// Borrowed + owned inputs needed to spawn one prompt task.
+pub(super) struct SpawnPromptTask {
+    /// Shared runtime-owned agent handle.
+    pub(super) agent: Arc<Mutex<Agent>>,
+    /// Runtime task id for event correlation.
+    pub(super) task_id: u64,
+    /// Task metadata shared across emitted events.
+    pub(super) task_ref: TaskRef,
+    /// User prompt text to send to the agent.
+    pub(super) prompt: String,
+    /// Structured tracing span for this prompt turn.
+    pub(super) turn_span: tracing::Span,
+    /// Cancellation receiver watched by the agent loop.
+    pub(super) cancel_rx: watch::Receiver<bool>,
+    /// Runtime event sink forwarded into the agent.
+    pub(super) event_tx: mpsc::UnboundedSender<RuntimeEventEnvelope>,
+    /// Completion channel back to runtime actor.
+    pub(super) done_tx: mpsc::UnboundedSender<TaskDone>,
+}
+
 /// Spawn a background prompt task tied to one runtime task id.
-pub(super) fn spawn_prompt_task(
-    agent: Arc<Mutex<Agent>>,
-    task_id: u64,
-    task_ref: TaskRef,
-    prompt: String,
-    turn_span: tracing::Span,
-    cancel_rx: watch::Receiver<bool>,
-    event_tx: mpsc::UnboundedSender<RuntimeEventEnvelope>,
-    done_tx: mpsc::UnboundedSender<TaskDone>,
-) {
+pub(super) fn spawn_prompt_task(args: SpawnPromptTask) {
+    let SpawnPromptTask {
+        agent,
+        task_id,
+        task_ref,
+        prompt,
+        turn_span,
+        cancel_rx,
+        event_tx,
+        done_tx,
+    } = args;
     tokio::spawn(
         async move {
             // Configure the shared agent for runtime-stream mode: direct stderr

@@ -31,7 +31,7 @@ use sessions::{
     persist_active_session_snapshot, runtime_session_compact, runtime_session_new,
     runtime_session_resume,
 };
-use tasks::{spawn_prompt_task, ActiveTask, TaskDone};
+use tasks::{spawn_prompt_task, ActiveTask, SpawnPromptTask, TaskDone};
 
 /// Handle for sending commands to a spawned runtime actor.
 #[derive(Clone)]
@@ -359,16 +359,16 @@ async fn handle_runtime_command(
                 session_id = %task_ref.session_id.as_deref().unwrap_or("default"),
                 correlation_id = %task_ref.correlation_id.as_deref().unwrap_or("")
             );
-            spawn_prompt_task(
-                Arc::clone(agent),
+            spawn_prompt_task(SpawnPromptTask {
+                agent: Arc::clone(agent),
                 task_id,
                 task_ref,
                 prompt,
                 turn_span,
                 cancel_rx,
-                agent_event_tx.clone(),
-                task_done_tx.clone(),
-            );
+                event_tx: agent_event_tx.clone(),
+                done_tx: task_done_tx.clone(),
+            });
         }
         RuntimeCommand::CancelTask { task_id } => {
             // Validate the target task is the currently active one.

@@ -30,14 +30,26 @@ jobs:
         run: make test-installer-smoke
 
   release-artifacts:
-    name: release artifacts (${{ matrix.os }})
+    name: release artifacts (${{ matrix.os }}-${{ matrix.arch }})
     if: startsWith(github.ref, 'refs/tags/v')
     needs: validate
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runs_on }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: linux
+            arch: amd64
+            runs_on: ubuntu-24.04
+          - os: linux
+            arch: arm64
+            runs_on: ubuntu-24.04-arm
+          - os: macos
+            arch: amd64
+            runs_on: macos-13
+          - os: macos
+            arch: arm64
+            runs_on: macos-14
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust toolchain
@@ -47,7 +59,7 @@ jobs:
       - name: Upload release artifact
         uses: actions/upload-artifact@v4
         with:
-          name: buddy-${{ matrix.os }}
+          name: buddy-${{ matrix.os }}-${{ matrix.arch }}
           path: dist/*
           if-no-files-found: error
 

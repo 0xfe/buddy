@@ -83,6 +83,76 @@ make bump-set VERSION=x.y.z
 
 These targets wrap `scripts/bump-version.sh`.
 
+## Hosted release workflow (GitHub Actions)
+
+This repo publishes release binaries from tag pushes (`v*`) via
+`.github/workflows/release.yml`.
+
+Recommended flow:
+
+```bash
+# 1) update version
+make bump-patch                  # or bump-minor / bump-major / bump-set VERSION=x.y.z
+
+# 2) run local gate before tagging
+make release
+
+# 3) auto-commit Cargo version files if needed, then create + push release tag
+make release-tag                 # pushes to origin by default
+# optional: make release-tag RELEASE_REMOTE=<remote>
+```
+
+`make release-tag` behavior:
+
+- allows dirty state only in `Cargo.toml` / `Cargo.lock`,
+- commits staged version updates as `release: v<version>` when needed,
+- rejects detached-head releases and existing tags,
+- pushes current branch, then pushes `v<version>` tag.
+
+When the tag is pushed, GitHub Actions builds and uploads artifacts for:
+
+- Linux `amd64` (`ubuntu-24.04`)
+- Linux `arm64` (`ubuntu-24.04-arm`)
+- macOS `amd64` (`macos-13`)
+- macOS `arm64` (`macos-14`)
+
+Artifacts are published to the GitHub Release for that tag as:
+
+- `buddy-v<version>-<host-triple>.tar.gz`
+- `buddy-v<version>-<host-triple>.tar.gz.sha256` (when checksum tool exists)
+
+Workflow jobs:
+
+- `validate`: runs `make check` and installer smoke tests on push/PR.
+- `release-artifacts`: runs only on `v*` tags and builds per OS/arch matrix.
+- `publish-release`: attaches built artifacts to the GitHub Release.
+
+## Local release reproduction workflow
+
+Use this when reproducing release issues seen in GitHub Actions.
+
+```bash
+# start clean
+make clean
+
+# run the same local quality gate
+make check
+
+# build local artifact exactly as release packaging does
+make release-artifacts
+
+# validate installer against local dist artifacts
+make test-installer-smoke
+```
+
+Notes:
+
+- `make release-artifacts` packages for the current machine host triple.
+- To reproduce a specific CI artifact issue, run the same commands on a host
+  matching that target (Linux/macOS and `amd64`/`arm64`).
+- Optional suites remain explicit and are not part of default CI release gates:
+  `make test-ui-regression`, `make test-model-regression`.
+
 ## Embedded build metadata
 
 `build.rs` injects compile-time metadata into the binary:
@@ -106,7 +176,7 @@ Workflow: `.github/workflows/release.yml`
   - executes `make check`
 - `release-artifacts` job:
   - runs for tags matching `v*`
-  - executes `make release-artifacts` on Linux + macOS
+  - executes `make release-artifacts` on Linux/macOS for `amd64` + `arm64`
   - uploads generated artifacts
 - `publish-release` job:
   - runs for `v*` tags

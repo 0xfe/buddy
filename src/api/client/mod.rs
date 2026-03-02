@@ -127,16 +127,16 @@ impl ApiClient {
         request: &ChatRequest,
         bearer: Option<&str>,
     ) -> Result<ChatResponse, ApiError> {
-        transport::dispatch_request(
-            &self.http,
-            self.protocol,
-            self.provider,
-            self.auth,
-            &self.api_key,
+        transport::dispatch_request(transport::DispatchRequest {
+            http: &self.http,
+            protocol: self.protocol,
+            provider: self.provider,
+            auth: self.auth,
+            api_key: &self.api_key,
             base_url,
             request,
             bearer,
-        )
+        })
         .await
     }
 

@@ -233,7 +233,7 @@ pub(super) fn compact_history_with_budget(
         removed_messages: removed_messages.len(),
         removed_turns,
     })
-    .map(|report| {
+    .inspect(|report| {
         debug!(
             estimated_before = report.estimated_before,
             estimated_after = report.estimated_after,
@@ -241,7 +241,6 @@ pub(super) fn compact_history_with_budget(
             removed_turns = report.removed_turns,
             "history compaction completed"
         );
-        report
     })
 }
 

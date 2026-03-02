@@ -140,9 +140,7 @@ fn non_default_tmux_target_label(arguments_json: &str) -> Option<String> {
     let Ok(value) = serde_json::from_str::<Value>(arguments_json) else {
         return None;
     };
-    let Some(object) = value.as_object() else {
-        return None;
-    };
+    let object = value.as_object()?;
 
     if let Some(raw_target) = object.get("target").and_then(Value::as_str) {
         let target = raw_target.trim();
