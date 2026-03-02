@@ -166,10 +166,10 @@ pub(crate) fn background_liveness_spinner(tasks: &[BackgroundTask]) -> char {
         })
         .max()
         .unwrap_or_default();
-    // Keep REPL status redraws stable: sub-second spinner ticks cause excessive
+    // Keep REPL status redraws stable: ultra-fast ticks can cause excessive
     // full-surface repaints in raw-mode input, which can look like flicker.
-    // One tick per second preserves liveness feedback while reducing churn.
-    let idx = ((elapsed.as_millis() / 1000) as usize) % settings::PROGRESS_FRAMES.len();
+    // A half-second cadence still feels responsive while keeping churn low.
+    let idx = ((elapsed.as_millis() / 500) as usize) % settings::PROGRESS_FRAMES.len();
     settings::PROGRESS_FRAMES[idx]
 }
 

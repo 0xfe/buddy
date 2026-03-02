@@ -70,7 +70,8 @@ pub const AUTOCOMPLETE_UNSELECTED_PLAIN: &str = "-";
 pub const PROGRESS_CLEAR_LINE: &str = "\r\x1b[2K";
 /// ASCII spinner frames used by the progress indicator.
 pub const PROGRESS_FRAMES: [char; 4] = ['|', '/', '-', '\\'];
-pub const PROGRESS_TICK_MS: u64 = 100;
+/// Spinner tick cadence for progress indicators (slightly faster for better liveness).
+pub const PROGRESS_TICK_MS: u64 = 80;
 
 pub const REPL_EVENT_POLL_MS: u64 = 80;
 

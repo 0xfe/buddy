@@ -567,8 +567,13 @@ pub(crate) async fn run_login_flow(
         ));
     }
 
-    let health = provider_login_health(&provider)
-        .map_err(|err| format!("failed to check existing login health: {err}"))?;
+    let health = {
+        let mut progress = renderer.progress("checking saved login status");
+        let result = provider_login_health(&provider)
+            .map_err(|err| format!("failed to check existing login health: {err}"));
+        progress.finish();
+        result?
+    };
     if check {
         renderer.section("login status");
         renderer.field("provider", &provider);
@@ -598,9 +603,14 @@ pub(crate) async fn run_login_flow(
         return Ok(());
     }
 
-    let login = start_openai_device_login()
-        .await
-        .map_err(|err| format!("failed to start login flow: {err}"))?;
+    let login = {
+        let mut progress = renderer.progress("starting device login flow");
+        let result = start_openai_device_login()
+            .await
+            .map_err(|err| format!("failed to start login flow: {err}"));
+        progress.finish();
+        result?
+    };
     // Best-effort browser launch for convenience. The flow still works if this fails.
     let _ = try_open_browser(&login.verification_url);
 
@@ -1170,7 +1180,7 @@ mod tests {
         // `/model <selector>` should submit `SwitchModel` with resolved profile.
         let (tx, mut rx) = mpsc::channel(4);
         let runtime = BuddyRuntimeHandle { commands: tx };
-        let renderer = Renderer::new(false);
+        let renderer = MockRenderer::default();
         let mut config = Config::default();
 
         handle_model_command(
@@ -1178,6 +1188,7 @@ mod tests {
             &mut config,
             &runtime,
             Some("openrouter-deepseek"),
+            None,
         )
         .await;
 
@@ -1186,12 +1197,22 @@ mod tests {
             RuntimeCommand::SwitchModel {
                 profile,
                 reasoning_effort,
+                auth_override,
+                api_key_env_override,
+                clear_key_sources,
             } => {
                 assert_eq!(profile, "openrouter-deepseek");
                 assert!(reasoning_effort.is_none());
+                assert!(auth_override.is_none());
+                assert!(api_key_env_override.is_none());
+                assert!(!clear_key_sources);
             }
             other => panic!("unexpected command: {other:?}"),
         }
+        assert!(
+            !renderer.saw("section", "switched model profile: openrouter-deepseek"),
+            "model summary should be rendered after runtime acknowledgement"
+        );
     }
 
     #[tokio::test]
@@ -1202,7 +1223,14 @@ mod tests {
         let renderer = MockRenderer::default();
         let mut config = Config::default();
 
-        handle_model_command(&renderer, &mut config, &runtime, Some("missing-profile")).await;
+        handle_model_command(
+            &renderer,
+            &mut config,
+            &runtime,
+            Some("missing-profile"),
+            None,
+        )
+        .await;
 
         assert!(
             renderer.saw("warn", "Unknown model profile"),

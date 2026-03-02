@@ -3,13 +3,57 @@
 //! This module owns `/model` selection and selector parsing so REPL command
 //! logic stays isolated from top-level boot/runtime wiring.
 
+use crate::app::entry::run_login_flow;
+use buddy::auth::{
+    api_key_provider_key, load_provider_api_key, save_provider_api_key, supports_login_for_provider,
+};
 use buddy::config::{
-    select_model_profile, supported_reasoning_efforts, Config, ModelConfig, ModelProvider,
-    ReasoningEffort,
+    persist_model_profile_api_key_env, persist_model_profile_auth, supported_reasoning_efforts,
+    AuthMode, Config, ModelConfig, ModelProvider, ReasoningEffort,
 };
 use buddy::runtime::{BuddyRuntimeHandle, RuntimeCommand};
 use buddy::ui::render::RenderSink;
 use buddy::ui::terminal as term_ui;
+use rpassword::prompt_password;
+use std::io::{self, Write};
+
+/// Model-switch command submission details returned to the REPL loop.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ModelSwitchSubmission {
+    /// Selected model profile key.
+    pub(crate) profile_name: String,
+    /// Selected request model id shown in switch confirmation.
+    pub(crate) model_name: String,
+    /// Selected optional reasoning effort override.
+    pub(crate) reasoning_effort: Option<ReasoningEffort>,
+    /// Optional profile-auth patch applied by this switch.
+    pub(crate) auth_patch: ModelAuthPatch,
+}
+
+/// Runtime patch for profile auth/key-source fields applied during switch.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct ModelAuthPatch {
+    /// Override auth mode for the selected profile.
+    pub(crate) auth_override: Option<AuthMode>,
+    /// Optional override for `api_key_env`.
+    pub(crate) api_key_env_override: Option<String>,
+    /// Clear inline/file/env key sources before applying overrides.
+    pub(crate) clear_key_sources: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ModelAuthChoice {
+    /// Keep existing profile auth fields unchanged.
+    KeepCurrent,
+    /// Use provider login flow when available.
+    Login,
+    /// Persist API key to encrypted provider store.
+    ApiKeyStored,
+    /// Read API key from an environment variable name.
+    ApiKeyEnvVar,
+    /// Cancel `/model` command.
+    Cancel,
+}
 
 /// Handle `/model` command behavior.
 pub(crate) async fn handle_model_command(
@@ -17,32 +61,35 @@ pub(crate) async fn handle_model_command(
     config: &mut Config,
     runtime: &BuddyRuntimeHandle,
     selector: Option<&str>,
-) {
+    config_path_override: Option<&str>,
+) -> Option<ModelSwitchSubmission> {
     // `/model` flow:
     // 1) choose target profile (selector or picker),
-    // 2) skip if already active,
-    // 3) submit runtime switch and sync local config.
+    // 2) choose auth setup for that profile,
+    // 3) choose reasoning effort (when supported),
+    // 4) submit runtime switch.
     if config.models.is_empty() {
         renderer.warn("No configured model profiles. Add `[models.<name>]` entries to buddy.toml.");
-        return;
+        return None;
     }
 
     let names = configured_model_profile_names(config);
     if names.len() == 1 {
         renderer.warn("Only one model profile is configured.");
-        return;
+        return None;
     }
 
+    let selected_via_picker = selector.is_none();
     let profile_name = if let Some(selector) = selector {
         let selected_input = selector.trim();
         if selected_input.is_empty() {
-            return;
+            return None;
         }
         match resolve_model_profile_selector(config, &names, selected_input) {
             Ok(name) => name,
             Err(msg) => {
                 renderer.warn(&msg);
-                return;
+                return None;
             }
         }
     } else {
@@ -59,53 +106,80 @@ pub(crate) async fn handle_model_command(
             initial,
         ) {
             Ok(Some(index)) => names[index].clone(),
-            Ok(None) => return,
+            Ok(None) => return None,
             Err(e) => {
                 renderer.warn(&format!("failed to read model selection: {e}"));
-                return;
+                return None;
             }
         }
     };
 
+    let auth_patch = if selected_via_picker {
+        match configure_model_auth(renderer, config, &profile_name, config_path_override).await {
+            Ok(AuthUpdateOutcome::Updated(patch)) => patch,
+            Ok(AuthUpdateOutcome::Unchanged) => ModelAuthPatch::default(),
+            Ok(AuthUpdateOutcome::Cancelled) => return None,
+            Err(msg) => {
+                renderer.warn(&msg);
+                return None;
+            }
+        }
+    } else {
+        ModelAuthPatch::default()
+    };
+
     let target_reasoning_effort = match choose_reasoning_effort(renderer, config, &profile_name) {
         Some(value) => value,
-        None => return,
+        None => return None,
     };
 
     let current_reasoning_effort = config
         .models
         .get(&config.agent.model)
         .and_then(|profile| profile.reasoning_effort);
-    if profile_name == config.agent.model && target_reasoning_effort == current_reasoning_effort {
+    if profile_name == config.agent.model
+        && target_reasoning_effort == current_reasoning_effort
+        && auth_patch == ModelAuthPatch::default()
+    {
         renderer.section(&format!("model profile already active: {profile_name}"));
         if let Some(effort) = current_reasoning_effort {
             renderer.field("reasoning_effort", effort.as_str());
         }
         eprintln!();
-        return;
+        return None;
+    }
+
+    if let Some(profile) = config.models.get_mut(&profile_name) {
+        profile.reasoning_effort = target_reasoning_effort;
     }
 
     if let Err(e) = runtime
         .send(RuntimeCommand::SwitchModel {
             profile: profile_name.clone(),
             reasoning_effort: target_reasoning_effort,
+            auth_override: auth_patch.auth_override,
+            api_key_env_override: auth_patch.api_key_env_override.clone(),
+            clear_key_sources: auth_patch.clear_key_sources,
         })
         .await
     {
         renderer.warn(&format!(
             "failed to submit model switch command for `{profile_name}`: {e}"
         ));
-        return;
+        return None;
     }
 
-    if let Some(profile) = config.models.get_mut(&profile_name) {
-        profile.reasoning_effort = target_reasoning_effort;
-    }
-    if let Err(e) = select_model_profile(config, &profile_name) {
-        renderer.warn(&format!(
-            "runtime accepted model switch for `{profile_name}`, but local config sync failed: {e}"
-        ));
-    }
+    let model_name = config
+        .models
+        .get(&profile_name)
+        .map(|profile| resolved_profile_api_model(profile, &profile_name))
+        .unwrap_or_else(|| profile_name.clone());
+    Some(ModelSwitchSubmission {
+        profile_name,
+        model_name,
+        reasoning_effort: target_reasoning_effort,
+        auth_patch,
+    })
 }
 
 /// Return model profile keys in stable config-map iteration order.
@@ -187,6 +261,210 @@ fn choose_reasoning_effort(
             None
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AuthUpdateOutcome {
+    /// Auth settings were changed and persisted.
+    Updated(ModelAuthPatch),
+    /// Auth settings were left unchanged.
+    Unchanged,
+    /// User cancelled auth setup.
+    Cancelled,
+}
+
+/// Prompt for model-profile auth strategy and persist any selected updates.
+async fn configure_model_auth(
+    renderer: &dyn RenderSink,
+    config: &mut Config,
+    profile_name: &str,
+    config_path_override: Option<&str>,
+) -> Result<AuthUpdateOutcome, String> {
+    let Some(profile) = config.models.get(profile_name).cloned() else {
+        return Ok(AuthUpdateOutcome::Unchanged);
+    };
+    let provider = profile.provider.resolved(profile.api_base_url.trim());
+    let supports_login = supports_login_for_provider(provider, &profile.api_base_url);
+
+    let choices = build_auth_choices(supports_login);
+    let options = choices
+        .iter()
+        .map(|choice| match choice {
+            ModelAuthChoice::KeepCurrent => {
+                format!("keep current ({})", auth_mode_label(profile.auth))
+            }
+            ModelAuthChoice::Login => "login".to_string(),
+            ModelAuthChoice::ApiKeyStored => "api key (stored securely)".to_string(),
+            ModelAuthChoice::ApiKeyEnvVar => "api key via env var".to_string(),
+            ModelAuthChoice::Cancel => "cancel".to_string(),
+        })
+        .collect::<Vec<_>>();
+
+    let initial = choices
+        .iter()
+        .position(|choice| *choice == ModelAuthChoice::KeepCurrent)
+        .unwrap_or(0);
+    let selection = term_ui::pick_from_list(
+        config.display.color,
+        "authentication",
+        "Pick auth method for this model profile.",
+        &options,
+        initial,
+    )
+    .map_err(|err| format!("failed to read auth selection: {err}"))?;
+    let Some(selection_idx) = selection else {
+        return Ok(AuthUpdateOutcome::Cancelled);
+    };
+    let choice = choices[selection_idx];
+
+    match choice {
+        ModelAuthChoice::KeepCurrent => Ok(AuthUpdateOutcome::Unchanged),
+        ModelAuthChoice::Cancel => Ok(AuthUpdateOutcome::Cancelled),
+        ModelAuthChoice::Login => {
+            persist_model_profile_auth(config_path_override, profile_name, "login", true)
+                .map_err(|err| format!("failed to persist login auth mode: {err}"))?;
+            apply_auth_mode_to_profile(config, profile_name, AuthMode::Login, None);
+            let provider_selector = api_key_provider_key(provider, &profile.api_base_url);
+            run_login_flow(
+                renderer,
+                config,
+                Some(provider_selector.as_str()),
+                false,
+                false,
+            )
+            .await?;
+            Ok(AuthUpdateOutcome::Updated(ModelAuthPatch {
+                auth_override: Some(AuthMode::Login),
+                api_key_env_override: None,
+                clear_key_sources: true,
+            }))
+        }
+        ModelAuthChoice::ApiKeyStored => {
+            persist_model_profile_auth(config_path_override, profile_name, "api-key", true)
+                .map_err(|err| format!("failed to persist api-key auth mode: {err}"))?;
+            apply_auth_mode_to_profile(config, profile_name, AuthMode::ApiKey, None);
+
+            let provider_key = api_key_provider_key(provider, &profile.api_base_url);
+            let existing = {
+                let mut progress = renderer.progress("checking stored provider API key");
+                let result = load_provider_api_key(&provider_key).map_err(|err| {
+                    format!("failed to read stored API key for `{provider_key}`: {err}")
+                });
+                progress.finish();
+                result?
+            };
+            if existing.is_none() {
+                let key = prompt_password("Enter API key (input hidden): ")
+                    .map_err(|err| format!("failed to read API key from terminal: {err}"))?;
+                let trimmed = key.trim();
+                if trimmed.is_empty() {
+                    return Err("empty API key entered; cancelled model switch".to_string());
+                }
+                save_provider_api_key(&provider_key, trimmed).map_err(|err| {
+                    format!("failed to save API key for provider `{provider_key}`: {err}")
+                })?;
+            } else {
+                renderer.detail(&format!(
+                    "using stored API key for provider `{provider_key}`."
+                ));
+            }
+            Ok(AuthUpdateOutcome::Updated(ModelAuthPatch {
+                auth_override: Some(AuthMode::ApiKey),
+                api_key_env_override: None,
+                clear_key_sources: true,
+            }))
+        }
+        ModelAuthChoice::ApiKeyEnvVar => {
+            let default_env = provider_default_api_key_env(provider);
+            let env_name = prompt_env_name(default_env)?;
+            persist_model_profile_api_key_env(config_path_override, profile_name, &env_name)
+                .map_err(|err| format!("failed to persist api_key_env for profile: {err}"))?;
+            apply_auth_mode_to_profile(config, profile_name, AuthMode::ApiKey, Some(&env_name));
+            let env_set = std::env::var(&env_name)
+                .ok()
+                .is_some_and(|value| !value.trim().is_empty());
+            if !env_set {
+                renderer.warn(&format!(
+                    "env var `{env_name}` is unset or empty. Set it before sending prompts, or run /model again and choose API key storage."
+                ));
+            }
+            Ok(AuthUpdateOutcome::Updated(ModelAuthPatch {
+                auth_override: Some(AuthMode::ApiKey),
+                api_key_env_override: Some(env_name),
+                clear_key_sources: true,
+            }))
+        }
+    }
+}
+
+/// Build auth picker choices for one provider.
+fn build_auth_choices(supports_login: bool) -> Vec<ModelAuthChoice> {
+    let mut choices = Vec::new();
+    choices.push(ModelAuthChoice::KeepCurrent);
+    if supports_login {
+        choices.push(ModelAuthChoice::Login);
+    }
+    choices.push(ModelAuthChoice::ApiKeyStored);
+    choices.push(ModelAuthChoice::ApiKeyEnvVar);
+    choices.push(ModelAuthChoice::Cancel);
+    choices
+}
+
+/// Convert auth enum to a stable user-facing label.
+fn auth_mode_label(mode: AuthMode) -> &'static str {
+    match mode {
+        AuthMode::ApiKey => "api-key",
+        AuthMode::Login => "login",
+    }
+}
+
+/// Return provider-default API-key environment variable names.
+fn provider_default_api_key_env(provider: ModelProvider) -> &'static str {
+    match provider {
+        ModelProvider::Openai => "OPENAI_API_KEY",
+        ModelProvider::Openrouter => "OPENROUTER_API_KEY",
+        ModelProvider::Moonshot => "MOONSHOT_API_KEY",
+        ModelProvider::Anthropic => "ANTHROPIC_API_KEY",
+        ModelProvider::Auto | ModelProvider::Other => "BUDDY_API_KEY",
+    }
+}
+
+/// Prompt for an environment-variable name, defaulting to provider convention.
+fn prompt_env_name(default_name: &str) -> Result<String, String> {
+    eprint!("  env var for API key [{default_name}]: ");
+    io::stderr()
+        .flush()
+        .map_err(|err| format!("failed to render env-var prompt: {err}"))?;
+    let mut line = String::new();
+    if io::stdin()
+        .read_line(&mut line)
+        .map_err(|err| format!("failed to read env-var input: {err}"))?
+        == 0
+    {
+        return Err("no env var entered; cancelled model switch".to_string());
+    }
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        Ok(default_name.to_string())
+    } else {
+        Ok(trimmed.to_string())
+    }
+}
+
+/// Update in-memory profile auth fields to match persisted auth choices.
+fn apply_auth_mode_to_profile(
+    config: &mut Config,
+    profile_name: &str,
+    auth_mode: AuthMode,
+    api_key_env: Option<&str>,
+) {
+    let Some(profile) = config.models.get_mut(profile_name) else {
+        return;
+    };
+    profile.auth = auth_mode;
+    profile.api_key.clear();
+    profile.api_key_file = None;
+    profile.api_key_env = api_key_env.map(|value| value.to_string());
 }
 
 /// Resolve the request model-id shown in selection UI.
@@ -355,6 +633,30 @@ mod tests {
         assert_eq!(provider_brand_name(ModelProvider::Openrouter), "OpenRouter");
         assert_eq!(provider_brand_name(ModelProvider::Moonshot), "Moonshot AI");
         assert_eq!(provider_brand_name(ModelProvider::Anthropic), "Anthropic");
+    }
+
+    #[test]
+    fn build_auth_choices_includes_login_only_when_supported() {
+        let with_login = build_auth_choices(true);
+        assert!(with_login.contains(&ModelAuthChoice::Login));
+        let without_login = build_auth_choices(false);
+        assert!(!without_login.contains(&ModelAuthChoice::Login));
+    }
+
+    #[test]
+    fn provider_default_api_key_envs_match_provider_conventions() {
+        assert_eq!(
+            provider_default_api_key_env(ModelProvider::Openai),
+            "OPENAI_API_KEY"
+        );
+        assert_eq!(
+            provider_default_api_key_env(ModelProvider::Openrouter),
+            "OPENROUTER_API_KEY"
+        );
+        assert_eq!(
+            provider_default_api_key_env(ModelProvider::Moonshot),
+            "MOONSHOT_API_KEY"
+        );
     }
 
     #[test]
