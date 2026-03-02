@@ -506,4 +506,4 @@ Close the loop with analysis tooling, cost metrics, and regression confidence.
    - expanded ignored model regression coverage with a provider-compatibility probe that injects tool-call + tool-error history and verifies follow-up response continuity across default profiles,
    - updated observability/reference/model docs and added `docs/developer/tracing-cli.md`,
    - validated with `cargo fmt`, `cargo test -q`, and `cargo test --test model_regression -- --ignored --nocapture` (both ignored model-regression tests passing).
-   - commit: `TBD`.
+   - commit: `f3bf480`.
