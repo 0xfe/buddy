@@ -83,10 +83,12 @@ Detailed inventory: [feature-catalog.md](feature-catalog.md).
 - Prompt behavior:
   - one template render path with runtime tool/target context
   - static system prompt across turns
+  - explicit `--` separators between major prompt sections (system + dynamic request context)
   - explicit system prompt priority sections + end-of-prompt reinforcement
   - structured additive operator-instructions block with conflict policy
   - lightweight planning-before-tools guidance for non-trivial requests
-  - request-scoped tmux context message refresh before each model request when available
+  - request-scoped context annotation before each model request (model metadata + tmux state + annotated history ledger)
+  - request-scoped final tail-instruction message appended to every model request (active tmux route, default-vs-explicit pane targeting, shared-shell safety)
 - Output/rendering behavior:
   - semantic theme-token rendering with built-in `dark`/`light` palettes and optional `[themes.<name>]` overrides
   - startup banner includes build metadata (version, commit hash, build timestamp)

@@ -416,9 +416,12 @@ impl Agent {
             } else {
                 Some(self.tools.definitions())
             };
-            let dynamic_turn_context = self.build_dynamic_turn_context_message().await;
-            let request_messages =
-                build_request_messages(&self.messages, dynamic_turn_context.as_ref());
+            let turn_aug = self.build_turn_prompt_augmentation().await;
+            let request_messages = build_request_messages(
+                &self.messages,
+                Some(&turn_aug.context_message),
+                Some(&turn_aug.tail_instructions_message),
+            );
 
             let request = ChatRequest {
                 model: self.config.api.model.clone(),
@@ -890,27 +893,30 @@ fn initial_messages(config: &Config) -> Vec<Message> {
     }
 }
 
-/// Build request-scoped message list by injecting optional dynamic context.
+/// Build request-scoped message list with optional prompt augmentations.
 ///
-/// Dynamic turn context is inserted immediately after leading system messages
-/// so provider-visible instruction ordering stays stable:
-/// system messages -> dynamic context -> conversational history.
+/// Dynamic context is inserted immediately after leading system messages while
+/// tail instructions are appended as the final message:
+/// system messages -> dynamic context -> conversational history -> tail block.
 fn build_request_messages(
     base_messages: &[Message],
     dynamic_context: Option<&Message>,
+    tail_instructions: Option<&Message>,
 ) -> Vec<Message> {
-    let Some(context) = dynamic_context else {
-        return base_messages.to_vec();
-    };
-
     let system_prefix_len = base_messages
         .iter()
         .take_while(|message| message.role == Role::System)
         .count();
-    let mut combined = Vec::with_capacity(base_messages.len() + 1);
+    let extra = usize::from(dynamic_context.is_some()) + usize::from(tail_instructions.is_some());
+    let mut combined = Vec::with_capacity(base_messages.len() + extra);
     combined.extend_from_slice(&base_messages[..system_prefix_len]);
-    combined.push(context.clone());
+    if let Some(context) = dynamic_context {
+        combined.push(context.clone());
+    }
     combined.extend_from_slice(&base_messages[system_prefix_len..]);
+    if let Some(tail) = tail_instructions {
+        combined.push(tail.clone());
+    }
     combined
 }
 
@@ -1147,7 +1153,7 @@ mod tests {
             Message::user("user"),
         ];
         let dynamic = Message::user("dynamic-context");
-        let built = build_request_messages(&base, Some(&dynamic));
+        let built = build_request_messages(&base, Some(&dynamic), None);
         assert_eq!(built.len(), 4);
         assert_eq!(built[0].content.as_deref(), Some("system-one"));
         assert_eq!(built[1].content.as_deref(), Some("system-two"));
@@ -1159,10 +1165,24 @@ mod tests {
     #[test]
     fn build_request_messages_without_dynamic_context_is_passthrough() {
         let base = vec![Message::system("system"), Message::user("user")];
-        let built = build_request_messages(&base, None);
+        let built = build_request_messages(&base, None, None);
         assert_eq!(built.len(), 2);
         assert_eq!(built[0].content.as_deref(), Some("system"));
         assert_eq!(built[1].content.as_deref(), Some("user"));
+    }
+
+    // Verifies optional tail instructions are appended at the end of request history.
+    #[test]
+    fn build_request_messages_appends_tail_instructions_last() {
+        let base = vec![Message::system("system"), Message::user("user")];
+        let dynamic = Message::user("context");
+        let tail = Message::user("tail");
+        let built = build_request_messages(&base, Some(&dynamic), Some(&tail));
+        assert_eq!(built.len(), 4);
+        assert_eq!(built[0].content.as_deref(), Some("system"));
+        assert_eq!(built[1].content.as_deref(), Some("context"));
+        assert_eq!(built[2].content.as_deref(), Some("user"));
+        assert_eq!(built[3].content.as_deref(), Some("tail"));
     }
 
     // Verifies tool-error normalization strips the "Tool error:" wrapper prefix.
