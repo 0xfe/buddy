@@ -41,8 +41,9 @@ use types::{
 };
 
 pub use types::{
-    CapturePaneOptions, CreatedTmuxPane, CreatedTmuxSession, ResolvedTmuxTarget, SendKeysOptions,
-    ShellWait, TmuxAttachInfo, TmuxAttachTarget, TmuxTargetSelector,
+    CapturePaneOptions, CreatedTmuxPane, CreatedTmuxSession, ManagedTmuxSession,
+    ResolvedTmuxTarget, SendKeysOptions, ShellWait, TmuxAttachInfo, TmuxAttachTarget,
+    TmuxTargetSelector,
 };
 
 /// Runtime-execution backend shared across tool instances.
@@ -464,6 +465,16 @@ impl ExecutionContext {
         pane: String,
     ) -> Result<String, ToolError> {
         self.inner.kill_tmux_pane(session, pane).await
+    }
+
+    /// List managed tmux sessions/panes for this execution backend.
+    pub async fn list_managed_tmux_sessions(&self) -> Result<Vec<ManagedTmuxSession>, ToolError> {
+        self.inner.list_managed_tmux_sessions().await
+    }
+
+    /// Remove all managed tmux sessions owned by this execution backend.
+    pub async fn remove_managed_tmux_sessions(&self) -> Result<usize, ToolError> {
+        self.inner.remove_managed_tmux_sessions().await
     }
 }
 

@@ -72,6 +72,10 @@ pub struct PendingApproval {
     pub privesc: Option<bool>,
     /// Optional human-readable rationale for why approval is required.
     pub why: Option<String>,
+    /// Optional managed tmux session selector requested by the command.
+    pub tmux_session: Option<String>,
+    /// Optional managed tmux pane selector requested by the command.
+    pub tmux_pane: Option<String>,
     /// Whether the full command is expanded in the approval UI.
     pub expanded: bool,
 }

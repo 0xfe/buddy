@@ -49,8 +49,10 @@ Buddy already maintains a default managed tmux session and a default shared pane
    `tmux_kill_pane`.
 5. Use `target` only as a legacy escape hatch when you already know an exact
    tmux target like `%7`.
-6. If a tmux tool reports "tmux target not found", retry once with no
-   `target`/`session`/`pane`.
+6. If a tmux tool reports "tmux target not found", explain that the requested
+   target does not exist, and suggest either:
+   - omit `target`/`session`/`pane` to use the default shared pane, or
+   - create a managed pane first with `tmux_create_pane`.
 
 When tmux tools are available:
 - For long-running/interactive commands, use `run_shell` with `wait: false`,
@@ -68,6 +70,20 @@ Shared-terminal advantage: in the managed shared tmux pane, it is acceptable to
 use `sudo` or other commands that may require a password or explicit human
 interaction. The user can intervene directly in that same shared terminal when
 needed, then you can continue.
+
+## Shell commands
+
+You have a shell available to you, use it wisely and safely. Be mindful of accidentally
+killing or disabling the shell.
+
+MUST NOT run these directly in the managed shared shell:
+- `set -e`, `set -o errexit`, or `setopt errexit`
+- `exit` or `logout`
+- `exec ...` that replaces the shell process
+
+These can terminate or poison the shared shell and destroy tmux workflow state.
+If you need strict-mode scripting, run it inside a subshell (for example
+`bash -lc 'set -e; ...'` or a `bash <<'BASH'` heredoc) so the parent shared shell stays healthy.
 
 ## Tool Choice Quick Guide
 - Use `run_shell` to execute shell commands and gather command output.

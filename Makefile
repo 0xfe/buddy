@@ -17,7 +17,7 @@ RELEASE_TAG := v$(CRATE_VERSION)
 SHA256_CMD := $(shell if command -v shasum >/dev/null 2>&1; then echo "shasum -a 256"; elif command -v sha256sum >/dev/null 2>&1; then echo "sha256sum"; else echo ""; fi)
 
 .PHONY: help build build-debug run run-exec install clean \
-	test test-ui-regression test-model-regression test-installer-smoke \
+	test test-ui-regression test-model-regression test-installer-smoke prompt-eval \
 	fmt fmt-check clippy check release release-artifacts version \
 	bump-patch bump-minor bump-major bump-set install-from-release release-tag
 
@@ -26,6 +26,9 @@ help:
 	@echo "  make build               Build release binary"
 	@echo "  make build-debug         Build debug binary"
 	@echo "  make test                Run cargo test"
+	@echo "  make test-ui-regression  Run on-demand tmux UI regression suite"
+	@echo "  make test-model-regression Run on-demand live model regression suite"
+	@echo "  make prompt-eval MODEL=<profile> PROMPTS=<file> [OUT_DIR=<dir>]  Run trace-backed real-model prompt eval probes"
 	@echo "  make test-installer-smoke Run offline installer smoke test"
 	@echo "  make fmt                 Format sources"
 	@echo "  make fmt-check           Check formatting"
@@ -70,6 +73,15 @@ test-ui-regression:
 
 test-model-regression:
 	env -u BUDDY_API_KEY -u AGENT_API_KEY -u BUDDY_BASE_URL -u AGENT_BASE_URL -u BUDDY_MODEL -u AGENT_MODEL cargo test --test model_regression -- --ignored --nocapture
+
+prompt-eval:
+	@if [[ -z "$(MODEL)" || -z "$(PROMPTS)" ]]; then \
+		echo "usage: make prompt-eval MODEL=<profile> PROMPTS=<file> [OUT_DIR=<dir>]"; \
+		exit 1; \
+	fi
+	@args=(--model "$(MODEL)" --prompts "$(PROMPTS)"); \
+	if [[ -n "$(OUT_DIR)" ]]; then args+=(--out "$(OUT_DIR)"); fi; \
+	./scripts/prompt-eval.sh "$${args[@]}"
 
 test-installer-smoke: release-artifacts
 	@tmp="$$(mktemp -d)"; \

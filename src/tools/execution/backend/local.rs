@@ -4,15 +4,19 @@ use crate::error::ToolError;
 use async_trait::async_trait;
 
 use super::common::{
-    parse_created_pane_output, parse_created_session_output, parse_killed_pane_output,
-    parse_killed_session_output, selector_from_capture_options, selector_from_send_keys_options,
-    sent_keys_message, should_fallback_to_default_target,
+    allow_missing_target_fallback, append_tool_error_context, default_shared_pane_recovered_notice,
+    missing_target_error_notice, missing_target_fallback_notice, parse_created_pane_output,
+    parse_created_session_output, parse_killed_pane_output, parse_killed_session_output,
+    parse_managed_sessions_output, parse_removed_sessions_output, selector_from_capture_options,
+    selector_from_send_keys_options, sent_keys_message, should_fallback_to_default_target,
+    should_retry_capture_with_default,
 };
 use crate::tmux::capture::run_local_capture_pane;
 use crate::tmux::management::{
     canonical_session_name, create_managed_pane_script, create_managed_session_script,
     is_default_target_alias, kill_managed_pane_script, kill_managed_session_script,
-    parse_resolved_target, resolve_managed_target_script,
+    list_managed_sessions_script, parse_resolved_target, remove_managed_sessions_script,
+    resolve_managed_target_script,
 };
 use crate::tmux::pane::ensure_local_tmux_pane;
 use crate::tmux::prompt::ensure_local_tmux_prompt_setup;
@@ -25,9 +29,9 @@ use crate::tools::execution::file_io::{
 use crate::tools::execution::process::{run_sh_process, run_with_wait, shell_quote};
 use crate::tools::execution::types::{
     CapturePaneOptions, CreatedTmuxPane, CreatedTmuxSession, ExecOutput, LocalBackend,
-    LocalTmuxContext, ResolvedTmuxTarget, SendKeysOptions, ShellWait, TmuxAttachInfo,
-    TmuxAttachTarget, TmuxTargetSelector, LEGACY_TMUX_WINDOW_NAME, TMUX_PANE_TITLE,
-    TMUX_WINDOW_NAME,
+    LocalTmuxContext, ManagedTmuxSession, PromptReadyState, ResolvedTmuxTarget, SendKeysOptions,
+    ShellWait, TmuxAttachInfo, TmuxAttachTarget, TmuxTargetSelector, LEGACY_TMUX_WINDOW_NAME,
+    TMUX_PANE_TITLE, TMUX_WINDOW_NAME,
 };
 
 impl LocalTmuxContext {
@@ -38,31 +42,43 @@ impl LocalTmuxContext {
         wait: ShellWait,
     ) -> Result<ExecOutput, ToolError> {
         // Ensure pane exists and prompt bootstrap is active before dispatching.
-        let pane_id = self.ensure_prompt_ready().await?;
-        run_local_tmux_process(&pane_id, command, stdin, wait).await
+        let prompt = self.ensure_prompt_ready().await?;
+        let mut output = run_local_tmux_process(&prompt.pane_id, command, stdin, wait).await?;
+        output.notices.extend(prompt.notices);
+        Ok(output)
     }
 
     pub(in crate::tools::execution) async fn ensure_prompt_ready(
         &self,
-    ) -> Result<String, ToolError> {
+    ) -> Result<PromptReadyState, ToolError> {
         // Fast-path: configured pane still exists.
         let configured_pane = self.configured_tmux_pane.lock().await.clone();
-        if let Some(pane_id) = configured_pane {
-            if local_tmux_pane_exists(&pane_id).await? {
-                return Ok(pane_id);
+        if let Some(pane_id) = configured_pane.as_ref() {
+            if local_tmux_pane_exists(pane_id).await? {
+                return Ok(PromptReadyState {
+                    pane_id: pane_id.clone(),
+                    notices: Vec::new(),
+                });
             }
         }
 
         // Slow-path: recreate/rebind pane and (re)install prompt markers when created.
         let ensured = ensure_local_tmux_pane(&self.tmux_session, &self.owner_prefix).await?;
         let mut configured = self.configured_tmux_pane.lock().await;
+        let mut notices = Vec::new();
+        if configured_pane.is_some() {
+            notices.push(default_shared_pane_recovered_notice());
+        }
         if ensured.created {
             ensure_local_tmux_prompt_setup(&ensured.pane_id).await?;
         }
         if configured.as_deref() != Some(ensured.pane_id.as_str()) {
             *configured = Some(ensured.pane_id.clone());
         }
-        Ok(ensured.pane_id)
+        Ok(PromptReadyState {
+            pane_id: ensured.pane_id,
+            notices,
+        })
     }
 
     async fn resolve_target(
@@ -83,14 +99,16 @@ impl LocalTmuxContext {
                 .as_deref()
                 .is_none_or(|pane| pane.trim() == TMUX_PANE_TITLE);
         if ensure_default_shared && wants_default_shared {
-            let pane_id = self.ensure_prompt_ready().await?;
+            let prompt = self.ensure_prompt_ready().await?;
             return Ok(ResolvedTmuxTarget {
                 session: self.tmux_session.clone(),
-                pane_id,
+                pane_id: prompt.pane_id,
                 pane_title: TMUX_PANE_TITLE.to_string(),
                 is_default_shared: true,
+                notices: prompt.notices,
             });
         }
+        let can_fallback = allow_missing_target_fallback(&selector, ensure_default_shared);
 
         let script =
             resolve_managed_target_script(&self.owner_prefix, &self.tmux_session, &selector)?;
@@ -100,23 +118,50 @@ impl LocalTmuxContext {
             "failed to resolve managed tmux target".into(),
         ) {
             Ok(output) => parse_resolved_target(&output.stdout),
-            Err(err) if ensure_default_shared && should_fallback_to_default_target(&err) => None,
+            Err(err) if can_fallback && should_fallback_to_default_target(&err) => {
+                let mut prompt = self.ensure_prompt_ready().await?;
+                prompt
+                    .notices
+                    .push(missing_target_fallback_notice(&selector));
+                return Ok(ResolvedTmuxTarget {
+                    session: self.tmux_session.clone(),
+                    pane_id: prompt.pane_id,
+                    pane_title: TMUX_PANE_TITLE.to_string(),
+                    is_default_shared: true,
+                    notices: prompt.notices,
+                });
+            }
+            Err(err) if should_fallback_to_default_target(&err) => {
+                let recovered_default =
+                    self.ensure_prompt_ready().await.ok().is_some_and(|prompt| {
+                        prompt
+                            .notices
+                            .iter()
+                            .any(|notice| notice == &default_shared_pane_recovered_notice())
+                    });
+                let notice = missing_target_error_notice(&selector, recovered_default);
+                return Err(append_tool_error_context(err, &notice));
+            }
             Err(err) => return Err(err),
         };
         if let Some(resolved) = resolved {
             return Ok(resolved);
         }
-        if !ensure_default_shared {
+        if !can_fallback {
             return Err(ToolError::ExecutionFailed(
                 "failed to parse managed tmux target".into(),
             ));
         }
-        let pane_id = self.ensure_prompt_ready().await?;
+        let mut prompt = self.ensure_prompt_ready().await?;
+        prompt
+            .notices
+            .push(missing_target_fallback_notice(&selector));
         Ok(ResolvedTmuxTarget {
             session: self.tmux_session.clone(),
-            pane_id,
+            pane_id: prompt.pane_id,
             pane_title: TMUX_PANE_TITLE.to_string(),
             is_default_shared: true,
+            notices: prompt.notices,
         })
     }
 }
@@ -218,6 +263,7 @@ impl ExecutionBackendOps for LocalBackend {
                     "command dispatched to tmux pane {pane_id}; still running in background. Use tmux_capture_pane (optionally with delay) to poll output."
                 ),
                 stderr: String::new(),
+                notices: Vec::new(),
             });
         }
         run_with_wait(
@@ -296,6 +342,18 @@ impl ExecutionBackendOps for LocalBackend {
             "tmux pane management requires --tmux".into(),
         ))
     }
+
+    async fn list_managed_tmux_sessions(&self) -> Result<Vec<ManagedTmuxSession>, ToolError> {
+        Err(ToolError::ExecutionFailed(
+            "tmux session management requires --tmux".into(),
+        ))
+    }
+
+    async fn remove_managed_tmux_sessions(&self) -> Result<usize, ToolError> {
+        Err(ToolError::ExecutionFailed(
+            "tmux session management requires --tmux".into(),
+        ))
+    }
 }
 
 #[async_trait]
@@ -322,8 +380,31 @@ impl ExecutionBackendOps for LocalTmuxContext {
 
     async fn capture_pane(&self, options: CapturePaneOptions) -> Result<String, ToolError> {
         let selector = selector_from_capture_options(&options);
-        let resolved = self.resolve_target(selector, true).await?;
-        run_local_capture_pane(&resolved.pane_id, &options).await
+        let resolved = match self.resolve_target(selector.clone(), true).await {
+            Ok(resolved) => resolved,
+            Err(err) if should_retry_capture_with_default(&selector, &err) => {
+                let mut fallback = self
+                    .resolve_target(
+                        TmuxTargetSelector {
+                            target: None,
+                            session: None,
+                            pane: None,
+                        },
+                        true,
+                    )
+                    .await?;
+                fallback
+                    .notices
+                    .push(missing_target_fallback_notice(&selector));
+                fallback
+            }
+            Err(err) => return Err(err),
+        };
+        let captured = run_local_capture_pane(&resolved.pane_id, &options).await?;
+        if resolved.notices.is_empty() {
+            return Ok(captured);
+        }
+        Ok(format!("{}\n\n{}", resolved.notices.join("\n"), captured))
     }
 
     async fn send_keys(&self, options: SendKeysOptions) -> Result<String, ToolError> {
@@ -347,7 +428,9 @@ impl ExecutionBackendOps for LocalTmuxContext {
         wait: ShellWait,
         target: ResolvedTmuxTarget,
     ) -> Result<ExecOutput, ToolError> {
-        run_local_tmux_process(&target.pane_id, command, None, wait).await
+        let mut output = run_local_tmux_process(&target.pane_id, command, None, wait).await?;
+        output.notices.extend(target.notices);
+        Ok(output)
     }
 
     async fn read_file(&self, path: &str) -> Result<String, ToolError> {
@@ -437,6 +520,26 @@ impl ExecutionBackendOps for LocalTmuxContext {
             "failed to kill managed tmux pane".into(),
         )?;
         parse_killed_pane_output(&output.stdout)
+    }
+
+    async fn list_managed_tmux_sessions(&self) -> Result<Vec<ManagedTmuxSession>, ToolError> {
+        let script = list_managed_sessions_script(&self.owner_prefix);
+        let output = run_sh_process("sh", &script, None).await?;
+        let output = crate::tools::execution::process::ensure_success(
+            output,
+            "failed to list managed tmux sessions".into(),
+        )?;
+        parse_managed_sessions_output(&output.stdout)
+    }
+
+    async fn remove_managed_tmux_sessions(&self) -> Result<usize, ToolError> {
+        let script = remove_managed_sessions_script(&self.owner_prefix);
+        let output = run_sh_process("sh", &script, None).await?;
+        let output = crate::tools::execution::process::ensure_success(
+            output,
+            "failed to remove managed tmux sessions".into(),
+        )?;
+        parse_removed_sessions_output(&output.stdout)
     }
 }
 

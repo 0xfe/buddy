@@ -4,8 +4,8 @@ use crate::error::ToolError;
 use async_trait::async_trait;
 
 use super::types::{
-    CapturePaneOptions, CreatedTmuxPane, CreatedTmuxSession, ExecOutput, ResolvedTmuxTarget,
-    SendKeysOptions, ShellWait, TmuxAttachInfo, TmuxTargetSelector,
+    CapturePaneOptions, CreatedTmuxPane, CreatedTmuxSession, ExecOutput, ManagedTmuxSession,
+    ResolvedTmuxTarget, SendKeysOptions, ShellWait, TmuxAttachInfo, TmuxTargetSelector,
 };
 
 /// Internal backend trait used to decouple `ExecutionContext` from concrete
@@ -65,6 +65,10 @@ pub(super) trait ExecutionBackendOps: Send + Sync {
         session: Option<String>,
         pane: String,
     ) -> Result<String, ToolError>;
+    /// List managed tmux sessions/panes owned by this buddy instance.
+    async fn list_managed_tmux_sessions(&self) -> Result<Vec<ManagedTmuxSession>, ToolError>;
+    /// Remove all managed tmux sessions owned by this buddy instance.
+    async fn remove_managed_tmux_sessions(&self) -> Result<usize, ToolError>;
 }
 
 /// Shared contract for backends that can execute shell snippets.

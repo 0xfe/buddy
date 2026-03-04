@@ -36,6 +36,8 @@ pub mod error;
 pub mod preflight;
 /// System prompt rendering utilities.
 pub mod prompt;
+/// Internal prompt snippet catalog helpers.
+pub(crate) mod prompt_catalog;
 /// REPL state and command helper logic.
 pub mod repl;
 /// Runtime actor/event protocol.

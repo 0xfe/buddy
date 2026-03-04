@@ -44,6 +44,8 @@ pub(in crate::ui::runtime) fn handle_task(
             mutation,
             privesc,
             why,
+            tmux_session,
+            tmux_pane,
         } => {
             // Only surface one pending approval prompt at a time to avoid prompt clashes.
             if mark_task_waiting_for_approval(
@@ -64,6 +66,8 @@ pub(in crate::ui::runtime) fn handle_task(
                     mutation,
                     privesc,
                     why,
+                    tmux_session,
+                    tmux_pane,
                     expanded: false,
                 });
             }

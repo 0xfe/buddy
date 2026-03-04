@@ -16,7 +16,7 @@ use crate::tools::{ToolContext, ToolRegistry};
 use crate::types::{ChatRequest, Message, Role};
 use crate::ui::render::Renderer;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::Instant;
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, info_span, warn, Instrument};
@@ -43,6 +43,8 @@ use normalization::{
 const CANCELLED_BY_USER_TOOL_RESULT: &str = "operation cancelled by user";
 /// Final response text returned when user cancellation wins the race.
 const CANCELLED_BY_USER_PROMPT_RESPONSE: &str = "operation cancelled by user";
+/// Per-call threshold before identical failing tool calls are suppressed.
+const MAX_IDENTICAL_TOOL_FAILURE_REPEATS: usize = 2;
 /// Soft threshold for emitting context-usage warnings.
 const CONTEXT_WARNING_FRACTION: f64 = 0.80;
 /// Hard threshold where compaction/error enforcement kicks in.
@@ -51,6 +53,15 @@ const CONTEXT_HARD_LIMIT_FRACTION: f64 = 0.95;
 const CONTEXT_AUTO_COMPACT_TARGET_FRACTION: f64 = 0.82;
 /// Target fraction for explicit/manual compaction.
 const CONTEXT_MANUAL_COMPACT_TARGET_FRACTION: f64 = 0.60;
+
+/// Tracks consecutive identical tool failures for one `(tool, arguments)` pair.
+#[derive(Debug, Clone)]
+struct RepeatedToolFailureState {
+    /// Consecutive failures with the same normalized error text.
+    repeats: usize,
+    /// Last normalized tool-error payload.
+    last_error: String,
+}
 
 /// Persistable conversation + token state for session save/resume.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -363,6 +374,8 @@ impl Agent {
         }
 
         let mut iterations = 0;
+        let mut repeated_tool_failures =
+            HashMap::<(String, String), RepeatedToolFailureState>::new();
 
         // Iterative loop allows tool round-trips: assistant tool call -> tool
         // execution -> follow-up model request with tool results.
@@ -666,8 +679,22 @@ impl Agent {
                     });
                     let (tool_stream_tx, mut tool_stream_rx) = mpsc::unbounded_channel();
                     let tool_context = ToolContext::with_stream(tool_stream_tx);
+                    let failure_key = (tc.function.name.clone(), tc.function.arguments.clone());
 
-                    let result = if cancelled || self.cancellation_requested() {
+                    let result = if repeated_tool_failures
+                        .get(&failure_key)
+                        .is_some_and(|state| state.repeats >= MAX_IDENTICAL_TOOL_FAILURE_REPEATS)
+                    {
+                        let last_error = repeated_tool_failures
+                            .get(&failure_key)
+                            .map(|state| state.last_error.clone())
+                            .unwrap_or_default();
+                        self.warn_live(&format!(
+                            "suppressing repeated failing `{}` tool call with identical arguments",
+                            tc.function.name
+                        ));
+                        repeated_tool_failure_result(&tc.function.name, &last_error)
+                    } else if cancelled || self.cancellation_requested() {
                         cancelled = true;
                         CANCELLED_BY_USER_TOOL_RESULT.to_string()
                     } else if let Some(cancel_rx) = &self.cancellation_rx {
@@ -701,6 +728,11 @@ impl Agent {
                             Err(err) => format!("Tool error: {err}"),
                         }
                     };
+                    update_repeated_tool_failures(
+                        &mut repeated_tool_failures,
+                        failure_key,
+                        &result,
+                    );
                     while let Ok(stream_event) = tool_stream_rx.try_recv() {
                         self.emit_tool_stream_event(&tc.function.name, stream_event);
                     }
@@ -801,6 +833,54 @@ fn elapsed_ms(started: Instant) -> u64 {
     started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
 }
 
+/// Normalize `Tool error:` payloads and track repeated identical failures.
+fn update_repeated_tool_failures(
+    state: &mut HashMap<(String, String), RepeatedToolFailureState>,
+    key: (String, String),
+    result: &str,
+) {
+    let Some(error) = normalize_tool_error(result) else {
+        state.remove(&key);
+        return;
+    };
+
+    if let Some(existing) = state.get_mut(&key) {
+        if existing.last_error == error {
+            existing.repeats += 1;
+        } else {
+            existing.repeats = 1;
+            existing.last_error = error;
+        }
+        return;
+    }
+
+    state.insert(
+        key,
+        RepeatedToolFailureState {
+            repeats: 1,
+            last_error: error,
+        },
+    );
+}
+
+/// Extract normalized tool-error content from a rendered tool result string.
+fn normalize_tool_error(result: &str) -> Option<String> {
+    let trimmed = result.trim();
+    let err = trimmed.strip_prefix("Tool error:")?.trim();
+    if err.is_empty() {
+        None
+    } else {
+        Some(err.to_string())
+    }
+}
+
+/// Generate a deterministic synthetic result when a tool keeps failing identically.
+fn repeated_tool_failure_result(tool_name: &str, last_error: &str) -> String {
+    format!(
+        "Tool error: repeated failure suppressed for `{tool_name}` with identical arguments. Last error: {last_error}. Do not retry unchanged; adjust arguments. For tmux targeting failures, omit target/session/pane to use the default shared pane, or create a managed pane first with tmux_create_pane."
+    )
+}
+
 /// Build initial conversation message list from configured system prompt.
 fn initial_messages(config: &Config) -> Vec<Message> {
     if config.agent.system_prompt.trim().is_empty() {
@@ -850,8 +930,7 @@ mod tests {
     };
     use async_trait::async_trait;
     use serde_json::json;
-    use std::collections::BTreeMap;
-    use std::collections::VecDeque;
+    use std::collections::{BTreeMap, HashMap, VecDeque};
     use std::sync::Mutex as StdMutex;
 
     // Verifies reasoning key detector accepts known aliases and rejects non-reasoning keys.
@@ -1086,6 +1165,40 @@ mod tests {
         assert_eq!(built[1].content.as_deref(), Some("user"));
     }
 
+    // Verifies tool-error normalization strips the "Tool error:" wrapper prefix.
+    #[test]
+    fn normalize_tool_error_extracts_payload_text() {
+        assert_eq!(
+            normalize_tool_error("Tool error: failed to resolve managed tmux target"),
+            Some("failed to resolve managed tmux target".to_string())
+        );
+        assert!(normalize_tool_error("ok").is_none());
+    }
+
+    // Verifies repeated-tool tracker counts identical failures and resets on success.
+    #[test]
+    fn repeated_tool_failure_tracker_counts_and_resets() {
+        let mut state = HashMap::<(String, String), RepeatedToolFailureState>::new();
+        let key = (
+            "tmux_send_keys".to_string(),
+            "{\"pane\":\"ghost\"}".to_string(),
+        );
+        update_repeated_tool_failures(
+            &mut state,
+            key.clone(),
+            "Tool error: failed to resolve managed tmux target",
+        );
+        assert_eq!(state.get(&key).map(|entry| entry.repeats), Some(1));
+        update_repeated_tool_failures(
+            &mut state,
+            key.clone(),
+            "Tool error: failed to resolve managed tmux target",
+        );
+        assert_eq!(state.get(&key).map(|entry| entry.repeats), Some(2));
+        update_repeated_tool_failures(&mut state, key.clone(), "tool-ok");
+        assert!(!state.contains_key(&key));
+    }
+
     // Verifies history compaction keeps system prefix and recent turns while shrinking history.
     #[test]
     fn compact_history_replaces_old_turns_with_summary() {
@@ -1261,6 +1374,52 @@ mod tests {
         }
     }
 
+    /// Tool fixture that always fails with the same error and tracks invocations.
+    struct AlwaysFailTool {
+        calls: StdMutex<usize>,
+    }
+
+    impl AlwaysFailTool {
+        fn call_count(&self) -> usize {
+            *self.calls.lock().expect("calls lock")
+        }
+    }
+
+    #[async_trait]
+    impl crate::tools::Tool for std::sync::Arc<AlwaysFailTool> {
+        fn name(&self) -> &'static str {
+            "tmux_send_keys"
+        }
+
+        fn definition(&self) -> ToolDefinition {
+            ToolDefinition {
+                tool_type: "function".to_string(),
+                function: FunctionDefinition {
+                    name: "tmux_send_keys".to_string(),
+                    description: "always fail fixture".to_string(),
+                    parameters: json!({
+                        "type": "object",
+                        "properties": {
+                            "pane": { "type": "string" }
+                        }
+                    }),
+                },
+            }
+        }
+
+        async fn execute(
+            &self,
+            _arguments: &str,
+            _context: &crate::tools::ToolContext,
+        ) -> Result<String, ToolError> {
+            let mut calls = self.calls.lock().expect("calls lock");
+            *calls += 1;
+            Err(ToolError::ExecutionFailed(
+                "failed to resolve managed tmux target: tmux target not found; omit target/session/pane to use the default shared pane".to_string(),
+            ))
+        }
+    }
+
     /// Tool fixture that returns queued tmux snapshot strings.
     struct SnapshotCaptureTool {
         /// Queue of snapshot strings returned in order.
@@ -1418,6 +1577,81 @@ mod tests {
             "task_completed",
         ];
         assert_eq!(labels, expected);
+    }
+
+    // Verifies repeated identical tool failures are suppressed after threshold.
+    #[tokio::test]
+    async fn repeated_identical_tool_failures_are_suppressed() {
+        fn tool_call_response(call_id: &str) -> ChatResponse {
+            ChatResponse {
+                id: format!("r-{call_id}"),
+                choices: vec![Choice {
+                    index: 0,
+                    message: Message {
+                        role: Role::Assistant,
+                        content: None,
+                        tool_calls: Some(vec![ToolCall {
+                            id: call_id.to_string(),
+                            call_type: "function".to_string(),
+                            function: FunctionCall {
+                                name: "tmux_send_keys".to_string(),
+                                arguments: r#"{"pane":"ghost"}"#.to_string(),
+                            },
+                        }]),
+                        tool_call_id: None,
+                        name: None,
+                        extra: BTreeMap::new(),
+                    },
+                    finish_reason: Some("tool_calls".to_string()),
+                }],
+                usage: None,
+            }
+        }
+
+        let final_response = ChatResponse {
+            id: "r-final".to_string(),
+            choices: vec![Choice {
+                index: 0,
+                message: Message {
+                    role: Role::Assistant,
+                    content: Some("done".to_string()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                    name: None,
+                    extra: BTreeMap::new(),
+                },
+                finish_reason: Some("stop".to_string()),
+            }],
+            usage: None,
+        };
+        let mock = Box::new(MockClient::new(vec![
+            tool_call_response("call-1"),
+            tool_call_response("call-2"),
+            tool_call_response("call-3"),
+            final_response,
+        ]));
+
+        let failing_tool = std::sync::Arc::new(AlwaysFailTool {
+            calls: StdMutex::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(failing_tool.clone());
+
+        let mut config = Config::default();
+        config.display.show_tool_calls = false;
+        config.display.show_tokens = false;
+        config.agent.max_iterations = 8;
+
+        let mut agent = Agent::with_client(config, tools, mock);
+        let out = agent.send("probe").await.expect("send succeeds");
+        assert_eq!(out, "done");
+        assert_eq!(failing_tool.call_count(), 2);
+        assert!(agent.messages().iter().any(|message| {
+            message
+                .content
+                .as_deref()
+                .is_some_and(|content| content.contains("repeated failure suppressed"))
+        }));
     }
 
     // Verifies tmux snapshot context rotates per request while system prompt remains static.

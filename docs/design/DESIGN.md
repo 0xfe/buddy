@@ -68,6 +68,7 @@ Detailed inventory: [feature-catalog.md](feature-catalog.md).
   - `run_shell`, `read_file`, `write_file`, `fetch_url`, `web_search`, `tmux_capture_pane`, `tmux_send_keys`, `time`
   - tmux lifecycle tools: `tmux_create_session`, `tmux_kill_session`, `tmux_create_pane`, `tmux_kill_pane`
   - tmux-aware selectors on shell/capture/send tools (`session`, `pane`) with shared-pane defaulting
+  - explicit missing managed targets: `tmux_capture_pane` auto-recovers to default shared pane with a notice; mutating tmux tools stay strict and return remediation errors
 - Multi-target execution for shell/file workflows:
   - local tmux-managed session (default when shell/files are enabled)
   - container tmux-managed session

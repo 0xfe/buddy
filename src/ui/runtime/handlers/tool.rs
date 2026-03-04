@@ -98,6 +98,9 @@ fn render_tool_result(
         "run_shell" => {
             // Prefer structured shell rendering when we can parse an exit code.
             if let Some(shell) = parse_shell_tool_result(result) {
+                for notice in &shell.notices {
+                    renderer.warn(&format!("[task #{task_id}] {notice}"));
+                }
                 renderer.activity(&format!(
                     "task #{task_id} exited with code {}",
                     shell.exit_code
@@ -113,10 +116,13 @@ fn render_tool_result(
             }
             if display_result.contains("command dispatched to tmux pane") {
                 // tmux-dispatch responses are terse status lines (not full output blocks).
-                renderer.activity(&format!(
-                    "task #{task_id} run_shell: {}",
-                    truncate_preview(&display_result, 140)
-                ));
+                renderer.activity(&format!("task #{task_id} run_shell dispatched"));
+                if display_result.contains('\n') {
+                    renderer.command_output_block(&display_result);
+                } else {
+                    renderer.detail(&truncate_preview(&display_result, 140));
+                    eprintln!();
+                }
                 eprintln!();
                 return;
             }
@@ -182,11 +188,8 @@ fn render_tool_result(
             return;
         }
         "tmux_send_keys" => {
-            renderer.activity(&format!(
-                "task #{task_id} tmux_send_keys: {}",
-                truncate_preview(&display_result, 120)
-            ));
-            eprintln!();
+            renderer.activity(&format!("task #{task_id} tmux_send_keys"));
+            renderer.command_output_block(&display_result);
             return;
         }
         "tmux_create_session" | "tmux_kill_session" | "tmux_create_pane" | "tmux_kill_pane" => {

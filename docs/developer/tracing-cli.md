@@ -20,6 +20,15 @@ buddy trace replay /tmp/buddy.trace.jsonl --turn 3
 buddy trace context-evolution /tmp/buddy.trace.jsonl
 ```
 
+For repeatable real-model prompt comparisons, pair this with:
+
+```bash
+make prompt-eval MODEL=<profile> PROMPTS=<file>
+```
+
+Each probe stores per-run trace JSONL files that can be inspected with these
+trace commands.
+
 ## Cost Metrics
 
 When model pricing metadata exists for the active model in `src/templates/models.toml`, Buddy emits per-request/session cost metrics into runtime events:

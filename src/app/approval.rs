@@ -12,11 +12,18 @@ use crossterm::style::{Color, Stylize};
 /// Default number of command lines shown in approval preview mode.
 const APPROVAL_PREVIEW_LINES: usize = 5;
 
+/// True when an approval command has more lines than the collapsed preview.
+pub(crate) fn approval_has_expand(command: &str) -> bool {
+    command.lines().count() > APPROVAL_PREVIEW_LINES
+}
+
 /// Build the target label used in approval prompts.
 pub(crate) fn approval_prompt_actor(
     ssh_target: Option<&str>,
     container: Option<&str>,
     tmux_info: Option<&TmuxAttachInfo>,
+    requested_tmux_session: Option<&str>,
+    requested_tmux_pane: Option<&str>,
 ) -> String {
     let mut actor = if let Some(target) = ssh_target {
         format!("ssh:{target}")
@@ -26,8 +33,28 @@ pub(crate) fn approval_prompt_actor(
         "local".to_string()
     };
 
+    let requested_session = requested_tmux_session
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let requested_pane = requested_tmux_pane
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
     if let Some(info) = tmux_info {
-        actor.push_str(&format!(" (tmux:{})", info.session));
+        let default_session = info.session.as_str();
+        let effective_session = requested_session.unwrap_or(default_session);
+        let effective_pane = requested_pane.unwrap_or("shared");
+        let non_default = requested_session.is_some_and(|s| s != default_session)
+            || requested_pane.is_some_and(|p| p != "shared");
+        if non_default {
+            actor.push_str(&format!(" (tmux:{effective_session}/{effective_pane})"));
+        } else {
+            actor.push_str(&format!(" (tmux:{default_session})"));
+        }
+    } else if requested_session.is_some() || requested_pane.is_some() {
+        let session = requested_session.unwrap_or("default");
+        let pane = requested_pane.unwrap_or("shared");
+        actor.push_str(&format!(" (tmux:{session}/{pane})"));
     }
     actor
 }
@@ -170,14 +197,14 @@ mod tests {
     fn approval_prompt_actor_prefers_ssh_then_container_then_local() {
         // Priority order should prefer explicit remote/container context over local default.
         assert_eq!(
-            approval_prompt_actor(Some("dev@host"), Some("box"), None),
+            approval_prompt_actor(Some("dev@host"), Some("box"), None, None, None),
             "ssh:dev@host"
         );
         assert_eq!(
-            approval_prompt_actor(None, Some("box"), None),
+            approval_prompt_actor(None, Some("box"), None, None, None),
             "container:box"
         );
-        assert_eq!(approval_prompt_actor(None, None, None), "local");
+        assert_eq!(approval_prompt_actor(None, None, None, None, None), "local");
     }
 
     #[test]
@@ -189,8 +216,27 @@ mod tests {
             target: TmuxAttachTarget::Local,
         };
         assert_eq!(
-            approval_prompt_actor(None, None, Some(&info)),
+            approval_prompt_actor(None, None, Some(&info), None, None),
             "local (tmux:buddy-a1b2)"
+        );
+    }
+
+    #[test]
+    fn approval_prompt_actor_shows_non_default_requested_pane() {
+        let info = TmuxAttachInfo {
+            session: "buddy-a1b2".to_string(),
+            window: "shared",
+            target: TmuxAttachTarget::Local,
+        };
+        assert_eq!(
+            approval_prompt_actor(
+                None,
+                None,
+                Some(&info),
+                Some("buddy-a1b2-build"),
+                Some("builder"),
+            ),
+            "local (tmux:buddy-a1b2-build/builder)"
         );
     }
 
@@ -217,5 +263,13 @@ mod tests {
             approval_command_preview("echo 1\necho 2", APPROVAL_PREVIEW_LINES);
         assert_eq!(preview, "echo 1\necho 2");
         assert_eq!(remaining, 0);
+    }
+
+    #[test]
+    fn approval_has_expand_only_for_long_multiline_commands() {
+        // Expansion is offered only when preview mode would hide additional lines.
+        assert!(!approval_has_expand("echo 1"));
+        assert!(!approval_has_expand("a\nb\nc\nd\ne"));
+        assert!(approval_has_expand("a\nb\nc\nd\ne\nf"));
     }
 }

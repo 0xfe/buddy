@@ -23,7 +23,8 @@ pub const BLOCK_RIGHT_MARGIN: usize = 2;
 
 /// Default local prompt shown in non-annotated mode.
 pub const PROMPT_LOCAL_PRIMARY: &str = "> ";
-pub const PROMPT_LOCAL_APPROVAL: &str = "• approve? [y/n/e] ";
+pub const PROMPT_LOCAL_APPROVAL: &str = "• approve? [y/n] ";
+pub const PROMPT_LOCAL_APPROVAL_EXPANDABLE: &str = "• approve? [y/n/e] ";
 pub const PROMPT_APPROVAL_SEPARATOR: &str = " \u{2022} ";
 pub const PROMPT_APPROVAL_QUERY: &str = "approve?";
 pub const PROMPT_CONTINUATION_LABEL: &str = "......";
@@ -259,8 +260,12 @@ pub fn normal_prompt_text(ssh_target: Option<&str>, context_used_percent: Option
     out
 }
 
-pub fn approval_prompt_text() -> &'static str {
-    PROMPT_LOCAL_APPROVAL
+pub fn approval_prompt_text(expandable: bool) -> &'static str {
+    if expandable {
+        PROMPT_LOCAL_APPROVAL_EXPANDABLE
+    } else {
+        PROMPT_LOCAL_APPROVAL
+    }
 }
 
 /// Return the autocomplete marker glyph based on selection and color mode.

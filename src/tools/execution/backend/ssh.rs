@@ -11,15 +11,19 @@ use std::sync::{Mutex as StdMutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::common::{
-    parse_created_pane_output, parse_created_session_output, parse_killed_pane_output,
-    parse_killed_session_output, selector_from_capture_options, selector_from_send_keys_options,
-    sent_keys_message, should_fallback_to_default_target,
+    allow_missing_target_fallback, append_tool_error_context, default_shared_pane_recovered_notice,
+    missing_target_error_notice, missing_target_fallback_notice, parse_created_pane_output,
+    parse_created_session_output, parse_killed_pane_output, parse_killed_session_output,
+    parse_managed_sessions_output, parse_removed_sessions_output, selector_from_capture_options,
+    selector_from_send_keys_options, sent_keys_message, should_fallback_to_default_target,
+    should_retry_capture_with_default,
 };
 use crate::tmux::capture::run_remote_capture_pane;
 use crate::tmux::management::{
     canonical_session_name, create_managed_pane_script, create_managed_session_script,
     is_default_target_alias, kill_managed_pane_script, kill_managed_session_script,
-    parse_resolved_target, resolve_managed_target_script,
+    list_managed_sessions_script, parse_resolved_target, remove_managed_sessions_script,
+    resolve_managed_target_script,
 };
 use crate::tmux::pane::ensure_tmux_pane;
 use crate::tmux::prompt::ensure_tmux_prompt_setup;
@@ -31,9 +35,9 @@ use crate::tools::execution::file_io::{
 };
 use crate::tools::execution::process::{run_ssh_raw_process, run_with_wait};
 use crate::tools::execution::types::{
-    CapturePaneOptions, CreatedTmuxPane, CreatedTmuxSession, ExecOutput, ResolvedTmuxTarget,
-    SendKeysOptions, ShellWait, SshContext, TmuxAttachInfo, TmuxAttachTarget, TmuxTargetSelector,
-    TMUX_PANE_TITLE, TMUX_WINDOW_NAME,
+    CapturePaneOptions, CreatedTmuxPane, CreatedTmuxSession, ExecOutput, ManagedTmuxSession,
+    PromptReadyState, ResolvedTmuxTarget, SendKeysOptions, ShellWait, SshContext, TmuxAttachInfo,
+    TmuxAttachTarget, TmuxTargetSelector, TMUX_PANE_TITLE, TMUX_WINDOW_NAME,
 };
 
 impl SshContext {
@@ -47,9 +51,12 @@ impl SshContext {
     ) -> Result<ExecOutput, ToolError> {
         if let Some(session) = &self.tmux_session {
             // tmux-backed SSH uses managed pane execution for polling/no-wait behavior.
-            let pane_id = self.ensure_prompt_ready(session).await?;
-            self.run_tmux_command_with_recovery(&pane_id, remote_command, stdin, wait, true)
-                .await
+            let prompt = self.ensure_prompt_ready(session).await?;
+            let mut output = self
+                .run_tmux_command_with_recovery(&prompt.pane_id, remote_command, stdin, wait, true)
+                .await?;
+            output.notices.extend(prompt.notices);
+            Ok(output)
         } else {
             if matches!(wait, ShellWait::NoWait) {
                 // No-wait dispatch requires a persistent tmux pane.
@@ -69,12 +76,15 @@ impl SshContext {
     pub(in crate::tools::execution) async fn ensure_prompt_ready(
         &self,
         tmux_session: &str,
-    ) -> Result<String, ToolError> {
+    ) -> Result<PromptReadyState, ToolError> {
         // Fast-path: configured pane still exists.
         let configured_pane = self.configured_tmux_pane.lock().await.clone();
-        if let Some(pane_id) = configured_pane {
-            if self.tmux_pane_exists(&pane_id).await? {
-                return Ok(pane_id);
+        if let Some(pane_id) = configured_pane.as_ref() {
+            if self.tmux_pane_exists(pane_id).await? {
+                return Ok(PromptReadyState {
+                    pane_id: pane_id.clone(),
+                    notices: Vec::new(),
+                });
             }
         }
 
@@ -87,13 +97,20 @@ impl SshContext {
         )
         .await?;
         let mut configured = self.configured_tmux_pane.lock().await;
+        let mut notices = Vec::new();
+        if configured_pane.is_some() {
+            notices.push(default_shared_pane_recovered_notice());
+        }
         if ensured.created {
             ensure_tmux_prompt_setup(&self.target, &self.control_path, &ensured.pane_id).await?;
         }
         if configured.as_deref() != Some(ensured.pane_id.as_str()) {
             *configured = Some(ensured.pane_id.clone());
         }
-        Ok(ensured.pane_id)
+        Ok(PromptReadyState {
+            pane_id: ensured.pane_id,
+            notices,
+        })
     }
 
     async fn run_tmux_command_with_recovery(
@@ -126,11 +143,11 @@ impl SshContext {
         };
 
         // Recover once by recreating/rebinding the default managed pane and retrying.
-        let recovered_pane = self.ensure_prompt_ready(tmux_session).await?;
-        run_ssh_tmux_process(
+        let recovered = self.ensure_prompt_ready(tmux_session).await?;
+        let mut retried = run_ssh_tmux_process(
             &self.target,
             &self.control_path,
-            &recovered_pane,
+            &recovered.pane_id,
             remote_command,
             stdin,
             wait,
@@ -140,7 +157,16 @@ impl SshContext {
             ToolError::ExecutionFailed(format!(
                 "{retry_err}; recovery attempted after prior tmux error: {err}"
             ))
-        })
+        })?;
+        retried.notices.extend(recovered.notices);
+        if !retried
+            .notices
+            .iter()
+            .any(|notice| notice == &default_shared_pane_recovered_notice())
+        {
+            retried.notices.push(default_shared_pane_recovered_notice());
+        }
+        Ok(retried)
     }
 
     async fn tmux_pane_exists(&self, pane_id: &str) -> Result<bool, ToolError> {
@@ -175,14 +201,16 @@ impl SshContext {
                 .as_deref()
                 .is_none_or(|pane| pane.trim() == TMUX_PANE_TITLE);
         if ensure_default_shared && wants_default_shared {
-            let pane_id = self.ensure_prompt_ready(tmux_session).await?;
+            let prompt = self.ensure_prompt_ready(tmux_session).await?;
             return Ok(ResolvedTmuxTarget {
                 session: tmux_session.to_string(),
-                pane_id,
+                pane_id: prompt.pane_id,
                 pane_title: TMUX_PANE_TITLE.to_string(),
                 is_default_shared: true,
+                notices: prompt.notices,
             });
         }
+        let can_fallback = allow_missing_target_fallback(&selector, ensure_default_shared);
 
         let script = resolve_managed_target_script(&self.owner_prefix, tmux_session, &selector)?;
         let output = run_ssh_raw_process(&self.target, &self.control_path, &script, None).await?;
@@ -191,23 +219,53 @@ impl SshContext {
             "failed to resolve managed tmux target".into(),
         ) {
             Ok(output) => parse_resolved_target(&output.stdout),
-            Err(err) if ensure_default_shared && should_fallback_to_default_target(&err) => None,
+            Err(err) if can_fallback && should_fallback_to_default_target(&err) => {
+                let mut prompt = self.ensure_prompt_ready(tmux_session).await?;
+                prompt
+                    .notices
+                    .push(missing_target_fallback_notice(&selector));
+                return Ok(ResolvedTmuxTarget {
+                    session: tmux_session.to_string(),
+                    pane_id: prompt.pane_id,
+                    pane_title: TMUX_PANE_TITLE.to_string(),
+                    is_default_shared: true,
+                    notices: prompt.notices,
+                });
+            }
+            Err(err) if should_fallback_to_default_target(&err) => {
+                let recovered_default = self
+                    .ensure_prompt_ready(tmux_session)
+                    .await
+                    .ok()
+                    .is_some_and(|prompt| {
+                        prompt
+                            .notices
+                            .iter()
+                            .any(|notice| notice == &default_shared_pane_recovered_notice())
+                    });
+                let notice = missing_target_error_notice(&selector, recovered_default);
+                return Err(append_tool_error_context(err, &notice));
+            }
             Err(err) => return Err(err),
         };
         if let Some(resolved) = resolved {
             return Ok(resolved);
         }
-        if !ensure_default_shared {
+        if !can_fallback {
             return Err(ToolError::ExecutionFailed(
                 "failed to parse managed tmux target".into(),
             ));
         }
-        let pane_id = self.ensure_prompt_ready(tmux_session).await?;
+        let mut prompt = self.ensure_prompt_ready(tmux_session).await?;
+        prompt
+            .notices
+            .push(missing_target_fallback_notice(&selector));
         Ok(ResolvedTmuxTarget {
             session: tmux_session.to_string(),
-            pane_id,
+            pane_id: prompt.pane_id,
             pane_title: TMUX_PANE_TITLE.to_string(),
             is_default_shared: true,
+            notices: prompt.notices,
         })
     }
 }
@@ -254,14 +312,37 @@ impl ExecutionBackendOps for SshContext {
 
     async fn capture_pane(&self, options: CapturePaneOptions) -> Result<String, ToolError> {
         let selector = selector_from_capture_options(&options);
-        let resolved = self.resolve_target(selector, true).await?;
-        run_remote_capture_pane(
+        let resolved = match self.resolve_target(selector.clone(), true).await {
+            Ok(resolved) => resolved,
+            Err(err) if should_retry_capture_with_default(&selector, &err) => {
+                let mut fallback = self
+                    .resolve_target(
+                        TmuxTargetSelector {
+                            target: None,
+                            session: None,
+                            pane: None,
+                        },
+                        true,
+                    )
+                    .await?;
+                fallback
+                    .notices
+                    .push(missing_target_fallback_notice(&selector));
+                fallback
+            }
+            Err(err) => return Err(err),
+        };
+        let captured = run_remote_capture_pane(
             &self.target,
             &self.control_path,
             &resolved.pane_id,
             &options,
         )
-        .await
+        .await?;
+        if resolved.notices.is_empty() {
+            return Ok(captured);
+        }
+        Ok(format!("{}\n\n{}", resolved.notices.join("\n"), captured))
     }
 
     async fn send_keys(&self, options: SendKeysOptions) -> Result<String, ToolError> {
@@ -291,14 +372,17 @@ impl ExecutionBackendOps for SshContext {
         wait: ShellWait,
         target: ResolvedTmuxTarget,
     ) -> Result<ExecOutput, ToolError> {
-        self.run_tmux_command_with_recovery(
-            &target.pane_id,
-            command,
-            None,
-            wait,
-            target.is_default_shared,
-        )
-        .await
+        let mut output = self
+            .run_tmux_command_with_recovery(
+                &target.pane_id,
+                command,
+                None,
+                wait,
+                target.is_default_shared,
+            )
+            .await?;
+        output.notices.extend(target.notices);
+        Ok(output)
     }
 
     async fn read_file(&self, path: &str) -> Result<String, ToolError> {
@@ -405,6 +489,38 @@ impl ExecutionBackendOps for SshContext {
             "failed to kill managed tmux pane".into(),
         )?;
         parse_killed_pane_output(&output.stdout)
+    }
+
+    async fn list_managed_tmux_sessions(&self) -> Result<Vec<ManagedTmuxSession>, ToolError> {
+        self.tmux_session.as_deref().ok_or_else(|| {
+            ToolError::ExecutionFailed(
+                "tmux session management is unavailable: no tmux session for this ssh target"
+                    .into(),
+            )
+        })?;
+        let script = list_managed_sessions_script(&self.owner_prefix);
+        let output = run_ssh_raw_process(&self.target, &self.control_path, &script, None).await?;
+        let output = crate::tools::execution::process::ensure_success(
+            output,
+            "failed to list managed tmux sessions".into(),
+        )?;
+        parse_managed_sessions_output(&output.stdout)
+    }
+
+    async fn remove_managed_tmux_sessions(&self) -> Result<usize, ToolError> {
+        self.tmux_session.as_deref().ok_or_else(|| {
+            ToolError::ExecutionFailed(
+                "tmux session management is unavailable: no tmux session for this ssh target"
+                    .into(),
+            )
+        })?;
+        let script = remove_managed_sessions_script(&self.owner_prefix);
+        let output = run_ssh_raw_process(&self.target, &self.control_path, &script, None).await?;
+        let output = crate::tools::execution::process::ensure_success(
+            output,
+            "failed to remove managed tmux sessions".into(),
+        )?;
+        parse_removed_sessions_output(&output.stdout)
     }
 }
 

@@ -64,6 +64,81 @@ fn ui_tmux_managed_pane_create_and_targeted_shell_flow() {
     }
 }
 
+/// Guardrail regression: run_shell must block shell-killing directives in managed panes.
+#[test]
+#[ignore = "on-demand tmux/asciinema ui regression suite"]
+fn ui_tmux_shell_fragile_command_is_blocked() {
+    let scenario = "tmux-shell-fragile-command-blocked";
+    let artifacts = ScenarioArtifacts::create(scenario).expect("artifacts");
+    let mut assertions = Vec::<AssertionRecord>::new();
+    let mut error_text: Option<String> = None;
+
+    if let Err(err) = run_tmux_shell_fragile_command_scenario(&artifacts, &mut assertions) {
+        error_text = Some(err);
+    }
+
+    let report = assertion_report_json(scenario, error_text.is_none(), &assertions, &artifacts);
+    artifacts.write_report(&report).expect("write report");
+
+    if let Some(err) = error_text {
+        panic!(
+            "ui regression scenario failed: {err}\nartifacts: {}\nreport: {}",
+            artifacts.root.display(),
+            artifacts.report_path.display()
+        );
+    }
+}
+
+/// Recovery regression: killing shared shell should emit pane-recovery notice.
+#[test]
+#[ignore = "on-demand tmux/asciinema ui regression suite"]
+fn ui_tmux_default_pane_recovery_notice_flow() {
+    let scenario = "tmux-default-pane-recovery-notice";
+    let artifacts = ScenarioArtifacts::create(scenario).expect("artifacts");
+    let mut assertions = Vec::<AssertionRecord>::new();
+    let mut error_text: Option<String> = None;
+
+    if let Err(err) = run_tmux_default_pane_recovery_scenario(&artifacts, &mut assertions) {
+        error_text = Some(err);
+    }
+
+    let report = assertion_report_json(scenario, error_text.is_none(), &assertions, &artifacts);
+    artifacts.write_report(&report).expect("write report");
+
+    if let Some(err) = error_text {
+        panic!(
+            "ui regression scenario failed: {err}\nartifacts: {}\nreport: {}",
+            artifacts.root.display(),
+            artifacts.report_path.display()
+        );
+    }
+}
+
+/// Loop regression: repeated identical failing tmux target calls should be suppressed.
+#[test]
+#[ignore = "on-demand tmux/asciinema ui regression suite"]
+fn ui_tmux_missing_target_error_suppressed_after_repeats() {
+    let scenario = "tmux-missing-target-loop-suppression";
+    let artifacts = ScenarioArtifacts::create(scenario).expect("artifacts");
+    let mut assertions = Vec::<AssertionRecord>::new();
+    let mut error_text: Option<String> = None;
+
+    if let Err(err) = run_tmux_missing_target_suppression_scenario(&artifacts, &mut assertions) {
+        error_text = Some(err);
+    }
+
+    let report = assertion_report_json(scenario, error_text.is_none(), &assertions, &artifacts);
+    artifacts.write_report(&report).expect("write report");
+
+    if let Some(err) = error_text {
+        panic!(
+            "ui regression scenario failed: {err}\nartifacts: {}\nreport: {}",
+            artifacts.root.display(),
+            artifacts.report_path.display()
+        );
+    }
+}
+
 fn run_scenario(
     artifacts: &ScenarioArtifacts,
     assertions: &mut Vec<AssertionRecord>,
@@ -204,7 +279,7 @@ fn run_tmux_management_scenario(
     let server = MockModelServer::start_with_responses(vec![
         scripted_tool_call_response(
             "call_ui_mgmt_1",
-            "tmux-create-pane",
+            "tmux_create_pane",
             json!({
                 "pane": "worker",
                 "risk": "low",
@@ -325,6 +400,276 @@ fn run_tmux_management_scenario(
         ));
     }
 
+    Ok(())
+}
+
+fn run_tmux_shell_fragile_command_scenario(
+    artifacts: &ScenarioArtifacts,
+    assertions: &mut Vec<AssertionRecord>,
+) -> Result<(), String> {
+    verify_tooling_prereqs()?;
+    let binary = built_buddy_binary()?;
+    let server = MockModelServer::start_with_responses(vec![
+        scripted_tool_call_response(
+            "call_fragile_1",
+            "run_shell",
+            json!({
+                "command": "set -e\nprintf 'SHOULD_NOT_RUN\\n'",
+                "risk": "low",
+                "mutation": false,
+                "privesc": false,
+                "why": "Probe shell strict-mode behavior."
+            }),
+        ),
+        scripted_final_response("Guardrail complete."),
+    ])?;
+    write_ui_regression_config(artifacts, &server.base_url_v1())?;
+
+    let session_name = format!("buddy-ui-shell-guard-test-{}", std::process::id());
+    let mut tmux = TmuxHarness::start(&session_name)?;
+    tmux.enable_pipe_logging(&artifacts.pipe_log_path)?;
+    let launch = tmux.launch_buddy_command(&binary, artifacts, "ui-test");
+    tmux.send_line(&launch)?;
+
+    let _startup = checkpoint_contains(
+        &tmux,
+        artifacts,
+        "guard-startup-ready",
+        "used)>",
+        Duration::from_secs(45),
+        false,
+    )?;
+
+    tmux.send_line("run strict mode probe")?;
+    let completion = checkpoint_contains(
+        &tmux,
+        artifacts,
+        "guard-complete",
+        "Guardrail complete.",
+        Duration::from_secs(60),
+        false,
+    )?;
+    artifacts.save_snapshot("guard-complete", &completion)?;
+    record_contains_assertion(
+        assertions,
+        "shell guardrail error surfaced",
+        &completion,
+        "command contains `set -e / errexit`",
+    )?;
+    record_contains_assertion(
+        assertions,
+        "shell command did not run",
+        &completion,
+        "Guardrail complete.",
+    )?;
+
+    tmux.send_line("/quit")?;
+    let _command =
+        tmux.wait_until_command_exits(&["asciinema", "buddy"], Duration::from_secs(30))?;
+    tmux.disable_pipe_logging();
+    let managed_session = tmux.managed_session_name();
+    tmux.cleanup();
+    if tmux_session_exists(&managed_session)? {
+        return Err(format!(
+            "managed ui regression tmux session leaked after cleanup: {managed_session}"
+        ));
+    }
+    Ok(())
+}
+
+fn run_tmux_default_pane_recovery_scenario(
+    artifacts: &ScenarioArtifacts,
+    assertions: &mut Vec<AssertionRecord>,
+) -> Result<(), String> {
+    verify_tooling_prereqs()?;
+    let binary = built_buddy_binary()?;
+    let server = MockModelServer::start_with_responses(vec![
+        scripted_tool_call_response(
+            "call_recover_1",
+            "tmux_send_keys",
+            json!({
+                "literal_text": "exit",
+                "enter": true,
+                "risk": "low",
+                "mutation": true,
+                "privesc": false,
+                "why": "Intentionally exit the shared shell to exercise pane recovery."
+            }),
+        ),
+        scripted_tool_call_response(
+            "call_recover_2",
+            "run_shell",
+            json!({
+                "command": "printf 'UI_RECOVERY_OK\\n'",
+                "risk": "low",
+                "mutation": false,
+                "privesc": false,
+                "why": "Verify the recovered shared pane runs commands."
+            }),
+        ),
+        scripted_final_response("Recovery complete."),
+    ])?;
+    write_ui_regression_config(artifacts, &server.base_url_v1())?;
+
+    let session_name = format!("buddy-ui-recovery-test-{}", std::process::id());
+    let mut tmux = TmuxHarness::start(&session_name)?;
+    tmux.enable_pipe_logging(&artifacts.pipe_log_path)?;
+    let launch = tmux.launch_buddy_command(&binary, artifacts, "ui-test");
+    tmux.send_line(&launch)?;
+
+    let _startup = checkpoint_contains(
+        &tmux,
+        artifacts,
+        "recovery-startup-ready",
+        "used)>",
+        Duration::from_secs(45),
+        false,
+    )?;
+
+    tmux.send_line("break then recover shared pane")?;
+    let approval = checkpoint_contains(
+        &tmux,
+        artifacts,
+        "recovery-approval",
+        "approve",
+        Duration::from_secs(45),
+        false,
+    )?;
+    artifacts.save_snapshot("recovery-approval", &approval)?;
+    tmux.send_line("y")?;
+
+    let completion = checkpoint_contains(
+        &tmux,
+        artifacts,
+        "recovery-complete",
+        "Recovery complete.",
+        Duration::from_secs(70),
+        false,
+    )?;
+    artifacts.save_snapshot("recovery-complete", &completion)?;
+    record_contains_assertion(
+        assertions,
+        "default pane recovery notice shown",
+        &completion,
+        "default shared tmux pane was lost and has been recovered",
+    )?;
+    record_contains_assertion(
+        assertions,
+        "recovery command output present",
+        &completion,
+        "UI_RECOVERY_OK",
+    )?;
+
+    tmux.send_line("/quit")?;
+    let _command =
+        tmux.wait_until_command_exits(&["asciinema", "buddy"], Duration::from_secs(30))?;
+    tmux.disable_pipe_logging();
+    let managed_session = tmux.managed_session_name();
+    tmux.cleanup();
+    if tmux_session_exists(&managed_session)? {
+        return Err(format!(
+            "managed ui regression tmux session leaked after cleanup: {managed_session}"
+        ));
+    }
+    Ok(())
+}
+
+fn run_tmux_missing_target_suppression_scenario(
+    artifacts: &ScenarioArtifacts,
+    assertions: &mut Vec<AssertionRecord>,
+) -> Result<(), String> {
+    verify_tooling_prereqs()?;
+    let binary = built_buddy_binary()?;
+    let server = MockModelServer::start_with_responses(vec![
+        scripted_tool_call_response(
+            "call_missing_1",
+            "tmux_send_keys",
+            json!({
+                "pane": "ghost-pane",
+                "keys": ["C-c"],
+                "risk": "low",
+                "mutation": false,
+                "privesc": false,
+                "why": "Probe missing managed target behavior."
+            }),
+        ),
+        scripted_tool_call_response(
+            "call_missing_2",
+            "tmux_send_keys",
+            json!({
+                "pane": "ghost-pane",
+                "keys": ["C-c"],
+                "risk": "low",
+                "mutation": false,
+                "privesc": false,
+                "why": "Probe missing managed target behavior."
+            }),
+        ),
+        scripted_tool_call_response(
+            "call_missing_3",
+            "tmux_send_keys",
+            json!({
+                "pane": "ghost-pane",
+                "keys": ["C-c"],
+                "risk": "low",
+                "mutation": false,
+                "privesc": false,
+                "why": "Probe missing managed target behavior."
+            }),
+        ),
+        scripted_final_response("Suppression complete."),
+    ])?;
+    write_ui_regression_config(artifacts, &server.base_url_v1())?;
+
+    let session_name = format!("buddy-ui-missing-target-test-{}", std::process::id());
+    let mut tmux = TmuxHarness::start(&session_name)?;
+    tmux.enable_pipe_logging(&artifacts.pipe_log_path)?;
+    let launch = tmux.launch_buddy_command(&binary, artifacts, "ui-test");
+    tmux.send_line(&launch)?;
+
+    let _startup = checkpoint_contains(
+        &tmux,
+        artifacts,
+        "missing-target-startup-ready",
+        "used)>",
+        Duration::from_secs(45),
+        false,
+    )?;
+
+    tmux.send_line("trigger missing target loop")?;
+    let completion = checkpoint_contains(
+        &tmux,
+        artifacts,
+        "missing-target-complete",
+        "Suppression complete.",
+        Duration::from_secs(70),
+        false,
+    )?;
+    artifacts.save_snapshot("missing-target-complete", &completion)?;
+    record_contains_assertion(
+        assertions,
+        "missing target guidance surfaced",
+        &completion,
+        "failed to resolve managed tm",
+    )?;
+    record_contains_assertion(
+        assertions,
+        "loop suppression surfaced",
+        &completion,
+        "repeated failure suppressed",
+    )?;
+
+    tmux.send_line("/quit")?;
+    let _command =
+        tmux.wait_until_command_exits(&["asciinema", "buddy"], Duration::from_secs(30))?;
+    tmux.disable_pipe_logging();
+    let managed_session = tmux.managed_session_name();
+    tmux.cleanup();
+    if tmux_session_exists(&managed_session)? {
+        return Err(format!(
+            "managed ui regression tmux session leaked after cleanup: {managed_session}"
+        ));
+    }
     Ok(())
 }
 

@@ -477,7 +477,10 @@ impl Renderer {
                 tone: SnippetTone::Approval,
                 target: BlockTarget::Stderr,
                 wrap_mode: BlockWrapMode::Wrap,
-                max_source_lines: Some(settings::SNIPPET_PREVIEW_LINES),
+                // Approval previews are clipped by the approval layer itself.
+                // Keep renderer-side previewing disabled so pressing "e" shows
+                // the full command body without additional truncation.
+                max_source_lines: approval_block_max_source_lines(),
                 syntax_path: None,
             },
         );
@@ -1046,6 +1049,14 @@ fn mark_stream_blank(target: BlockTarget) {
     }
 }
 
+/// Number of source lines to render for approval blocks.
+///
+/// This stays unbounded because approval UI already computes collapsed previews
+/// (and expanded views) before text reaches the renderer.
+fn approval_block_max_source_lines() -> Option<usize> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1107,5 +1118,11 @@ mod tests {
             .map(|token| token.text.as_str())
             .collect::<String>();
         assert_eq!(rendered, "keep *this literal");
+    }
+
+    #[test]
+    fn approval_blocks_do_not_apply_renderer_side_line_preview() {
+        // Expanded approval commands must not be clipped by renderer preview logic.
+        assert_eq!(approval_block_max_source_lines(), None);
     }
 }

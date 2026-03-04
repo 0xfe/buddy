@@ -205,6 +205,26 @@ pub(crate) async fn request_task_cancellation(
     true
 }
 
+/// Request cancellation for every currently active background task.
+pub(crate) async fn cancel_all_background_tasks(
+    runtime: &BuddyRuntimeHandle,
+    tasks: &mut [BackgroundTask],
+    pending_approval: &mut Option<PendingApproval>,
+) -> usize {
+    let active_ids = tasks
+        .iter()
+        .filter(|task| !matches!(task.state, BackgroundTaskState::Cancelling { .. }))
+        .map(|task| task.id)
+        .collect::<Vec<_>>();
+    let mut cancelled = 0usize;
+    for task_id in active_ids {
+        if request_task_cancellation(runtime, tasks, pending_approval, task_id).await {
+            cancelled += 1;
+        }
+    }
+    cancelled
+}
+
 /// User-facing `/kill` helper for background tasks.
 pub(crate) async fn kill_background_task(
     renderer: &dyn RenderSink,

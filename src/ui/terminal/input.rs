@@ -38,6 +38,8 @@ pub enum ReadOutcome {
     Eof,
     /// User cancelled input (`Ctrl-C`).
     Cancelled,
+    /// User pressed Escape (caller decides contextual behavior).
+    Escaped,
     /// External interrupt requested by the poll callback.
     Interrupted,
 }
@@ -306,6 +308,24 @@ fn read_line_interactive(
                     previous_cursor_row,
                 )?;
                 return Ok(ReadOutcome::Cancelled);
+            }
+            KeyCode::Esc => {
+                // Escape is surfaced to the caller so REPL mode can implement
+                // global task cancellation semantics while preserving session.
+                state.clear_draft(prompt_mode);
+                finalize_editor(
+                    &mut stderr,
+                    PromptChrome {
+                        color,
+                        ssh_target,
+                        context_used_percent,
+                    },
+                    prompt_mode,
+                    approval_prompt,
+                    "",
+                    previous_cursor_row,
+                )?;
+                return Ok(ReadOutcome::Escaped);
             }
             KeyCode::Tab => {
                 // Tab accepts the selected slash-command suggestion.

@@ -25,6 +25,8 @@ pub struct ApprovalPrompt<'a> {
     pub privileged: bool,
     /// Whether the requested action may mutate state.
     pub mutation: bool,
+    /// Whether the approval UI should offer command expansion.
+    pub expandable: bool,
 }
 
 /// Build the visible primary prompt string.
@@ -38,7 +40,7 @@ pub fn primary_prompt_text(
         PromptMode::Normal => settings::normal_prompt_text(ssh_target, context_used_percent),
         PromptMode::Approval => approval_prompt
             .map(approval_prompt_text)
-            .unwrap_or_else(|| settings::approval_prompt_text().to_string()),
+            .unwrap_or_else(|| settings::approval_prompt_text(false).to_string()),
     }
 }
 
@@ -52,7 +54,11 @@ pub fn approval_prompt_text(prompt: &ApprovalPrompt<'_>) -> String {
     if prompt.mutation {
         line.push_str(" (mutation)");
     }
-    line.push_str(" command ? [y/n/e] ");
+    if prompt.expandable {
+        line.push_str(" command ? [y/n/e] ");
+    } else {
+        line.push_str(" command ? [y/n] ");
+    }
     line
 }
 
@@ -137,6 +143,7 @@ where
                     command: "",
                     privileged: false,
                     mutation: false,
+                    expandable: false,
                 });
                 stderr.queue(PrintStyledContent(
                     settings::GLYPH_SECTION_BULLET
@@ -170,7 +177,12 @@ where
                     "command ?".with(settings::color_prompt_approval_command()),
                 ))?;
                 stderr.queue(PrintStyledContent(
-                    " [y/n/e]".with(settings::color_prompt_approval_command()),
+                    if prompt.expandable {
+                        " [y/n/e]"
+                    } else {
+                        " [y/n]"
+                    }
+                    .with(settings::color_prompt_approval_command()),
                 ))?;
                 stderr.queue(Print(settings::PROMPT_SPACER))?;
             }
@@ -239,6 +251,7 @@ mod tests {
             command: "top",
             privileged: true,
             mutation: true,
+            expandable: true,
         };
         assert_eq!(
             approval_prompt_text(&prompt),

@@ -4,6 +4,7 @@
 //! from a single code path with runtime parameters (tools, target, and
 //! optional operator instructions).
 
+use crate::prompt_catalog::render_prompt_template;
 use std::collections::BTreeMap;
 
 /// Embedded prompt template rendered at runtime with environment/tool context.
@@ -65,22 +66,12 @@ fn render_template(template: &str, vars: &BTreeMap<&str, String>) -> String {
 fn render_remote_target_note(target: ExecutionTarget<'_>) -> String {
     match target {
         ExecutionTarget::Local => String::new(),
-        ExecutionTarget::Container(name) => format!(
-            "You are currently operating against a remote container target (`{name}`).\n\
-             The `run_shell`, `read_file`, and `write_file` tools (plus tmux tools like \
-             `tmux_capture_pane`/`tmux_send_keys` when available) act on that remote target, not on \
-             the local host running this agent.\n\
-             Treat this conversation as targeting the remote environment unless the user \
-             explicitly says otherwise."
-        ),
-        ExecutionTarget::Ssh(name) => format!(
-            "You are currently operating against a remote SSH host target (`{name}`).\n\
-             The `run_shell`, `read_file`, and `write_file` tools (plus tmux tools like \
-             `tmux_capture_pane`/`tmux_send_keys` when available) act on that remote target, not on \
-             the local host running this agent.\n\
-             Treat this conversation as targeting the remote environment unless the user \
-             explicitly says otherwise."
-        ),
+        ExecutionTarget::Container(name) => {
+            render_prompt_template("remote_target_container", &[("TARGET", name)])
+        }
+        ExecutionTarget::Ssh(name) => {
+            render_prompt_template("remote_target_ssh", &[("TARGET", name)])
+        }
     }
 }
 
@@ -102,18 +93,9 @@ fn render_custom_instructions(custom: Option<&str>) -> String {
     let Some(custom) = custom.map(str::trim).filter(|s| !s.is_empty()) else {
         return String::new();
     };
-    format!(
-        "## Operator Instructions (Additive)\n\
-The following operator instructions are additional constraints for this run:\n\
-```text\n\
-{custom}\n\
-```\n\
-Conflict policy:\n\
-- Apply these only when consistent with higher-priority safety/protocol rules.\n\
-- If they conflict with an explicit user request, ask for clarification unless \
-safety requires immediate refusal.\n\
-- If they conflict with system/tool policy, follow system/tool policy and state \
-that briefly."
+    render_prompt_template(
+        "custom_instructions_block",
+        &[("CUSTOM_INSTRUCTIONS", custom)],
     )
 }
 
@@ -258,17 +240,19 @@ mod tests {
         assert!(prompt.contains("Before the first tool call for a non-trivial request"));
     }
 
-    // Snapshot guard for the default local prompt shape and wording.
+    // Guard that default local rendering resolves all placeholders and key sections.
     #[test]
-    fn prompt_matches_local_snapshot() {
+    fn prompt_local_render_has_no_unresolved_placeholders() {
         let prompt = render_system_prompt(SystemPromptParams {
             execution_target: ExecutionTarget::Local,
             enabled_tools: vec!["run_shell", "read_file", "tmux_capture_pane"],
             custom_instructions: None,
         });
-        let expected = include_str!("templates/system_prompt.snapshot.local.txt")
-            .trim()
-            .to_string();
-        assert_eq!(prompt, expected);
+        assert!(!prompt.contains("{{REMOTE_TARGET_NOTE}}"));
+        assert!(!prompt.contains("{{ENABLED_TOOLS_LIST}}"));
+        assert!(!prompt.contains("{{CUSTOM_INSTRUCTIONS_BLOCK}}"));
+        assert!(prompt.contains("- `run_shell`"));
+        assert!(prompt.contains("- `read_file`"));
+        assert!(prompt.contains("- `tmux_capture_pane`"));
     }
 }

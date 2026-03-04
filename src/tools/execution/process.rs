@@ -167,6 +167,7 @@ pub(crate) async fn run_process(
         exit_code: output.status.code().unwrap_or(-1),
         stdout: String::from_utf8_lossy(&output.stdout).to_string(),
         stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        notices: Vec::new(),
     })
 }
 
@@ -298,6 +299,7 @@ mod tests {
                     exit_code: 0,
                     stdout: "ok".to_string(),
                     stderr: String::new(),
+                    notices: Vec::new(),
                 })
             },
             ShellWait::WaitWithTimeout(Duration::from_millis(1)),

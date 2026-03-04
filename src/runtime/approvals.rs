@@ -83,6 +83,12 @@ pub(super) fn handle_approval_request(
             why: request
                 .metadata()
                 .map(|meta| truncate_preview(meta.why(), 220)),
+            tmux_session: request
+                .metadata()
+                .and_then(|meta| meta.tmux_session().map(str::to_string)),
+            tmux_pane: request
+                .metadata()
+                .and_then(|meta| meta.tmux_pane().map(str::to_string)),
         }),
     );
     pending_approvals.insert(

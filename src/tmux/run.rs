@@ -38,6 +38,7 @@ pub(crate) async fn run_ssh_tmux_process(
                 "command dispatched to tmux pane {pane_id}; still running in background. Use tmux_capture_pane (optionally with delay) to poll output."
             ),
             stderr: String::new(),
+            notices: Vec::new(),
         });
     }
 
@@ -113,6 +114,7 @@ pub(crate) async fn run_local_tmux_process(
                 "command dispatched to tmux pane {pane_id}; still running in background. Use tmux_capture_pane (optionally with delay) to poll output."
             ),
             stderr: String::new(),
+            notices: Vec::new(),
         });
     }
 
@@ -182,6 +184,7 @@ pub(crate) async fn run_container_tmux_process(
                 "command dispatched to tmux pane {pane_id}; still running in background. Use tmux_capture_pane (optionally with delay) to poll output."
             ),
             stderr: String::new(),
+            notices: Vec::new(),
         });
     }
 
@@ -368,6 +371,7 @@ pub(crate) fn parse_tmux_capture_output(
         exit_code: completion_marker.exit_code,
         stdout: output.join("\n"),
         stderr: String::new(),
+        notices: Vec::new(),
     }))
 }
 

@@ -16,6 +16,8 @@ pub struct ShellToolResult {
     pub stdout: String,
     /// Captured stderr payload.
     pub stderr: String,
+    /// Backend notices (for example tmux recovery/missing-target warnings).
+    pub notices: Vec<String>,
 }
 
 /// Parse shell result output from either structured or legacy payload formats.
@@ -42,6 +44,16 @@ fn parse_structured_shell_payload(payload: &Value) -> Option<ShellToolResult> {
         exit_code: obj.get("exit_code")?.as_i64()? as i32,
         stdout: obj.get("stdout")?.as_str()?.to_string(),
         stderr: obj.get("stderr")?.as_str()?.to_string(),
+        notices: obj
+            .get("notices")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default(),
     })
 }
 
@@ -62,6 +74,7 @@ fn parse_legacy_shell_payload(result: &str) -> Option<ShellToolResult> {
         exit_code,
         stdout: stdout.to_string(),
         stderr: stderr.to_string(),
+        notices: Vec::new(),
     })
 }
 
@@ -105,4 +118,34 @@ pub fn truncate_preview(text: &str, max_len: usize) -> String {
         .map(|c| if c == '\n' { ' ' } else { c })
         .collect();
     truncate_with_suffix_by_chars(&flat, max_len, "...")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_shell_tool_result_reads_structured_notices() {
+        let payload = serde_json::json!({
+            "result": {
+                "exit_code": 0,
+                "stdout": "ok",
+                "stderr": "",
+                "notices": [
+                    "default pane recovered"
+                ]
+            }
+        })
+        .to_string();
+        let parsed = parse_shell_tool_result(&payload).expect("shell payload");
+        assert_eq!(parsed.exit_code, 0);
+        assert_eq!(parsed.notices, vec!["default pane recovered"]);
+    }
+
+    #[test]
+    fn parse_shell_tool_result_defaults_notices_for_legacy_payloads() {
+        let parsed = parse_shell_tool_result("exit code: 1\nstdout:\na\nstderr:\nb")
+            .expect("legacy shell payload");
+        assert!(parsed.notices.is_empty());
+    }
 }

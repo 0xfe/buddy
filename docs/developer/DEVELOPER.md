@@ -24,6 +24,14 @@ BUDDY_LOG=buddy::runtime=trace cargo run
 RUST_LOG=buddy::agent=debug cargo run -- -v
 ```
 
+Prompt iteration with real models:
+
+```bash
+make prompt-eval MODEL=<profile> PROMPTS=<file>
+```
+
+See [docs/developer/prompt-evals.md](prompt-evals.md) for the full trace-backed workflow.
+
 ## Use as a library
 
 Add to your `Cargo.toml`:

@@ -176,6 +176,18 @@ prompt (`Run: <cmd> [y/N]`). Denied commands return
 **Spinner:** `run_shell` manages its own spinner so that it can appear after
 the approval prompt, not before.
 
+**Managed shared-pane guardrails:**
+
+When execution is tmux-managed, `run_shell` rejects shell-killing directives in
+the shared shell context:
+
+- `set -e` / `set -o errexit` / `setopt errexit`
+- `exit` / `logout`
+- `exec ...` (shell replacement)
+
+Use subshell/heredoc forms (for example `bash -lc 'set -e; ...'`) when strict
+mode is needed without poisoning the parent shared shell.
+
 ---
 
 ### 2. `read_file` — `src/tools/files.rs`
@@ -299,6 +311,10 @@ content), with `[truncated N chars from start]` prepended if clipped.
 If `include_alternate_screen` is requested but no alternate screen is active,
 the tool silently falls back to the main pane and appends a notice.
 
+If an explicit managed `target`/`session`/`pane` selector points to a missing
+managed pane, `tmux_capture_pane` retries once against the default shared pane
+and prepends a missing-target fallback notice.
+
 **Common pattern — polling a background command:**
 
 ```
@@ -346,6 +362,9 @@ Inject keystrokes into a tmux pane. Only available with a tmux backend.
 
 Keys are sent in order: `literal_text` first, then named `keys`, then `Enter`
 if requested.
+
+Unlike `tmux_capture_pane` (read-only), explicit missing managed selectors in
+`tmux_send_keys` remain hard errors so key injection is never silently retargeted.
 
 **Common patterns:**
 
@@ -611,6 +630,8 @@ enum ToolError {
 ```
 
 Neither variant aborts the agent loop. The agent formats errors as
-`"Tool error: {e}"` and pushes the string as a `tool_result` message. The
-model can then read the error and decide whether to retry, ask for help, or
-give up. This makes the system resilient to transient tool failures.
+`"Tool error: {e}"` and pushes the string as a `tool_result` message.
+
+To reduce retry loops, Buddy suppresses repeated identical failures for the
+same `(tool_name, arguments)` after a small threshold and returns a
+deterministic remediation error instead of re-executing the tool call.

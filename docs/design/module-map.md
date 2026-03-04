@@ -112,5 +112,7 @@ For a high-level overview, see [docs/design/DESIGN.md](DESIGN.md).
   - default global config written by `buddy init`
 - `src/templates/system_prompt.template`
   - built-in system prompt template
+- `src/templates/prompts.toml`
+  - indexed, parameterized prompt snippets used by prompt-rendering modules
 - `src/templates/models.toml`
   - model context-window rule catalog

@@ -93,6 +93,10 @@ pub struct ShellApprovalMetadata {
     privesc: bool,
     /// Human-readable reason from tool arguments.
     why: String,
+    /// Optional managed tmux session selector for targeted execution.
+    tmux_session: Option<String>,
+    /// Optional managed tmux pane selector for targeted execution.
+    tmux_pane: Option<String>,
 }
 
 impl ShellApprovalMetadata {
@@ -114,7 +118,16 @@ impl ShellApprovalMetadata {
             mutation,
             privesc,
             why,
+            tmux_session: None,
+            tmux_pane: None,
         })
+    }
+
+    /// Attach optional managed tmux selector details used for approval rendering.
+    pub fn with_tmux_target(mut self, session: Option<String>, pane: Option<String>) -> Self {
+        self.tmux_session = session;
+        self.tmux_pane = pane;
+        self
     }
 
     /// Risk level requested by caller.
@@ -136,6 +149,16 @@ impl ShellApprovalMetadata {
     pub fn why(&self) -> &str {
         &self.why
     }
+
+    /// Optional managed tmux session selector attached to this request.
+    pub fn tmux_session(&self) -> Option<&str> {
+        self.tmux_session.as_deref()
+    }
+
+    /// Optional managed tmux pane selector attached to this request.
+    pub fn tmux_pane(&self) -> Option<&str> {
+        self.tmux_pane.as_deref()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -146,6 +169,8 @@ struct ShellToolResultPayload {
     stdout: String,
     /// Captured stderr, truncated to safe size.
     stderr: String,
+    /// Backend notices (for example tmux recovery events).
+    notices: Vec<String>,
 }
 
 /// Foreground approval request emitted by `ShellTool` when confirmations are enabled.
@@ -321,6 +346,9 @@ impl Tool for ShellTool {
                     .to_string(),
             ));
         }
+        if self.execution.tmux_management_available() {
+            validate_managed_tmux_shell_command(&args.command)?;
+        }
         let wait = parse_wait_mode(args.wait)?;
         context.emit(ToolStreamEvent::Started {
             detail: format!("run_shell: {}", args.command),
@@ -334,7 +362,8 @@ impl Tool for ShellTool {
                 args.mutation,
                 args.privesc,
                 args.why.clone(),
-            )?;
+            )?
+            .with_tmux_target(args.session.clone(), args.pane.clone());
             let approved = if let Some(approval) = &self.approval {
                 approval
                     .request(args.command.clone(), Some(metadata))
@@ -378,15 +407,24 @@ impl Tool for ShellTool {
                 .await?
         };
         if matches!(wait, ShellWait::NoWait) {
-            if !output.stdout.trim().is_empty() {
+            let mut message = output.stdout.clone();
+            if !output.notices.is_empty() {
+                let notice_text = output.notices.join("\n");
+                message = if message.trim().is_empty() {
+                    notice_text
+                } else {
+                    format!("{notice_text}\n{message}")
+                };
+            }
+            if !message.trim().is_empty() {
                 context.emit(ToolStreamEvent::Info {
-                    message: output.stdout.clone(),
+                    message: message.clone(),
                 });
             }
             context.emit(ToolStreamEvent::Completed {
                 detail: format!("run_shell completed with exit code {}", output.exit_code),
             });
-            return wrap_result(output.stdout);
+            return wrap_result(message);
         }
         // Truncate textual streams before emitting/serializing.
         let stdout_text = truncate_output(&output.stdout, MAX_OUTPUT_LEN);
@@ -409,6 +447,7 @@ impl Tool for ShellTool {
             exit_code: output.exit_code,
             stdout: stdout_text,
             stderr: stderr_text,
+            notices: output.notices,
         })
     }
 }
@@ -479,6 +518,58 @@ fn matched_denylist_pattern(command: &str, denylist: &[String]) -> Option<String
         .filter(|pattern| !pattern.is_empty())
         .find(|pattern| lowered.contains(&pattern.to_ascii_lowercase()))
         .map(ToString::to_string)
+}
+
+fn validate_managed_tmux_shell_command(command: &str) -> Result<(), ToolError> {
+    let Some((line, directive, remediation)) = detect_forbidden_shared_shell_directive(command)
+    else {
+        return Ok(());
+    };
+    Err(ToolError::ExecutionFailed(format!(
+        "command contains `{directive}` on line {line}, which is forbidden in the managed shared tmux shell because it can terminate or poison the interactive shell state. {remediation}"
+    )))
+}
+
+fn detect_forbidden_shared_shell_directive(
+    command: &str,
+) -> Option<(usize, &'static str, &'static str)> {
+    for (idx, raw_line) in command.lines().enumerate() {
+        let line = raw_line.trim_start();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let lowered = line.to_ascii_lowercase();
+
+        if lowered.starts_with("set -e")
+            || lowered.starts_with("set -o errexit")
+            || lowered.starts_with("setopt errexit")
+        {
+            return Some((
+                idx + 1,
+                "set -e / errexit",
+                "Use strict mode inside a subshell (for example `bash -lc 'set -e; ...'`) so failures do not kill the shared pane shell.",
+            ));
+        }
+        if lowered == "exit"
+            || lowered.starts_with("exit ")
+            || lowered == "logout"
+            || lowered.starts_with("logout ")
+        {
+            return Some((
+                idx + 1,
+                "exit/logout",
+                "Do not terminate the shared shell; use `tmux_send_keys` only when explicitly recovering from a blocked interactive program.",
+            ));
+        }
+        if lowered == "exec" || lowered.starts_with("exec ") {
+            return Some((
+                idx + 1,
+                "exec",
+                "Avoid replacing the shared shell process. Run commands directly or wrap them in `sh -lc`/`bash -lc` instead.",
+            ));
+        }
+    }
+    None
 }
 
 fn looks_like_raw_tmux_lifecycle_command(command: &str) -> bool {
@@ -663,6 +754,32 @@ mod tests {
         assert!(!looks_like_raw_tmux_lifecycle_command(
             "echo tmux split-window"
         ));
+    }
+
+    #[test]
+    fn detects_shared_shell_killer_directives() {
+        let (line, directive, _) =
+            detect_forbidden_shared_shell_directive("set -e\nprintf 'x'").expect("directive");
+        assert_eq!(line, 1);
+        assert_eq!(directive, "set -e / errexit");
+
+        let (line, directive, _) =
+            detect_forbidden_shared_shell_directive("echo ready\nexit").expect("directive");
+        assert_eq!(line, 2);
+        assert_eq!(directive, "exit/logout");
+
+        let (line, directive, _) =
+            detect_forbidden_shared_shell_directive("exec sleep 1").expect("directive");
+        assert_eq!(line, 1);
+        assert_eq!(directive, "exec");
+    }
+
+    #[test]
+    fn allows_strict_mode_when_scoped_to_subshell() {
+        assert!(
+            detect_forbidden_shared_shell_directive("bash -lc 'set -e; false || true'").is_none()
+        );
+        assert!(validate_managed_tmux_shell_command("bash -lc 'set -e; echo ok'").is_ok());
     }
 
     #[tokio::test]

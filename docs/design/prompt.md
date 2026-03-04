@@ -14,6 +14,8 @@ Buddy separates stable instructions from volatile execution state.
 
 1. Static system prompt
    - Rendered once at startup from `src/templates/system_prompt.template`.
+   - Section-level reusable snippets are loaded from
+     `src/templates/prompts.toml` where applicable.
    - Stored as the leading `Message::system` in agent history.
    - Never mutated during normal turn execution.
 2. Dynamic request context
@@ -58,12 +60,19 @@ This reduces ambiguous blending of operator text with core system rules.
   - Buddy captures the default managed shared pane.
   - Context block uses explicit BEGIN/END markers and truncation notes.
 - Non-default mode:
-  - If the latest tmux-aware tool call (`run_shell`, `capture-pane`,
-    `send-keys`) targets a non-default session/pane, Buddy omits the default
-    screenshot and injects a non-default target context note instead.
+  - If the latest tmux-aware tool call (`run_shell`, `tmux_capture_pane`,
+    `tmux_send_keys`) targets a non-default session/pane, Buddy omits the
+    default screenshot and injects a non-default target context note instead.
+- Missing-target recovery mode:
+  - If recent tool results report `tmux target not found`, Buddy forces default
+    shared-pane snapshot routing on the next request so the model can recover
+    with current default-pane state.
 
 ## Safety Framing
 
 Snapshot blocks explicitly say they are plain terminal output and not
 instructions. Model guidance requires checking for a usable shell prompt before
 running commands and recommending recovery actions when the pane is blocked.
+Managed `run_shell` execution also blocks shell-killing directives (`set -e`,
+`exit/logout`, `exec ...`) in shared tmux contexts; prompt guidance and runtime
+enforcement are intentionally redundant.

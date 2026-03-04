@@ -28,10 +28,20 @@ Current scenarios:
    - Verify spinner/liveness lines, approval formatting, command output, and final assistant reply.
    - Exit cleanly and assert expected mock request count.
 2. Managed tmux pane + targeted shell flow:
-   - Run scripted tool calls that create a managed pane (`tmux-create-pane`) and then run `run_shell` targeted to that pane.
+   - Run scripted tool calls that create a managed pane (`tmux_create_pane`) and then run `run_shell` targeted to that pane.
    - Approve both operations.
    - Verify targeted approval and output rendering.
    - Assert expected mock request count and clean shutdown.
+3. Shared-shell guardrail flow:
+   - Fake model calls `run_shell` with `set -e`.
+   - Verify command is blocked before execution with clear error text.
+4. Default-pane recovery flow:
+   - Fake model sends `tmux_send_keys` with `exit` to kill shared shell.
+   - Follow-up `run_shell` request should trigger shared-pane recovery.
+   - Verify recovery notice and successful command execution.
+5. Missing-target suppression flow:
+   - Fake model repeats the same missing `tmux_send_keys` target.
+   - Verify repeated identical failures are suppressed with deterministic guidance.
 
 ## Runtime Dependencies
 

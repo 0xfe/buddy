@@ -281,6 +281,12 @@ pub enum TaskEvent {
         /// Optional rationale explaining why approval is needed.
         #[serde(skip_serializing_if = "Option::is_none")]
         why: Option<String>,
+        /// Optional managed tmux session selector requested by the command.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tmux_session: Option<String>,
+        /// Optional managed tmux pane selector requested by the command.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tmux_pane: Option<String>,
     },
     /// Cancellation was requested for this task.
     Cancelling {

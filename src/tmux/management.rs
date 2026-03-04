@@ -6,8 +6,8 @@
 use crate::error::ToolError;
 use crate::tools::execution::process::shell_quote;
 use crate::tools::execution::types::{
-    CreatedTmuxPane, CreatedTmuxSession, ResolvedTmuxTarget, TmuxTargetSelector, TMUX_PANE_TITLE,
-    TMUX_WINDOW_NAME,
+    CreatedTmuxPane, CreatedTmuxSession, ManagedTmuxPane, ManagedTmuxSession, ResolvedTmuxTarget,
+    TmuxTargetSelector, TMUX_PANE_TITLE, TMUX_WINDOW_NAME,
 };
 
 /// Session option flag used to mark buddy-managed tmux sessions.
@@ -342,6 +342,94 @@ printf '%s' \"$SESSION\"\n"
     ))
 }
 
+/// Build shell script that lists all managed tmux sessions and panes.
+pub(crate) fn list_managed_sessions_script(owner_prefix: &str) -> String {
+    let owner_q = shell_quote(owner_prefix);
+    format!(
+        "set -e\n\
+OWNER={owner_q}\n\
+SESSIONS=\"$(tmux list-sessions -F '#{{session_name}}\\t#{{@buddy_managed}}\\t#{{@buddy_owner}}' 2>/dev/null | awk -F '\\t' -v owner=\"$OWNER\" '$2==\"1\" && $3==owner {{print $1}}' || true)\"\n\
+if [ -z \"$SESSIONS\" ]; then\n\
+  exit 0\n\
+fi\n\
+printf '%s\\n' \"$SESSIONS\" | while IFS= read -r SESSION; do\n\
+  [ -n \"$SESSION\" ] || continue\n\
+  printf 'S\\t%s\\n' \"$SESSION\"\n\
+  tmux list-panes -t \"=$SESSION\" -F '#{{pane_id}}\\t#{{pane_title}}\\t#{{@buddy_managed}}\\t#{{@buddy_owner}}' 2>/dev/null \\\n\
+    | awk -F '\\t' -v owner=\"$OWNER\" '$3==\"1\" && $4==owner {{print $1 \"\\t\" $2}}' \\\n\
+    | while IFS=\"$(printf '\\t')\" read -r PANE_ID PANE_TITLE; do\n\
+      [ -n \"$PANE_ID\" ] || continue\n\
+      printf 'P\\t%s\\t%s\\t%s\\n' \"$SESSION\" \"$PANE_ID\" \"$PANE_TITLE\"\n\
+    done\n\
+done\n\
+"
+    )
+}
+
+/// Build shell script that removes all managed tmux sessions for this owner.
+pub(crate) fn remove_managed_sessions_script(owner_prefix: &str) -> String {
+    let owner_q = shell_quote(owner_prefix);
+    format!(
+        "set -e\n\
+OWNER={owner_q}\n\
+SESSIONS=\"$(tmux list-sessions -F '#{{session_name}}\\t#{{@buddy_managed}}\\t#{{@buddy_owner}}' 2>/dev/null | awk -F '\\t' -v owner=\"$OWNER\" '$2==\"1\" && $3==owner {{print $1}}' || true)\"\n\
+if [ -z \"$SESSIONS\" ]; then\n\
+  printf '0'\n\
+  exit 0\n\
+fi\n\
+COUNT=\"$(printf '%s\\n' \"$SESSIONS\" | sed '/^$/d' | wc -l | tr -d ' ')\"\n\
+printf '%s\\n' \"$SESSIONS\" | while IFS= read -r SESSION; do\n\
+  [ -n \"$SESSION\" ] || continue\n\
+  tmux kill-session -t \"=$SESSION\" >/dev/null 2>&1 || true\n\
+done\n\
+printf '%s' \"$COUNT\"\n"
+    )
+}
+
+/// Parse managed session/pane inventory from `list_managed_sessions_script`.
+pub(crate) fn parse_managed_sessions(output: &str) -> Vec<ManagedTmuxSession> {
+    let mut sessions: Vec<ManagedTmuxSession> = Vec::new();
+    for line in output.lines() {
+        let mut parts = line.splitn(4, '\t');
+        match parts.next() {
+            Some("S") => {
+                let session = parts.next().unwrap_or_default().trim();
+                if session.is_empty() || sessions.iter().any(|entry| entry.session == session) {
+                    continue;
+                }
+                sessions.push(ManagedTmuxSession {
+                    session: session.to_string(),
+                    panes: Vec::new(),
+                });
+            }
+            Some("P") => {
+                let session = parts.next().unwrap_or_default().trim();
+                let pane_id = parts.next().unwrap_or_default().trim();
+                let pane_title = parts.next().unwrap_or_default().trim();
+                if session.is_empty() || pane_id.is_empty() {
+                    continue;
+                }
+                if let Some(found) = sessions.iter_mut().find(|entry| entry.session == session) {
+                    found.panes.push(ManagedTmuxPane {
+                        pane_id: pane_id.to_string(),
+                        pane_title: pane_title.to_string(),
+                    });
+                } else {
+                    sessions.push(ManagedTmuxSession {
+                        session: session.to_string(),
+                        panes: vec![ManagedTmuxPane {
+                            pane_id: pane_id.to_string(),
+                            pane_title: pane_title.to_string(),
+                        }],
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    sessions
+}
+
 /// Parse `resolve_managed_target_script` output.
 pub(crate) fn parse_resolved_target(output: &str) -> Option<ResolvedTmuxTarget> {
     let mut lines = output.lines();
@@ -357,6 +445,7 @@ pub(crate) fn parse_resolved_target(output: &str) -> Option<ResolvedTmuxTarget> 
         pane_id,
         pane_title,
         is_default_shared,
+        notices: Vec::new(),
     })
 }
 
@@ -486,5 +575,40 @@ mod tests {
         let kill_session =
             kill_managed_session_script("buddy-agent-mo", "buddy-agent-mo", "worker").unwrap();
         assert!(kill_session.contains("tmux kill-session -t \"=$SESSION\""));
+    }
+
+    #[test]
+    fn list_script_outputs_session_and_pane_records() {
+        // Inventory output should include explicit session/pane record markers.
+        let script = list_managed_sessions_script("buddy-agent-mo");
+        assert!(script.contains("printf 'S\\t%s\\n'"));
+        assert!(script.contains("printf 'P\\t%s\\t%s\\t%s\\n'"));
+    }
+
+    #[test]
+    fn parse_managed_sessions_groups_panes_by_session() {
+        // Session inventory parser should preserve session grouping and pane metadata.
+        let parsed = parse_managed_sessions(
+            "S\tbuddy-agent-mo\n\
+P\tbuddy-agent-mo\t%1\tshared\n\
+P\tbuddy-agent-mo\t%2\tbuddy-agent-mo-worker\n\
+S\tbuddy-agent-mo-build\n\
+P\tbuddy-agent-mo-build\t%3\tshared\n",
+        );
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].session, "buddy-agent-mo");
+        assert_eq!(parsed[0].panes.len(), 2);
+        assert_eq!(parsed[0].panes[0].pane_id, "%1");
+        assert_eq!(parsed[1].session, "buddy-agent-mo-build");
+        assert_eq!(parsed[1].panes.len(), 1);
+    }
+
+    #[test]
+    fn remove_script_reports_deleted_session_count() {
+        // Cleanup script should print the number of managed sessions it attempted to remove.
+        let script = remove_managed_sessions_script("buddy-agent-mo");
+        assert!(script.contains("wc -l"));
+        assert!(script.contains("tmux kill-session -t \"=$SESSION\""));
+        assert!(script.contains("printf '%s' \"$COUNT\""));
     }
 }

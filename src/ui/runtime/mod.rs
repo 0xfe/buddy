@@ -188,6 +188,8 @@ mod tests {
                     mutation: Some(false),
                     privesc: Some(false),
                     why: Some("inspect files".to_string()),
+                    tmux_session: None,
+                    tmux_pane: None,
                 }),
             },
         ];

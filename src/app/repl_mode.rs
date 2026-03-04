@@ -4,8 +4,8 @@
 //! `buddy` invocations and keeps that logic out of `app::entry::run`.
 
 use crate::app::approval::{
-    approval_prompt_actor, deny_pending_approval, render_shell_approval_request,
-    send_approval_decision,
+    approval_has_expand, approval_prompt_actor, deny_pending_approval,
+    render_shell_approval_request, send_approval_decision,
 };
 use crate::app::commands::model::{handle_model_command, ModelSwitchSubmission};
 use crate::app::commands::session::{handle_session_command, initialize_active_session};
@@ -16,8 +16,9 @@ use crate::app::repl_loop::{
 };
 use crate::app::startup::{render_session_startup_line, render_startup_banner};
 use crate::app::tasks::{
-    background_liveness_line, collect_runtime_events, drain_completed_tasks, enforce_task_timeouts,
-    process_runtime_events, ProcessRuntimeEventsContext,
+    background_liveness_line, cancel_all_background_tasks, collect_runtime_events,
+    drain_completed_tasks, enforce_task_timeouts, process_runtime_events,
+    ProcessRuntimeEventsContext,
 };
 use crate::app::trace::RuntimeTraceWriter;
 use buddy::agent::Agent;
@@ -25,8 +26,8 @@ use buddy::config::default_history_path;
 use buddy::config::Config;
 use buddy::repl::{
     approval_policy_label, has_elapsed_timeouts, mark_task_running, parse_approval_decision,
-    task_is_waiting_for_approval, ApprovalPolicy, BackgroundTask, CompletedBackgroundTask,
-    PendingApproval, ResumeRequest, RuntimeContextState,
+    task_is_waiting_for_approval, ApprovalDecision, ApprovalPolicy, BackgroundTask,
+    CompletedBackgroundTask, PendingApproval, ResumeRequest, RuntimeContextState,
 };
 use buddy::runtime::{
     spawn_runtime_with_shared_agent, ModelEvent, PromptMetadata, RuntimeCommand, RuntimeEvent,
@@ -40,6 +41,7 @@ use buddy::ui::render::{set_progress_enabled, RenderSink, Renderer};
 use buddy::ui::terminal as term_ui;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal;
+use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
@@ -48,6 +50,9 @@ use tokio::time::{sleep, Duration};
 /// Warning shown when commands requiring an idle loop are requested during background work.
 const BACKGROUND_TASK_WARNING: &str =
     "Background tasks are in progress. Allowed commands now: /ps, /kill <id>, /timeout <dur> [id], /approve <mode>, /status, /context.";
+/// Prefix injected into the next prompt after Esc-triggered cancellation.
+const FOLLOWUP_AFTER_CANCEL_PREFIX: &str =
+    "[Buddy runtime note: the user cancelled the previous in-flight operation. The prompt below is a follow-up in the same session.]";
 /// Poll cadence while waiting for runtime model-switch acknowledgement.
 const MODEL_SWITCH_WAIT_POLL: Duration = Duration::from_millis(50);
 
@@ -153,6 +158,7 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
     let mut completed_tasks: Vec<CompletedBackgroundTask> = Vec::new();
     let mut pending_approval: Option<PendingApproval> = None;
     let mut approval_policy = ApprovalPolicy::Ask;
+    let mut followup_after_cancel_pending = false;
     let mut pending_runtime_events = Vec::new();
     let mut runtime_context =
         RuntimeContextState::new(config.api.context_limit.map(|limit| limit as u64));
@@ -200,6 +206,8 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
                 cli_args.ssh.as_deref(),
                 cli_args.container.as_deref(),
                 execution.tmux_attach_info().as_ref(),
+                approval.tmux_session.as_deref(),
+                approval.tmux_pane.as_deref(),
             );
             render_shell_approval_request(
                 config.display.color,
@@ -210,11 +218,13 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
                 approval.risk.as_deref(),
                 approval.why.as_deref(),
             );
+            let can_expand = !approval.expanded && approval_has_expand(&approval.command);
             let approval_prompt = term_ui::ApprovalPrompt {
                 actor: &approval_actor,
                 command: &approval.command,
                 privileged: approval.privesc.unwrap_or(false),
                 mutation: approval.mutation.unwrap_or(false),
+                expandable: can_expand,
             };
 
             let approval_input = match term_ui::read_repl_line_with_interrupt(
@@ -235,8 +245,28 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
                     continue;
                 }
                 Ok(term_ui::ReadOutcome::Cancelled) => {
+                    let _ = cancel_all_background_tasks(
+                        &runtime,
+                        &mut background_tasks,
+                        &mut pending_approval,
+                    )
+                    .await;
                     deny_pending_approval(&runtime, &mut background_tasks, approval).await;
                     break;
+                }
+                Ok(term_ui::ReadOutcome::Escaped) => {
+                    pending_approval = Some(approval);
+                    if cancel_everything_on_escape(
+                        renderer,
+                        &runtime,
+                        &mut background_tasks,
+                        &mut pending_approval,
+                    )
+                    .await
+                    {
+                        followup_after_cancel_pending = true;
+                    }
+                    continue;
                 }
                 Ok(term_ui::ReadOutcome::Interrupted) => {
                     pending_approval = Some(approval);
@@ -251,8 +281,9 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
 
             let approval_input = approval_input.trim();
             eprintln!();
-            if matches!(approval_input.to_ascii_lowercase().as_str(), "e" | "expand") {
-                approval.expanded = !approval.expanded;
+            if can_expand && matches!(approval_input.to_ascii_lowercase().as_str(), "e" | "expand")
+            {
+                approval.expanded = true;
                 pending_approval = Some(approval);
                 continue;
             }
@@ -325,9 +356,12 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
                 continue;
             }
 
-            renderer.warn(
-                "Approval required. Reply with y/yes, n/no, or e/expand. You can also use /ps, /kill <id>, /timeout <dur> [id], /approve <mode>, /status, /context, /compact.",
-            );
+            let approval_help = if can_expand {
+                "Approval required. Reply with y/yes, n/no, or e/expand. You can also use /ps, /kill <id>, /timeout <dur> [id], /approve <mode>, /status, /context, /compact."
+            } else {
+                "Approval required. Reply with y/yes or n/no. You can also use /ps, /kill <id>, /timeout <dur> [id], /approve <mode>, /status, /context, /compact."
+            };
+            renderer.warn(approval_help);
             pending_approval = Some(approval);
             continue;
         }
@@ -361,7 +395,28 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
         ) {
             Ok(term_ui::ReadOutcome::Line(line)) => line,
             Ok(term_ui::ReadOutcome::Eof) => break,
-            Ok(term_ui::ReadOutcome::Cancelled) => break,
+            Ok(term_ui::ReadOutcome::Cancelled) => {
+                let _ = cancel_all_background_tasks(
+                    &runtime,
+                    &mut background_tasks,
+                    &mut pending_approval,
+                )
+                .await;
+                break;
+            }
+            Ok(term_ui::ReadOutcome::Escaped) => {
+                if cancel_everything_on_escape(
+                    renderer,
+                    &runtime,
+                    &mut background_tasks,
+                    &mut pending_approval,
+                )
+                .await
+                {
+                    followup_after_cancel_pending = true;
+                }
+                continue;
+            }
             Ok(term_ui::ReadOutcome::Interrupted) => continue,
             Err(err) => {
                 renderer.error(&format!("failed to read input: {err}"));
@@ -557,9 +612,10 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
 
         // Submit user prompt as a background runtime task.
         set_progress_enabled(false);
+        let prompt = prompt_with_optional_followup_notice(input, followup_after_cancel_pending);
         if let Err(err) = runtime
             .send(RuntimeCommand::SubmitPrompt {
-                prompt: input.to_string(),
+                prompt,
                 metadata: PromptMetadata {
                     source: Some("repl".to_string()),
                     correlation_id: None,
@@ -568,6 +624,8 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
             .await
         {
             renderer.error(&format!("failed to start background task: {err}"));
+        } else {
+            followup_after_cancel_pending = false;
         }
     }
 
@@ -580,7 +638,106 @@ pub(crate) async fn run_repl_mode(inputs: ReplModeInputs<'_>) -> i32 {
         }
     }
     let _ = runtime.send(RuntimeCommand::Shutdown).await;
+    maybe_cleanup_managed_tmux_on_exit(renderer, &execution).await;
     0
+}
+
+/// Cancel all active work in response to a global Esc keypress.
+async fn cancel_everything_on_escape(
+    renderer: &dyn RenderSink,
+    runtime: &buddy::runtime::BuddyRuntimeHandle,
+    background_tasks: &mut [BackgroundTask],
+    pending_approval: &mut Option<PendingApproval>,
+) -> bool {
+    let cancelled = cancel_all_background_tasks(runtime, background_tasks, pending_approval).await;
+    if cancelled == 0 {
+        if let Some(approval) = pending_approval.take() {
+            let _ = send_approval_decision(runtime, &approval, ApprovalDecision::Deny).await;
+            renderer.warn("Esc pressed: denied pending approval.");
+            return true;
+        }
+        return false;
+    }
+    renderer.warn(&format!(
+        "Esc pressed: cancelling {cancelled} running task{}.",
+        if cancelled == 1 { "" } else { "s" }
+    ));
+    true
+}
+
+/// Attach one-shot cancellation context so the next model turn understands why
+/// the user sent a follow-up prompt after interrupting work.
+fn prompt_with_optional_followup_notice(input: &str, include_notice: bool) -> String {
+    if !include_notice {
+        return input.to_string();
+    }
+    format!("{FOLLOWUP_AFTER_CANCEL_PREFIX}\n\n{input}")
+}
+
+/// Prompt for optional teardown of managed tmux sessions/panes on REPL exit.
+async fn maybe_cleanup_managed_tmux_on_exit(
+    renderer: &dyn RenderSink,
+    execution: &ExecutionContext,
+) {
+    if !execution.tmux_management_available() {
+        return;
+    }
+    if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
+        return;
+    }
+
+    let managed = match execution.list_managed_tmux_sessions().await {
+        Ok(sessions) => sessions,
+        Err(err) => {
+            renderer.warn(&format!(
+                "failed to list managed tmux sessions at exit: {err}"
+            ));
+            return;
+        }
+    };
+    if managed.is_empty() {
+        return;
+    }
+
+    renderer.section("managed tmux resources");
+    for session in &managed {
+        renderer.field("session", &session.session);
+        if session.panes.is_empty() {
+            renderer.detail("pane: (none)");
+            continue;
+        }
+        for pane in &session.panes {
+            renderer.detail(&format!("pane: {} ({})", pane.pane_title, pane.pane_id));
+        }
+    }
+    eprintln!();
+
+    eprint!("• remove managed tmux sessions and panes? [y/N] ");
+    let _ = io::stderr().flush();
+    let mut answer = String::new();
+    if io::stdin().read_line(&mut answer).is_err() {
+        renderer.warn("failed to read tmux cleanup confirmation; leaving sessions in place.");
+        return;
+    }
+    if !matches!(
+        parse_approval_decision(&answer),
+        Some(ApprovalDecision::Approve)
+    ) {
+        renderer.activity("leaving managed tmux sessions and panes in place");
+        return;
+    }
+
+    let mut progress = renderer.progress("removing managed tmux sessions and panes");
+    let removed = execution.remove_managed_tmux_sessions().await;
+    progress.finish();
+    match removed {
+        Ok(count) => {
+            renderer.section("managed tmux cleanup complete");
+            renderer.field("sessions_removed", &count.to_string());
+            eprintln!();
+        }
+        Err(err) => renderer.warn(&format!("failed to remove managed tmux sessions: {err}")),
+    }
 }
 
 /// Mutable wait state while `/model` blocks for runtime acknowledgement.
@@ -984,5 +1141,22 @@ mod tests {
         cfg_zero.api.context_limit = Some(0);
         let agent_zero = Agent::new(cfg_zero, ToolRegistry::new());
         assert_eq!(context_used_percent(&agent_zero), None);
+    }
+
+    #[test]
+    fn prompt_with_optional_followup_notice_passthrough_without_flag() {
+        // Normal prompts should remain untouched when no cancellation occurred.
+        assert_eq!(
+            prompt_with_optional_followup_notice("list files", false),
+            "list files"
+        );
+    }
+
+    #[test]
+    fn prompt_with_optional_followup_notice_prefixes_when_cancellation_pending() {
+        // The first prompt after Esc-cancel should carry explicit follow-up context.
+        let text = prompt_with_optional_followup_notice("check memory", true);
+        assert!(text.starts_with(FOLLOWUP_AFTER_CANCEL_PREFIX));
+        assert!(text.ends_with("check memory"));
     }
 }

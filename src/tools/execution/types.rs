@@ -13,6 +13,8 @@ pub struct ExecOutput {
     pub stdout: String,
     /// Captured standard error text.
     pub stderr: String,
+    /// Backend-generated notices (for example tmux recovery warnings).
+    pub notices: Vec<String>,
 }
 
 /// Waiting behavior for `run_shell` execution.
@@ -147,6 +149,8 @@ pub struct ResolvedTmuxTarget {
     pub pane_title: String,
     /// True when this target is the default shared pane.
     pub is_default_shared: bool,
+    /// Resolution notices (for example missing-target fallback details).
+    pub notices: Vec<String>,
 }
 
 /// Output returned by tmux session-creation operations.
@@ -171,6 +175,24 @@ pub struct CreatedTmuxPane {
     pub pane_title: String,
     /// Whether a new pane was created (`false` when reused by title).
     pub created: bool,
+}
+
+/// One managed tmux pane discovered in a session inventory listing.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ManagedTmuxPane {
+    /// Concrete pane id (for example `%7`).
+    pub pane_id: String,
+    /// Pane title used to identify buddy-managed panes.
+    pub pane_title: String,
+}
+
+/// One managed tmux session and its managed panes.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ManagedTmuxSession {
+    /// Managed tmux session name.
+    pub session: String,
+    /// Managed panes currently present in this session.
+    pub panes: Vec<ManagedTmuxPane>,
 }
 
 /// Concrete execution target for tmux attach instructions.
@@ -254,4 +276,12 @@ pub(crate) struct EnsuredTmuxPane {
     pub(crate) pane_id: String,
     /// Whether pane was created during this ensure call.
     pub(crate) created: bool,
+}
+
+/// Result of ensuring the default shared pane is ready for use.
+pub(crate) struct PromptReadyState {
+    /// Pane identifier that should receive command execution.
+    pub(crate) pane_id: String,
+    /// Human-readable notices that should be surfaced to users/models.
+    pub(crate) notices: Vec<String>,
 }
