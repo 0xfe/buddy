@@ -132,10 +132,41 @@ pub struct TmuxTargetSelector {
 }
 
 impl TmuxTargetSelector {
+    /// Return a copy with blank selector fields collapsed to `None`.
+    pub fn normalized(self) -> Self {
+        Self {
+            target: normalize_optional_tmux_selector(self.target),
+            session: normalize_optional_tmux_selector(self.session),
+            pane: normalize_optional_tmux_selector(self.pane),
+        }
+    }
+
     /// True when at least one explicit selector field is present.
     pub fn is_explicit(&self) -> bool {
-        self.target.is_some() || self.session.is_some() || self.pane.is_some()
+        self.target
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+            || self
+                .session
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+            || self
+                .pane
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
     }
+}
+
+/// Collapse empty or whitespace-only tmux selector fragments to `None`.
+fn normalize_optional_tmux_selector(raw: Option<String>) -> Option<String> {
+    raw.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
 }
 
 /// Fully resolved tmux pane target after ownership/limit checks.
@@ -256,6 +287,39 @@ pub(crate) struct LocalTmuxContext {
     pub(crate) max_panes: usize,
     pub(crate) configured_tmux_pane: Mutex<Option<String>>,
     pub(crate) startup_existing_tmux_pane: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TmuxTargetSelector;
+
+    #[test]
+    fn tmux_selector_normalization_drops_blank_values() {
+        let selector = TmuxTargetSelector {
+            target: Some("  ".to_string()),
+            session: Some("\n".to_string()),
+            pane: Some(String::new()),
+        }
+        .normalized();
+        assert_eq!(selector.target, None);
+        assert_eq!(selector.session, None);
+        assert_eq!(selector.pane, None);
+        assert!(!selector.is_explicit());
+    }
+
+    #[test]
+    fn tmux_selector_normalization_trims_non_blank_values() {
+        let selector = TmuxTargetSelector {
+            target: Some(" %7 ".to_string()),
+            session: Some(" build ".to_string()),
+            pane: Some(" worker ".to_string()),
+        }
+        .normalized();
+        assert_eq!(selector.target.as_deref(), Some("%7"));
+        assert_eq!(selector.session.as_deref(), Some("build"));
+        assert_eq!(selector.pane.as_deref(), Some("worker"));
+        assert!(selector.is_explicit());
+    }
 }
 
 /// SSH execution backend with optional managed tmux pane.

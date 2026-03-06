@@ -355,6 +355,13 @@ impl Tool for ShellTool {
         });
 
         // Prompt for confirmation if enabled.
+        let selector = TmuxTargetSelector {
+            target: None,
+            session: args.session.clone(),
+            pane: args.pane.clone(),
+        }
+        .normalized();
+
         if self.confirm {
             // Bubble argument metadata into confirmation surfaces.
             let metadata = ShellApprovalMetadata::new(
@@ -363,7 +370,7 @@ impl Tool for ShellTool {
                 args.privesc,
                 args.why.clone(),
             )?
-            .with_tmux_target(args.session.clone(), args.pane.clone());
+            .with_tmux_target(selector.session.clone(), selector.pane.clone());
             let approved = if let Some(approval) = &self.approval {
                 approval
                     .request(args.command.clone(), Some(metadata))
@@ -392,11 +399,6 @@ impl Tool for ShellTool {
         let _progress =
             (!context.has_stream()).then(|| renderer.progress("running tool run_shell"));
         // Execute using configured backend and wait semantics.
-        let selector = TmuxTargetSelector {
-            target: None,
-            session: args.session.clone(),
-            pane: args.pane.clone(),
-        };
         let output = if selector.is_explicit() {
             self.execution
                 .run_shell_command_targeted(&args.command, wait, selector)

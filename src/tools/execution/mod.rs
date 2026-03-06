@@ -359,6 +359,21 @@ impl ExecutionContext {
     pub async fn capture_pane(&self, options: CapturePaneOptions) -> Result<String, ToolError> {
         // Delay is applied here so all backends share consistent timing behavior.
         let mut normalized = options;
+        normalized.target = normalized
+            .target
+            .and_then(|value| (!value.trim().is_empty()).then(|| value.trim().to_string()));
+        normalized.session = normalized
+            .session
+            .and_then(|value| (!value.trim().is_empty()).then(|| value.trim().to_string()));
+        normalized.pane = normalized
+            .pane
+            .and_then(|value| (!value.trim().is_empty()).then(|| value.trim().to_string()));
+        normalized.start = normalized
+            .start
+            .and_then(|value| (!value.trim().is_empty()).then(|| value.trim().to_string()));
+        normalized.end = normalized
+            .end
+            .and_then(|value| (!value.trim().is_empty()).then(|| value.trim().to_string()));
         if normalized.delay > Duration::ZERO {
             sleep(normalized.delay).await;
             normalized.delay = Duration::ZERO;
@@ -368,6 +383,15 @@ impl ExecutionContext {
 
     /// Send keys directly to a tmux pane.
     pub async fn send_keys(&self, mut options: SendKeysOptions) -> Result<String, ToolError> {
+        options.target = options
+            .target
+            .and_then(|value| (!value.trim().is_empty()).then(|| value.trim().to_string()));
+        options.session = options
+            .session
+            .and_then(|value| (!value.trim().is_empty()).then(|| value.trim().to_string()));
+        options.pane = options
+            .pane
+            .and_then(|value| (!value.trim().is_empty()).then(|| value.trim().to_string()));
         // Require at least one actionable key/text/enter intent.
         if options.keys.is_empty()
             && options
@@ -432,7 +456,7 @@ impl ExecutionContext {
         ensure_default_shared: bool,
     ) -> Result<ResolvedTmuxTarget, ToolError> {
         self.inner
-            .resolve_tmux_target(selector, ensure_default_shared)
+            .resolve_tmux_target(selector.normalized(), ensure_default_shared)
             .await
     }
 
@@ -480,7 +504,135 @@ impl ExecutionContext {
 
 #[cfg(test)]
 mod tests {
+    use super::contracts::ExecutionBackendOps;
     use super::*;
+    use async_trait::async_trait;
+    use std::sync::{Arc as StdArc, Mutex as StdMutex};
+
+    #[derive(Default)]
+    struct RecordedSelectors {
+        capture: StdMutex<Vec<CapturePaneOptions>>,
+        send: StdMutex<Vec<SendKeysOptions>>,
+        resolve: StdMutex<Vec<TmuxTargetSelector>>,
+    }
+
+    struct RecordingBackend {
+        recorded: StdArc<RecordedSelectors>,
+    }
+
+    #[async_trait]
+    impl ExecutionBackendOps for RecordingBackend {
+        fn summary(&self) -> String {
+            "recording".to_string()
+        }
+
+        fn tmux_attach_info(&self) -> Option<TmuxAttachInfo> {
+            None
+        }
+
+        fn startup_existing_tmux_pane(&self) -> Option<String> {
+            None
+        }
+
+        fn capture_pane_available(&self) -> bool {
+            true
+        }
+
+        async fn capture_pane(&self, options: CapturePaneOptions) -> Result<String, ToolError> {
+            self.recorded.capture.lock().unwrap().push(options);
+            Ok(String::new())
+        }
+
+        async fn send_keys(&self, options: SendKeysOptions) -> Result<String, ToolError> {
+            self.recorded.send.lock().unwrap().push(options);
+            Ok(String::new())
+        }
+
+        async fn run_shell_command(
+            &self,
+            _command: &str,
+            _wait: ShellWait,
+        ) -> Result<ExecOutput, ToolError> {
+            unreachable!("recording backend does not execute shell commands")
+        }
+
+        async fn run_shell_command_targeted(
+            &self,
+            _command: &str,
+            _wait: ShellWait,
+            _target: ResolvedTmuxTarget,
+        ) -> Result<ExecOutput, ToolError> {
+            unreachable!("recording backend does not execute targeted shell commands")
+        }
+
+        async fn read_file(&self, _path: &str) -> Result<String, ToolError> {
+            unreachable!("recording backend does not read files")
+        }
+
+        async fn write_file(&self, _path: &str, _content: &str) -> Result<(), ToolError> {
+            unreachable!("recording backend does not write files")
+        }
+
+        fn tmux_management_available(&self) -> bool {
+            true
+        }
+
+        async fn resolve_tmux_target(
+            &self,
+            selector: TmuxTargetSelector,
+            _ensure_default_shared: bool,
+        ) -> Result<ResolvedTmuxTarget, ToolError> {
+            self.recorded.resolve.lock().unwrap().push(selector);
+            Ok(ResolvedTmuxTarget {
+                session: "buddy-default".to_string(),
+                pane_id: "%1".to_string(),
+                pane_title: "shared".to_string(),
+                is_default_shared: true,
+                notices: Vec::new(),
+            })
+        }
+
+        async fn create_tmux_session(
+            &self,
+            _session: String,
+        ) -> Result<CreatedTmuxSession, ToolError> {
+            unreachable!("recording backend does not create sessions")
+        }
+
+        async fn kill_tmux_session(&self, _session: String) -> Result<String, ToolError> {
+            unreachable!("recording backend does not kill sessions")
+        }
+
+        async fn create_tmux_pane(
+            &self,
+            _session: Option<String>,
+            _pane: String,
+        ) -> Result<CreatedTmuxPane, ToolError> {
+            unreachable!("recording backend does not create panes")
+        }
+
+        async fn kill_tmux_pane(
+            &self,
+            _session: Option<String>,
+            _pane: String,
+        ) -> Result<String, ToolError> {
+            unreachable!("recording backend does not kill panes")
+        }
+
+        async fn list_managed_tmux_sessions(&self) -> Result<Vec<ManagedTmuxSession>, ToolError> {
+            unreachable!("recording backend does not list sessions")
+        }
+
+        async fn remove_managed_tmux_sessions(&self) -> Result<usize, ToolError> {
+            unreachable!("recording backend does not remove sessions")
+        }
+    }
+
+    fn recording_context(recorded: StdArc<RecordedSelectors>) -> ExecutionContext {
+        ExecutionContext {
+            inner: Arc::new(RecordingBackend { recorded }),
+        }
+    }
 
     #[test]
     fn local_tmux_summary_and_capture_availability() {
@@ -574,5 +726,77 @@ mod tests {
                 },
             })
         );
+    }
+
+    #[tokio::test]
+    async fn capture_and_send_normalize_blank_tmux_selectors() {
+        let recorded = StdArc::new(RecordedSelectors::default());
+        let ctx = recording_context(recorded.clone());
+
+        ctx.capture_pane(CapturePaneOptions {
+            target: Some(String::new()),
+            session: Some("   ".to_string()),
+            pane: Some("\n".to_string()),
+            start: Some("  -20 ".to_string()),
+            end: Some(" ".to_string()),
+            ..CapturePaneOptions::default()
+        })
+        .await
+        .expect("capture should succeed");
+
+        ctx.send_keys(SendKeysOptions {
+            target: Some(" ".to_string()),
+            session: Some("\t".to_string()),
+            pane: Some("\n".to_string()),
+            keys: vec!["C-c".to_string()],
+            ..SendKeysOptions::default()
+        })
+        .await
+        .expect("send should succeed");
+
+        let capture = recorded
+            .capture
+            .lock()
+            .unwrap()
+            .pop()
+            .expect("capture call");
+        assert_eq!(capture.target, None);
+        assert_eq!(capture.session, None);
+        assert_eq!(capture.pane, None);
+        assert_eq!(capture.start.as_deref(), Some("-20"));
+        assert_eq!(capture.end, None);
+
+        let send = recorded.send.lock().unwrap().pop().expect("send call");
+        assert_eq!(send.target, None);
+        assert_eq!(send.session, None);
+        assert_eq!(send.pane, None);
+    }
+
+    #[tokio::test]
+    async fn resolve_tmux_target_normalizes_blank_selector_fields() {
+        let recorded = StdArc::new(RecordedSelectors::default());
+        let ctx = recording_context(recorded.clone());
+
+        ctx.resolve_tmux_target(
+            TmuxTargetSelector {
+                target: Some(String::new()),
+                session: Some("  ".to_string()),
+                pane: Some("\n".to_string()),
+            },
+            true,
+        )
+        .await
+        .expect("resolution should succeed");
+
+        let selector = recorded
+            .resolve
+            .lock()
+            .unwrap()
+            .pop()
+            .expect("resolve call");
+        assert_eq!(selector.target, None);
+        assert_eq!(selector.session, None);
+        assert_eq!(selector.pane, None);
+        assert!(!selector.is_explicit());
     }
 }
