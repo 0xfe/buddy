@@ -104,6 +104,13 @@ See config reference in [docs/developer/REFERENCE.md](docs/developer/REFERENCE.m
 
 ## Build and release
 
+Quick patch release one-liner:
+
+```bash
+# first make sure repo clean, changes pushed, then run:
+make bump-patch && make release-tag
+```
+
 Keep `make` as the primary workflow:
 
 ```bash
