@@ -40,6 +40,7 @@ cargo run -- --trace /tmp/buddy.trace.jsonl
 - REPL history persists in `~/.config/buddy/history` when enabled.
 - Local execution commonly uses tmux-backed contexts; see `docs/tips/tmux.md` + `docs/design/remote-execution.md`.
 - Managed tmux selector behavior: blank/whitespace `target`/`session`/`pane` inputs normalize to the default shared pane/session, `tmux_capture_pane` auto-falls back to the default shared pane when an explicit managed target is missing, and mutating tools keep strict missing-target errors.
+- All tools now require a concise `why` rationale, tool-call rendering shows that rationale in the console, and assistant text attached to tool-calling turns is streamed instead of being hidden until task completion.
 - Prompt assembly now adds request-scoped context annotation (`--` section separators, tmux snapshot/route state, actor/action history ledger) plus a final tail-instruction message reinforcing default tmux targeting and shared-shell safety (`set -e`/`exit`/`exec` restrictions).
 
 ## Docs map for AI agents

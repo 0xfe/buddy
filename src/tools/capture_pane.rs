@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use super::execution::{CapturePaneOptions, ExecutionContext};
 use super::result_envelope::wrap_result;
-use super::{Tool, ToolContext};
+use super::{require_tool_why, Tool, ToolContext};
 use crate::error::ToolError;
 use crate::textutil::safe_prefix_by_bytes;
 use crate::types::{FunctionDefinition, ToolDefinition};
@@ -52,6 +52,8 @@ struct Args {
     include_alternate_screen: bool,
     /// Optional string duration before capture.
     delay: Option<String>,
+    /// Human rationale for capturing pane output now.
+    why: String,
 }
 
 fn default_join_wrapped_lines() -> bool {
@@ -83,8 +85,8 @@ impl Tool for CapturePaneTool {
                     "- run_shell executes commands.\n",
                     "- tmux_send_keys changes interactive program state.\n",
                     "Examples:\n",
-                    "- {\"delay\":\"2s\"}\n",
-                    "- {\"session\":\"build\",\"pane\":\"worker\",\"start\":\"-200\",\"end\":\"-\"}"
+                    "- {\"delay\":\"2s\",\"why\":\"Poll the shared pane for output from a background command.\"}\n",
+                    "- {\"session\":\"build\",\"pane\":\"worker\",\"start\":\"-200\",\"end\":\"-\",\"why\":\"Inspect the build worker pane before deciding the next action.\"}"
                 ).into(),
                 parameters: serde_json::json!({
                     "type": "object",
@@ -132,8 +134,13 @@ impl Tool for CapturePaneTool {
                         "delay": {
                             "type": "string",
                             "description": "Optional delay before capture, like '500ms', '2s', '1m', or '1h'. Useful for polling."
+                        },
+                        "why": {
+                            "type": "string",
+                            "description": "One or two lines explaining why this pane capture is needed right now."
                         }
-                    }
+                    },
+                    "required": ["why"]
                 }),
             },
         }
@@ -143,6 +150,7 @@ impl Tool for CapturePaneTool {
         // Parse capture options and normalize delay controls.
         let args: Args = serde_json::from_str(arguments)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
+        require_tool_why(self.name(), &args.why)?;
         let delay = resolve_delay(&args)?;
 
         // Translate tool JSON args into backend-neutral capture options.

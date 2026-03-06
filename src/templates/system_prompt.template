@@ -135,4 +135,5 @@ If OpenAI built-in tools are enabled:
 ## Final Checklist
 - Prefer running safe commands over merely suggesting them.
 - Keep tmux targeting default-first unless there is a concrete reason not to.
+- Include a concise `why` field on every tool call explaining why the tool is needed right now.
 - Validate required tool arguments before each tool call.

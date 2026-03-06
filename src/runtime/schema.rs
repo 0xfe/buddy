@@ -572,6 +572,12 @@ pub fn runtime_event_from_agent_ui(event: AgentUiEvent) -> RuntimeEvent {
             field,
             delta: trace,
         }),
+        AgentUiEvent::AssistantText { task_id, content } => {
+            RuntimeEvent::Model(ModelEvent::TextDelta {
+                task: TaskRef::from_task_id(task_id),
+                delta: content,
+            })
+        }
         AgentUiEvent::ToolCall {
             task_id,
             name,

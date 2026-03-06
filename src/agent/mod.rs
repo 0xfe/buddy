@@ -642,6 +642,14 @@ impl Agent {
                 self.reasoning_trace_live(&field, &trace);
             }
 
+            if has_tool_calls {
+                if let Some(content) = assistant_msg.content.as_deref() {
+                    if !content.trim().is_empty() {
+                        self.assistant_text_live(content);
+                    }
+                }
+            }
+
             // Add meaningful assistant messages to history.
             if should_keep_message(&assistant_msg) {
                 self.messages.push(assistant_msg.clone());
@@ -1497,7 +1505,9 @@ mod tests {
                 index: 0,
                 message: Message {
                     role: Role::Assistant,
-                    content: None,
+                    content: Some(
+                        "I am going to inspect the tool result before answering.".to_string(),
+                    ),
                     tool_calls: Some(vec![ToolCall {
                         id: "call_1".to_string(),
                         call_type: "function".to_string(),
@@ -1565,6 +1575,7 @@ mod tests {
                 RuntimeEvent::Metrics(MetricsEvent::TokenUsage { .. }) => "token_usage",
                 RuntimeEvent::Metrics(MetricsEvent::Cost { .. }) => "cost",
                 RuntimeEvent::Model(ModelEvent::ResponseSummary { .. }) => "response_summary",
+                RuntimeEvent::Model(ModelEvent::TextDelta { .. }) => "text_delta",
                 RuntimeEvent::Tool(ToolEvent::CallRequested { .. }) => "tool_call",
                 RuntimeEvent::Tool(ToolEvent::Result { .. }) => "tool_result",
                 RuntimeEvent::Model(ModelEvent::MessageFinal { .. }) => "message_final",
@@ -1583,6 +1594,7 @@ mod tests {
             "token_usage",
             "cost",
             "response_summary",
+            "text_delta",
             "tool_call",
             "phase_duration",
             "tool_result",

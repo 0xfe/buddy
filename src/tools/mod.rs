@@ -20,6 +20,16 @@ use crate::types::ToolDefinition;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
+/// Validate the universal per-tool rationale field.
+pub(crate) fn require_tool_why(tool_name: &str, why: &str) -> Result<(), ToolError> {
+    if why.trim().is_empty() {
+        return Err(ToolError::InvalidArguments(format!(
+            "{tool_name}.why must be a non-empty string"
+        )));
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Tool trait
 // ---------------------------------------------------------------------------

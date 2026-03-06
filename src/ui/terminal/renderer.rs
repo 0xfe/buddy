@@ -1,5 +1,6 @@
 //! Terminal output renderer for status and trace messages.
 
+use crate::repl::parse_tool_arg;
 use crate::ui::terminal::highlight::{highlight_lines_for_path, StyledToken};
 use crate::ui::terminal::markdown::render_markdown_for_terminal;
 use crate::ui::terminal::progress::{
@@ -256,6 +257,18 @@ impl Renderer {
                 settings::INDENT_1,
                 settings::GLYPH_TOOL_CALL_PLAIN
             );
+        }
+        if let Some(why) = parse_tool_arg(args, "why") {
+            let why_preview = truncate_single_line(&why, 120);
+            if self.color {
+                eprintln!(
+                    "\r{}  why: {}",
+                    settings::INDENT_1,
+                    why_preview.with(settings::color_tool_call_args())
+                );
+            } else {
+                eprintln!("\r{}  why: {why_preview}", settings::INDENT_1);
+            }
         }
         mark_stream_nonblank(BlockTarget::Stderr);
     }

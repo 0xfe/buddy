@@ -9,7 +9,7 @@ use std::path::{Component, Path, PathBuf};
 
 use super::execution::ExecutionContext;
 use super::result_envelope::wrap_result;
-use super::{Tool, ToolContext};
+use super::{require_tool_why, Tool, ToolContext};
 use crate::error::ToolError;
 use crate::textutil::truncate_with_suffix_by_bytes;
 use crate::types::{FunctionDefinition, ToolDefinition};
@@ -31,6 +31,8 @@ pub struct ReadFileTool {
 struct ReadArgs {
     /// File path to read from the selected execution backend.
     path: String,
+    /// Human rationale for reading this file now.
+    why: String,
 }
 
 #[async_trait]
@@ -55,8 +57,8 @@ impl Tool for ReadFileTool {
                     "- read_file is read-only and returns file text.\n",
                     "- write_file mutates file contents.\n",
                     "Examples:\n",
-                    "- {\"path\":\"/etc/hosts\"}\n",
-                    "- {\"path\":\"./src/main.rs\"}"
+                    "- {\"path\":\"/etc/hosts\",\"why\":\"Inspect hostname resolution config for the user request.\"}\n",
+                    "- {\"path\":\"./src/main.rs\",\"why\":\"Read the CLI entrypoint before editing related code.\"}"
                 )
                 .into(),
                 parameters: serde_json::json!({
@@ -65,9 +67,13 @@ impl Tool for ReadFileTool {
                         "path": {
                             "type": "string",
                             "description": "Path to the file to read"
+                        },
+                        "why": {
+                            "type": "string",
+                            "description": "One or two lines explaining why this file read is needed right now."
                         }
                     },
-                    "required": ["path"]
+                    "required": ["path", "why"]
                 }),
             },
         }
@@ -76,6 +82,7 @@ impl Tool for ReadFileTool {
     async fn execute(&self, arguments: &str, _context: &ToolContext) -> Result<String, ToolError> {
         let args: ReadArgs = serde_json::from_str(arguments)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
+        require_tool_why(self.name(), &args.why)?;
 
         let content = self.execution.read_file(&args.path).await?;
 
@@ -109,6 +116,8 @@ struct WriteArgs {
     path: String,
     /// Full file contents to write.
     content: String,
+    /// Human rationale for writing this file now.
+    why: String,
 }
 
 #[async_trait]
@@ -134,8 +143,8 @@ impl Tool for WriteFileTool {
                     "- write_file replaces whole file content.\n",
                     "- run_shell may edit via shell tools but is less structured.\n",
                     "Examples:\n",
-                    "- {\"path\":\"/tmp/note.txt\",\"content\":\"hello\\n\"}\n",
-                    "- {\"path\":\"./buddy.toml\",\"content\":\"[agent]\\nname=\\\"ops\\\"\\n\"}"
+                    "- {\"path\":\"/tmp/note.txt\",\"content\":\"hello\\n\",\"why\":\"Persist the generated note for later inspection.\"}\n",
+                    "- {\"path\":\"./buddy.toml\",\"content\":\"[agent]\\nname=\\\"ops\\\"\\n\",\"why\":\"Update the local config with the requested agent name.\"}"
                 )
                 .into(),
                 parameters: serde_json::json!({
@@ -148,9 +157,13 @@ impl Tool for WriteFileTool {
                         "content": {
                             "type": "string",
                             "description": "Content to write to the file"
+                        },
+                        "why": {
+                            "type": "string",
+                            "description": "One or two lines explaining why this file write is needed right now."
                         }
                     },
-                    "required": ["path", "content"]
+                    "required": ["path", "content", "why"]
                 }),
             },
         }
@@ -159,6 +172,7 @@ impl Tool for WriteFileTool {
     async fn execute(&self, arguments: &str, _context: &ToolContext) -> Result<String, ToolError> {
         let args: WriteArgs = serde_json::from_str(arguments)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
+        require_tool_why(self.name(), &args.why)?;
         validate_write_path_policy(&args.path, &self.allowed_paths)?;
 
         self.execution.write_file(&args.path, &args.content).await?;
@@ -317,7 +331,7 @@ mod tests {
             execution: ExecutionContext::local(),
         }
         .execute(
-            r#"{"path": "/tmp/agent_no_such_file_xyz.txt"}"#,
+            r#"{"path": "/tmp/agent_no_such_file_xyz.txt", "why": "Attempt to read a missing fixture to verify the error path."}"#,
             &ToolContext::empty(),
         )
         .await
@@ -331,7 +345,10 @@ mod tests {
         let fixture = TestTempDir::new("read-file");
         let path = fixture.path().join("file.txt");
         tokio::fs::write(&path, "file content").await.unwrap();
-        let args = format!(r#"{{"path": "{}"}}"#, path.display());
+        let args = format!(
+            r#"{{"path": "{}", "why": "Read the fixture contents for this unit test."}}"#,
+            path.display()
+        );
         let result = ReadFileTool {
             execution: ExecutionContext::local(),
         }
@@ -348,7 +365,10 @@ mod tests {
         let path = fixture.path().join("large.txt");
         let big = "x".repeat(MAX_READ_LEN + 100);
         tokio::fs::write(&path, &big).await.unwrap();
-        let args = format!(r#"{{"path": "{}"}}"#, path.display());
+        let args = format!(
+            r#"{{"path": "{}", "why": "Read the oversized fixture to verify truncation."}}"#,
+            path.display()
+        );
         let result = ReadFileTool {
             execution: ExecutionContext::local(),
         }
@@ -367,7 +387,10 @@ mod tests {
         let path = fixture.path().join("utf8.txt");
         let big = "🙂".repeat(MAX_READ_LEN + 10);
         tokio::fs::write(&path, &big).await.unwrap();
-        let args = format!(r#"{{"path": "{}"}}"#, path.display());
+        let args = format!(
+            r#"{{"path": "{}", "why": "Read the UTF-8 fixture to verify truncation boundaries."}}"#,
+            path.display()
+        );
         let result = ReadFileTool {
             execution: ExecutionContext::local(),
         }
@@ -399,7 +422,7 @@ mod tests {
         let path = fixture.path().join("written.txt");
         let content = "hello write";
         let args = format!(
-            r#"{{"path": "{}", "content": "{content}"}}"#,
+            r#"{{"path": "{}", "content": "{content}", "why": "Write a fixture file for this unit test."}}"#,
             path.display()
         );
         let result = WriteFileTool {

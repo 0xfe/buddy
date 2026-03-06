@@ -15,6 +15,9 @@ pub(in crate::ui::runtime) fn handle_model(
             ctx.renderer
                 .reasoning_trace(&format!("task #{} {field}", task.task_id), &delta);
         }
+        ModelEvent::TextDelta { delta, .. } => {
+            ctx.renderer.assistant_message(&delta);
+        }
         ModelEvent::MessageFinal { task, content } => {
             if let Some(bg) = ctx
                 .background_tasks
@@ -40,7 +43,6 @@ pub(in crate::ui::runtime) fn handle_model(
         }
         ModelEvent::RequestStarted { .. }
         | ModelEvent::RequestSummary { .. }
-        | ModelEvent::TextDelta { .. }
         | ModelEvent::ResponseSummary { .. } => {}
     }
 }

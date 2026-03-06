@@ -53,7 +53,7 @@ pub fn process_runtime_events(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::{TaskEvent, TaskRef, ToolEvent, WarningEvent};
+    use crate::runtime::{ModelEvent, TaskEvent, TaskRef, ToolEvent, WarningEvent};
     use crate::ui::render::{ProgressHandle, ProgressMetrics, Renderer};
     use std::sync::{Arc, Mutex};
 
@@ -344,5 +344,54 @@ mod tests {
         assert!(renderer.saw("command_output", "line-a"));
         assert!(renderer.saw("activity", "task #5 read README.md"));
         assert!(renderer.saw("tool_output", "hello"));
+    }
+
+    #[test]
+    fn reducer_renders_tool_calls_and_intermediate_assistant_text() {
+        let renderer = MockRenderer::default();
+        let mut events = vec![
+            RuntimeEventEnvelope {
+                seq: 1,
+                ts_unix_ms: 1,
+                event: RuntimeEvent::Model(ModelEvent::TextDelta {
+                    task: TaskRef::from_task_id(9),
+                    delta: "Inspecting the pane again before I decide the next step.".to_string(),
+                }),
+            },
+            RuntimeEventEnvelope {
+                seq: 2,
+                ts_unix_ms: 2,
+                event: RuntimeEvent::Tool(ToolEvent::CallRequested {
+                    task: TaskRef::from_task_id(9),
+                    name: "tmux_capture_pane".to_string(),
+                    arguments_json: serde_json::json!({
+                        "why": "Check whether the pane output changed after the failed command.",
+                        "session": "",
+                        "pane": ""
+                    })
+                    .to_string(),
+                }),
+            },
+        ];
+        let mut background_tasks = Vec::new();
+        let mut completed_tasks = Vec::new();
+        let mut pending_approval = None;
+        let mut config = Config::default();
+        let mut active_session = "session-x".to_string();
+        let mut runtime_context = RuntimeContextState::new(None);
+        let mut ctx = RuntimeEventRenderContext {
+            renderer: &renderer,
+            background_tasks: &mut background_tasks,
+            completed_tasks: &mut completed_tasks,
+            pending_approval: &mut pending_approval,
+            config: &mut config,
+            active_session: &mut active_session,
+            runtime_context: &mut runtime_context,
+        };
+        process_runtime_events(&mut events, &mut ctx);
+
+        assert!(renderer.saw("assistant", "Inspecting the pane again"));
+        assert!(renderer.saw("tool_call", "tmux_capture_pane"));
+        assert!(renderer.saw("tool_call", "why"));
     }
 }

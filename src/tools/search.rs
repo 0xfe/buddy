@@ -8,6 +8,7 @@ use scraper::{Html, Selector};
 use serde::Deserialize;
 use std::time::Duration;
 
+use super::require_tool_why;
 use super::result_envelope::wrap_result;
 use super::{Tool, ToolContext};
 use crate::error::ToolError;
@@ -44,6 +45,8 @@ impl Default for WebSearchTool {
 struct Args {
     /// Search phrase to submit to DuckDuckGo.
     query: String,
+    /// Human rationale for this search.
+    why: String,
 }
 
 #[async_trait]
@@ -69,8 +72,8 @@ impl Tool for WebSearchTool {
                     "- web_search discovers links.\n",
                     "- fetch_url retrieves one chosen link's content.\n",
                     "Examples:\n",
-                    "- {\"query\":\"rust tokio tutorial\"}\n",
-                    "- {\"query\":\"openrouter deepseek v3.2 model id\"}"
+                    "- {\"query\":\"rust tokio tutorial\",\"why\":\"Find likely primary sources before fetching one specific page.\"}\n",
+                    "- {\"query\":\"openrouter deepseek v3.2 model id\",\"why\":\"Discover the current canonical model identifier mentioned by public sources.\"}"
                 )
                 .into(),
                 parameters: serde_json::json!({
@@ -79,9 +82,13 @@ impl Tool for WebSearchTool {
                         "query": {
                             "type": "string",
                             "description": "The search query"
+                        },
+                        "why": {
+                            "type": "string",
+                            "description": "One or two lines explaining why this search is needed right now."
                         }
                     },
-                    "required": ["query"]
+                    "required": ["query", "why"]
                 }),
             },
         }
@@ -91,6 +98,7 @@ impl Tool for WebSearchTool {
         // Parse call arguments and construct endpoint URL.
         let args: Args = serde_json::from_str(arguments)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
+        require_tool_why(self.name(), &args.why)?;
 
         let url = format!(
             "https://html.duckduckgo.com/html/?q={}",

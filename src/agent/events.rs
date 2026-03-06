@@ -40,6 +40,13 @@ pub enum AgentUiEvent {
         /// Extracted reasoning text.
         trace: String,
     },
+    /// Assistant-visible text emitted before more tool calls continue the turn.
+    AssistantText {
+        /// Task identifier associated with the assistant text.
+        task_id: u64,
+        /// Assistant-visible text chunk.
+        content: String,
+    },
     /// Tool call notification emitted before tool execution.
     ToolCall {
         /// Task identifier associated with the tool call.
@@ -209,6 +216,29 @@ impl Agent {
             return;
         }
         self.renderer.reasoning_trace(field, trace);
+    }
+
+    /// Emit assistant-visible non-final text to the active sink.
+    pub(super) fn assistant_text_live(&mut self, content: &str) {
+        if let Some(task) = self.current_task_ref() {
+            let _ = self.emit_runtime_event(RuntimeEvent::Model(ModelEvent::TextDelta {
+                task,
+                delta: content.to_string(),
+            }));
+        }
+
+        if self.suppress_live_output {
+            let Some(task_id) = self.current_task_id() else {
+                self.renderer.assistant_message(content);
+                return;
+            };
+            let _ = self.emit_ui_event(AgentUiEvent::AssistantText {
+                task_id,
+                content: content.to_string(),
+            });
+            return;
+        }
+        self.renderer.assistant_message(content);
     }
 
     /// Emit tool call start notification to the active sink.

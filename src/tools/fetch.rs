@@ -9,8 +9,9 @@ use std::net::IpAddr;
 use std::time::Duration;
 use tokio::net::lookup_host;
 
+use super::require_tool_why;
 use super::result_envelope::wrap_result;
-use super::shell::ShellApprovalBroker;
+use super::shell::{RiskLevel, ShellApprovalBroker, ShellApprovalMetadata};
 use super::{Tool, ToolContext};
 use crate::error::ToolError;
 use crate::textutil::truncate_with_suffix_by_bytes;
@@ -74,6 +75,8 @@ impl Default for FetchTool {
 struct Args {
     /// URL to request.
     url: String,
+    /// Human rationale for fetching this URL now.
+    why: String,
 }
 
 #[async_trait]
@@ -99,8 +102,8 @@ impl Tool for FetchTool {
                     "- fetch_url retrieves one specific URL.\n",
                     "- web_search discovers candidate URLs.\n",
                     "Examples:\n",
-                    "- {\"url\":\"https://example.com\"}\n",
-                    "- {\"url\":\"https://api.github.com/repos/owner/repo\"}"
+                    "- {\"url\":\"https://example.com\",\"why\":\"Fetch the referenced page so I can verify its contents.\"}\n",
+                    "- {\"url\":\"https://api.github.com/repos/owner/repo\",\"why\":\"Read the repository metadata directly from the source API.\"}"
                 )
                 .into(),
                 parameters: serde_json::json!({
@@ -109,9 +112,13 @@ impl Tool for FetchTool {
                         "url": {
                             "type": "string",
                             "description": "The URL to fetch"
+                        },
+                        "why": {
+                            "type": "string",
+                            "description": "One or two lines explaining why this fetch is needed right now."
                         }
                     },
-                    "required": ["url"]
+                    "required": ["url", "why"]
                 }),
             },
         }
@@ -121,14 +128,17 @@ impl Tool for FetchTool {
         // Parse and validate policy before any outbound HTTP request.
         let args: Args = serde_json::from_str(arguments)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
+        require_tool_why(self.name(), &args.why)?;
         let url =
             validate_url_policy(&args.url, &self.allowed_domains, &self.blocked_domains).await?;
 
         // Optional operator confirmation for fetches in higher-control environments.
         if self.confirm {
             let approved = if let Some(approval) = &self.approval {
+                let metadata =
+                    ShellApprovalMetadata::new(RiskLevel::Low, false, false, args.why.clone())?;
                 approval
-                    .request(format!("fetch {}", url.as_str()), None)
+                    .request(format!("fetch {}", url.as_str()), Some(metadata))
                     .await
                     .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?
             } else {
@@ -402,7 +412,9 @@ mod tests {
             Vec::new(),
             None,
         );
-        let args = format!(r#"{{"url":"http://{addr}/hang"}}"#);
+        let args = format!(
+            r#"{{"url":"http://{addr}/hang", "why":"Issue a request that should time out so the timeout path is exercised."}}"#
+        );
         let outcome = tokio::time::timeout(
             Duration::from_millis(400),
             tool.execute(&args, &ToolContext::empty()),
@@ -425,7 +437,7 @@ mod tests {
         );
         let join = tokio::spawn(async move {
             tool.execute(
-                r#"{"url":"https://1.1.1.1/dns-query"}"#,
+                r#"{"url":"https://1.1.1.1/dns-query", "why":"Exercise the denied fetch approval path."}"#,
                 &ToolContext::empty(),
             )
             .await

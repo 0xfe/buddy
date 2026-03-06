@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use serde::Serialize;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use super::require_tool_why;
 use super::result_envelope::wrap_result;
 use super::{Tool, ToolContext};
 use crate::error::ToolError;
@@ -38,12 +39,18 @@ impl Tool for TimeTool {
                     "- time reports harness process time.\n",
                     "- run_shell `date` reports target environment time.\n",
                     "Examples:\n",
-                    "- {}\n",
-                    "- {}  // parse unix_millis and iso_8601_utc from result"
+                    "- {\"why\":\"Need current harness time to compare against a deadline.\"}\n",
+                    "- {\"why\":\"Need explicit UTC and epoch values for a time-sensitive calculation.\"}"
                 ).into(),
                 parameters: serde_json::json!({
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "why": {
+                            "type": "string",
+                            "description": "One or two lines explaining why current harness time is needed right now."
+                        }
+                    },
+                    "required": ["why"],
                     "additionalProperties": false
                 }),
             },
@@ -58,6 +65,11 @@ impl Tool for TimeTool {
                 "arguments must be a JSON object".into(),
             ));
         }
+        let why = parsed
+            .get("why")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| ToolError::InvalidArguments("time.why must be a string".into()))?;
+        require_tool_why(self.name(), why)?;
 
         let now = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| {
             ToolError::ExecutionFailed(format!("failed to read harness clock: {e}"))

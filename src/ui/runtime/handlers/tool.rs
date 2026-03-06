@@ -17,7 +17,15 @@ pub(in crate::ui::runtime) fn handle_tool(
     // Tool events are intentionally summarized at a high level so noisy tools
     // do not drown interactive status lines.
     match event {
-        ToolEvent::CallRequested { .. } => {}
+        ToolEvent::CallRequested {
+            name,
+            arguments_json,
+            ..
+        } => {
+            if ctx.config.display.show_tool_calls {
+                ctx.renderer.tool_call(&name, &arguments_json);
+            }
+        }
         ToolEvent::CallStarted { task, name, detail } => {
             if name == "run_shell" {
                 // Shell commands already get explicit approval/request rendering (when
