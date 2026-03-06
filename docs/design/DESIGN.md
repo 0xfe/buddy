@@ -92,6 +92,7 @@ Detailed inventory: [feature-catalog.md](feature-catalog.md).
   - request-scoped final tail-instruction message appended to every model request (active tmux route, default-vs-explicit pane targeting, shared-shell safety)
   - assistant text that arrives in the same model response as tool calls is streamed to the console instead of being hidden until task completion
   - repeated successful `tmux_capture_pane` calls for the same effective pane/range return an explicit unchanged-state notice instead of re-inserting the same pane snapshot text into context
+  - console thinking output ignores intermediate `reasoning_stream` deltas and renders only the final reasoning block to avoid duplicate traces
 - Output/rendering behavior:
   - semantic theme-token rendering with built-in `dark`/`light` palettes and optional `[themes.<name>]` overrides
   - startup banner includes build metadata (version, commit hash, build timestamp)
@@ -100,7 +101,6 @@ Detailed inventory: [feature-catalog.md](feature-catalog.md).
   - progress/liveness indicators and structured tool/result rendering
 - Token/context behavior:
   - exact usage tracking when provider returns `usage`
-  - per-request/session cost estimation when model pricing metadata is available
   - heuristic context estimation + warnings
   - per-model runtime calibration of token estimates using observed provider usage
   - automatic and manual history compaction

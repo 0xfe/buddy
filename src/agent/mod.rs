@@ -152,8 +152,6 @@ pub struct Agent {
     tracker: TokenTracker,
     /// Runtime per-model token calibration derived from provider usage telemetry.
     token_calibration: BTreeMap<String, tokens::ModelTokenCalibration>,
-    /// Running session cost estimate in USD from pricing+usage telemetry.
-    session_total_cost_usd: f64,
     /// Terminal renderer used for live foreground UI.
     renderer: Renderer,
     /// If true, suppress direct renderer output and prefer sinks.
@@ -205,7 +203,6 @@ impl Agent {
             messages,
             tracker,
             token_calibration: BTreeMap::new(),
-            session_total_cost_usd: 0.0,
             renderer,
             suppress_live_output: false,
             live_output_sink: None,
@@ -255,9 +252,6 @@ impl Agent {
             snapshot.messages
         };
         self.tracker = snapshot.tracker.into_tracker();
-        // Historical sessions currently persist token counters but not cost
-        // totals; restart cost accounting from zero on every session restore.
-        self.session_total_cost_usd = 0.0;
     }
 
     /// Reset conversation state to a fresh session (keeps model/tools/config).
@@ -567,31 +561,6 @@ impl Agent {
                         usage.completion_tokens,
                         self.tracker.session_total(),
                     );
-                }
-
-                if let Some(pricing) = tokens::model_pricing(&request.model) {
-                    let cost = tokens::estimate_usage_cost(
-                        &pricing,
-                        usage.prompt_tokens,
-                        usage.completion_tokens,
-                        None,
-                    );
-                    self.session_total_cost_usd += cost.total_usd;
-                    if let Some(task) = self.current_task_ref() {
-                        let _ =
-                            self.emit_runtime_event(RuntimeEvent::Metrics(MetricsEvent::Cost {
-                                task,
-                                model: request.model.clone(),
-                                prompt_tokens: usage.prompt_tokens,
-                                completion_tokens: usage.completion_tokens,
-                                cached_tokens: None,
-                                request_input_cost_usd: cost.input_usd,
-                                request_output_cost_usd: cost.output_usd,
-                                request_cache_read_cost_usd: cost.cache_read_usd,
-                                request_total_usd: cost.total_usd,
-                                session_total_cost_usd: self.session_total_cost_usd,
-                            }));
-                    }
                 }
             }
 
@@ -1697,7 +1666,6 @@ mod tests {
                 RuntimeEvent::Metrics(MetricsEvent::ContextUsage { .. }) => "context_usage",
                 RuntimeEvent::Metrics(MetricsEvent::PhaseDuration { .. }) => "phase_duration",
                 RuntimeEvent::Metrics(MetricsEvent::TokenUsage { .. }) => "token_usage",
-                RuntimeEvent::Metrics(MetricsEvent::Cost { .. }) => "cost",
                 RuntimeEvent::Model(ModelEvent::ResponseSummary { .. }) => "response_summary",
                 RuntimeEvent::Model(ModelEvent::TextDelta { .. }) => "text_delta",
                 RuntimeEvent::Tool(ToolEvent::CallRequested { .. }) => "tool_call",
@@ -1716,7 +1684,6 @@ mod tests {
             "model_request_summary",
             "phase_duration",
             "token_usage",
-            "cost",
             "response_summary",
             "text_delta",
             "tool_call",
@@ -1727,7 +1694,6 @@ mod tests {
             "model_request_summary",
             "phase_duration",
             "token_usage",
-            "cost",
             "response_summary",
             "message_final",
             "task_completed",

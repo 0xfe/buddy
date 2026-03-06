@@ -1069,7 +1069,6 @@ mod tests {
                 RuntimeEvent::Model(ModelEvent::ResponseSummary { .. }) => "response_summary",
                 RuntimeEvent::Metrics(MetricsEvent::PhaseDuration { .. }) => "phase_duration",
                 RuntimeEvent::Metrics(MetricsEvent::TokenUsage { .. }) => "tokens",
-                RuntimeEvent::Metrics(MetricsEvent::Cost { .. }) => "cost",
                 RuntimeEvent::Model(ModelEvent::MessageFinal { .. }) => "final",
                 RuntimeEvent::Task(TaskEvent::Completed { .. }) => {
                     labels.push("completed".to_string());
@@ -1090,7 +1089,6 @@ mod tests {
                 "request_summary",
                 "phase_duration",
                 "tokens",
-                "cost",
                 "response_summary",
                 "final",
                 "completed"

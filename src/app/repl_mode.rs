@@ -954,12 +954,6 @@ fn render_status(
             "session_tokens",
             &agent.tracker().session_total().to_string(),
         );
-        if runtime_context.session_total_cost_usd > 0.0 {
-            renderer.field(
-                "session_cost_usd",
-                &format!("{:.6}", runtime_context.session_total_cost_usd),
-            );
-        }
     } else {
         let context_limit = if runtime_context.context_limit == 0 {
             "auto".to_string()
@@ -972,12 +966,6 @@ fn render_status(
             "session_tokens",
             &runtime_context.session_total_tokens.to_string(),
         );
-        if runtime_context.session_total_cost_usd > 0.0 {
-            renderer.field(
-                "session_cost_usd",
-                &format!("{:.6}", runtime_context.session_total_cost_usd),
-            );
-        }
     }
 
     eprintln!();
@@ -1017,12 +1005,6 @@ fn render_context(
             ),
         );
         renderer.field("session_total", &tracker.session_total().to_string());
-        if runtime_context.session_total_cost_usd > 0.0 {
-            renderer.field(
-                "session_cost_usd",
-                &format!("{:.6}", runtime_context.session_total_cost_usd),
-            );
-        }
         renderer.field("messages", &agent.messages().len().to_string());
     } else {
         if runtime_context.context_limit == 0 {
@@ -1049,12 +1031,6 @@ fn render_context(
             "session_total",
             &runtime_context.session_total_tokens.to_string(),
         );
-        if runtime_context.session_total_cost_usd > 0.0 {
-            renderer.field(
-                "session_cost_usd",
-                &format!("{:.6}", runtime_context.session_total_cost_usd),
-            );
-        }
         renderer.field("messages", "busy (task in progress)");
     }
 

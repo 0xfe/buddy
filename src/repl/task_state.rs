@@ -95,10 +95,6 @@ pub struct RuntimeContextState {
     pub last_completion_tokens: u64,
     /// Rolling prompt+completion total for the session.
     pub session_total_tokens: u64,
-    /// Cost estimate for the most recent request, when pricing is available.
-    pub last_request_cost_usd: f64,
-    /// Rolling session cost estimate in USD.
-    pub session_total_cost_usd: f64,
 }
 
 impl RuntimeContextState {
@@ -111,8 +107,6 @@ impl RuntimeContextState {
             last_prompt_tokens: 0,
             last_completion_tokens: 0,
             session_total_tokens: 0,
-            last_request_cost_usd: 0.0,
-            session_total_cost_usd: 0.0,
         }
     }
 }

@@ -12,6 +12,9 @@ pub(in crate::ui::runtime) fn handle_model(
 ) {
     match event {
         ModelEvent::ReasoningDelta { task, field, delta } => {
+            if field.eq_ignore_ascii_case("reasoning_stream") {
+                return;
+            }
             ctx.renderer
                 .reasoning_trace(&format!("task #{} {field}", task.task_id), &delta);
         }

@@ -70,6 +70,15 @@ pub enum AgentUiEvent {
 }
 
 impl Agent {
+    /// Return true when a provider reasoning field should stay out of console UI.
+    ///
+    /// We still preserve these fields in normalized message payloads and runtime
+    /// traces when emitted elsewhere, but the terminal only shows the final
+    /// provider reasoning block to avoid duplicated "thinking" chatter.
+    fn suppress_reasoning_console_field(field: &str) -> bool {
+        field.eq_ignore_ascii_case("reasoning_stream")
+    }
+
     /// Suppress live stderr traces while the agent runs in a background task.
     pub fn set_live_output_suppressed(&mut self, suppressed: bool) {
         self.suppress_live_output = suppressed;
@@ -205,7 +214,9 @@ impl Agent {
 
         if self.suppress_live_output {
             let Some(task_id) = self.current_task_id() else {
-                self.renderer.reasoning_trace(field, trace);
+                if !Self::suppress_reasoning_console_field(field) {
+                    self.renderer.reasoning_trace(field, trace);
+                }
                 return;
             };
             let _ = self.emit_ui_event(AgentUiEvent::ReasoningTrace {
@@ -215,7 +226,9 @@ impl Agent {
             });
             return;
         }
-        self.renderer.reasoning_trace(field, trace);
+        if !Self::suppress_reasoning_console_field(field) {
+            self.renderer.reasoning_trace(field, trace);
+        }
     }
 
     /// Emit assistant-visible non-final text to the active sink.

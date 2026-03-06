@@ -394,4 +394,66 @@ mod tests {
         assert!(renderer.saw("tool_call", "tmux_capture_pane"));
         assert!(renderer.saw("tool_call", "why"));
     }
+
+    #[test]
+    fn reducer_ignores_cost_and_reasoning_stream_console_noise() {
+        let renderer = MockRenderer::default();
+        let mut events = vec![
+            RuntimeEventEnvelope {
+                seq: 1,
+                ts_unix_ms: 1,
+                event: RuntimeEvent::Metrics(crate::runtime::MetricsEvent::Cost {
+                    task: TaskRef::from_task_id(2),
+                    model: "gpt-spark".to_string(),
+                    prompt_tokens: 10,
+                    completion_tokens: 4,
+                    cached_tokens: None,
+                    request_input_cost_usd: 0.001,
+                    request_output_cost_usd: 0.002,
+                    request_cache_read_cost_usd: 0.0,
+                    request_total_usd: 0.003,
+                    session_total_cost_usd: 0.003,
+                }),
+            },
+            RuntimeEventEnvelope {
+                seq: 2,
+                ts_unix_ms: 2,
+                event: RuntimeEvent::Model(ModelEvent::ReasoningDelta {
+                    task: TaskRef::from_task_id(2),
+                    field: "reasoning_stream".to_string(),
+                    delta: "**stream copy**".to_string(),
+                }),
+            },
+            RuntimeEventEnvelope {
+                seq: 3,
+                ts_unix_ms: 3,
+                event: RuntimeEvent::Model(ModelEvent::ReasoningDelta {
+                    task: TaskRef::from_task_id(2),
+                    field: "reasoning".to_string(),
+                    delta: "**final copy**".to_string(),
+                }),
+            },
+        ];
+        let mut background_tasks = Vec::new();
+        let mut completed_tasks = Vec::new();
+        let mut pending_approval = None;
+        let mut config = Config::default();
+        let mut active_session = "session-x".to_string();
+        let mut runtime_context = RuntimeContextState::new(None);
+        let mut ctx = RuntimeEventRenderContext {
+            renderer: &renderer,
+            background_tasks: &mut background_tasks,
+            completed_tasks: &mut completed_tasks,
+            pending_approval: &mut pending_approval,
+            config: &mut config,
+            active_session: &mut active_session,
+            runtime_context: &mut runtime_context,
+        };
+        process_runtime_events(&mut events, &mut ctx);
+
+        assert!(!renderer.saw("field", "cost:"));
+        assert!(!renderer.saw("reasoning", "reasoning_stream"));
+        assert!(!renderer.saw("reasoning", "**stream copy**"));
+        assert!(renderer.saw("reasoning", "task #2 reasoning:**final copy**"));
+    }
 }
