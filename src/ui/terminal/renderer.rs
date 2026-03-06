@@ -258,16 +258,15 @@ impl Renderer {
                 settings::GLYPH_TOOL_CALL_PLAIN
             );
         }
-        if let Some(why) = parse_tool_arg(args, "why") {
-            let why_preview = truncate_single_line(&why, 120);
+        if let Some(reason) = tool_call_reason_preview(name, args) {
             if self.color {
                 eprintln!(
-                    "\r{}  why: {}",
+                    "\r{}  {}",
                     settings::INDENT_1,
-                    why_preview.with(settings::color_tool_call_args())
+                    reason.with(settings::color_tool_call_args())
                 );
             } else {
-                eprintln!("\r{}  why: {why_preview}", settings::INDENT_1);
+                eprintln!("\r{}  {reason}", settings::INDENT_1);
             }
         }
         mark_stream_nonblank(BlockTarget::Stderr);
@@ -1070,6 +1069,23 @@ fn approval_block_max_source_lines() -> Option<usize> {
     None
 }
 
+/// Build the optional second-line justification preview for one tool call.
+fn tool_call_reason_preview(name: &str, args: &str) -> Option<String> {
+    // `run_shell` already renders the same rationale in the approval/command UI,
+    // so repeating it here only adds duplicate console noise.
+    if name == "run_shell" {
+        return None;
+    }
+
+    let why = parse_tool_arg(args, "why")?;
+    let trimmed = why.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(truncate_single_line(trimmed, 120))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1137,5 +1153,20 @@ mod tests {
     fn approval_blocks_do_not_apply_renderer_side_line_preview() {
         // Expanded approval commands must not be clipped by renderer preview logic.
         assert_eq!(approval_block_max_source_lines(), None);
+    }
+
+    #[test]
+    fn tool_call_reason_preview_omits_run_shell_why() {
+        let args = r#"{"command":"echo hi","why":"Inspect the current shell state."}"#;
+        assert_eq!(tool_call_reason_preview("run_shell", args), None);
+    }
+
+    #[test]
+    fn tool_call_reason_preview_returns_plain_reason_for_other_tools() {
+        let args = r#"{"path":"README.md","why":"Inspect the current README before editing."}"#;
+        assert_eq!(
+            tool_call_reason_preview("read_file", args).as_deref(),
+            Some("Inspect the current README before editing.")
+        );
     }
 }

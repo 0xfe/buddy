@@ -67,7 +67,7 @@ Detailed inventory: [feature-catalog.md](feature-catalog.md).
 - Built-in tools:
   - `run_shell`, `read_file`, `write_file`, `fetch_url`, `web_search`, `tmux_capture_pane`, `tmux_send_keys`, `time`
   - tmux lifecycle tools: `tmux_create_session`, `tmux_kill_session`, `tmux_create_pane`, `tmux_kill_pane`
-  - every tool call requires a concise `why` rationale, and tool-call console rendering surfaces that rationale to the operator
+  - every tool call requires a concise `why` rationale; non-shell tool calls render that rationale as a plain indented line, while `run_shell` keeps the same justification in its dedicated approval/shell UI to avoid duplicate console output
   - tmux-aware selectors on shell/capture/send tools (`session`, `pane`) with shared-pane defaulting; blank or whitespace selector fields are treated as unset and resolve to the default shared pane/session
   - explicit missing managed targets: `tmux_capture_pane` auto-recovers to default shared pane with a notice; mutating tmux tools stay strict and return remediation errors
 - Multi-target execution for shell/file workflows:
@@ -91,6 +91,7 @@ Detailed inventory: [feature-catalog.md](feature-catalog.md).
   - request-scoped context annotation before each model request (model metadata + tmux state + annotated history ledger)
   - request-scoped final tail-instruction message appended to every model request (active tmux route, default-vs-explicit pane targeting, shared-shell safety)
   - assistant text that arrives in the same model response as tool calls is streamed to the console instead of being hidden until task completion
+  - repeated successful `tmux_capture_pane` calls for the same effective pane/range return an explicit unchanged-state notice instead of re-inserting the same pane snapshot text into context
 - Output/rendering behavior:
   - semantic theme-token rendering with built-in `dark`/`light` palettes and optional `[themes.<name>]` overrides
   - startup banner includes build metadata (version, commit hash, build timestamp)

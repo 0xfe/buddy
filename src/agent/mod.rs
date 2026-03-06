@@ -12,10 +12,12 @@ use crate::runtime::{
     MetricsEvent, ModelEvent, RuntimeEvent, RuntimeEventEnvelope, TaskEvent, ToolEvent,
 };
 use crate::tokens::{self, TokenTracker};
+use crate::tools::result_envelope::wrap_result;
 use crate::tools::{ToolContext, ToolRegistry};
 use crate::types::{ChatRequest, Message, Role};
 use crate::ui::render::Renderer;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::time::Instant;
 use tokio::sync::{mpsc, watch};
@@ -61,6 +63,15 @@ struct RepeatedToolFailureState {
     repeats: usize,
     /// Last normalized tool-error payload.
     last_error: String,
+}
+
+/// Last successful tmux capture snapshot used to suppress duplicate pane dumps.
+#[derive(Debug, Clone)]
+struct RepeatedTmuxCaptureState {
+    /// Normalized capture selector/range/options (excluding rationale/poll delay).
+    key: Value,
+    /// Last successful pane snapshot text returned by the tool.
+    snapshot: String,
 }
 
 /// Persistable conversation + token state for session save/resume.
@@ -161,6 +172,8 @@ pub struct Agent {
     runtime_event_seq: u64,
     /// Optional cancellation signal receiver for the in-flight request.
     cancellation_rx: Option<watch::Receiver<bool>>,
+    /// Last successful tmux capture snapshot used to detect unchanged repeats.
+    repeated_tmux_capture: Option<RepeatedTmuxCaptureState>,
 }
 
 impl Agent {
@@ -202,6 +215,7 @@ impl Agent {
             runtime_iteration: None,
             runtime_event_seq: 0,
             cancellation_rx: None,
+            repeated_tmux_capture: None,
         }
     }
 
@@ -691,6 +705,8 @@ impl Agent {
                     let (tool_stream_tx, mut tool_stream_rx) = mpsc::unbounded_channel();
                     let tool_context = ToolContext::with_stream(tool_stream_tx);
                     let failure_key = (tc.function.name.clone(), tc.function.arguments.clone());
+                    let tmux_capture_key =
+                        normalized_tmux_capture_key(&tc.function.name, &tc.function.arguments);
 
                     let result = if repeated_tool_failures
                         .get(&failure_key)
@@ -739,6 +755,16 @@ impl Agent {
                             Err(err) => format!("Tool error: {err}"),
                         }
                     };
+                    let result = maybe_suppress_repeated_tmux_capture(
+                        &mut self.repeated_tmux_capture,
+                        tmux_capture_key,
+                        &result,
+                    );
+                    if tc.function.name != "tmux_capture_pane"
+                        && tool_may_change_tmux_pane_state(&tc.function.name)
+                    {
+                        self.repeated_tmux_capture = None;
+                    }
                     update_repeated_tool_failures(
                         &mut repeated_tool_failures,
                         failure_key,
@@ -889,6 +915,104 @@ fn normalize_tool_error(result: &str) -> Option<String> {
 fn repeated_tool_failure_result(tool_name: &str, last_error: &str) -> String {
     format!(
         "Tool error: repeated failure suppressed for `{tool_name}` with identical arguments. Last error: {last_error}. Do not retry unchanged; adjust arguments. For tmux targeting failures, omit target/session/pane to use the default shared pane, or create a managed pane first with tmux_create_pane."
+    )
+}
+
+/// Normalize capture arguments into an effective dedupe key.
+fn normalized_tmux_capture_key(tool_name: &str, arguments: &str) -> Option<Value> {
+    if tool_name != "tmux_capture_pane" {
+        return None;
+    }
+
+    let mut value: Value = serde_json::from_str(arguments).ok()?;
+    let object = value.as_object_mut()?;
+    object.remove("why");
+    object.remove("delay");
+    normalize_blank_string_field(object, "target");
+    normalize_blank_string_field(object, "session");
+    normalize_blank_string_field(object, "pane");
+    normalize_blank_string_field(object, "start");
+    normalize_blank_string_field(object, "end");
+    normalize_bool_default_field(object, "join_wrapped_lines", true);
+    normalize_bool_default_field(object, "preserve_trailing_spaces", false);
+    normalize_bool_default_field(object, "include_escape_sequences", false);
+    normalize_bool_default_field(object, "escape_non_printable", false);
+    normalize_bool_default_field(object, "include_alternate_screen", false);
+    Some(value)
+}
+
+/// Drop blank string fields so empty selectors compare the same as omitted ones.
+fn normalize_blank_string_field(object: &mut serde_json::Map<String, Value>, key: &str) {
+    if object
+        .get(key)
+        .and_then(Value::as_str)
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        object.remove(key);
+    }
+}
+
+/// Drop explicit boolean values that match the tool default.
+fn normalize_bool_default_field(
+    object: &mut serde_json::Map<String, Value>,
+    key: &str,
+    default: bool,
+) {
+    if object.get(key).and_then(Value::as_bool) == Some(default) {
+        object.remove(key);
+    }
+}
+
+/// Replace repeated identical tmux pane dumps with a targeted unchanged notice.
+fn maybe_suppress_repeated_tmux_capture(
+    state: &mut Option<RepeatedTmuxCaptureState>,
+    key: Option<Value>,
+    result: &str,
+) -> String {
+    let Some(key) = key else {
+        return result.to_string();
+    };
+
+    let Some(snapshot) = parse_tmux_capture_snapshot(result) else {
+        state.take();
+        return result.to_string();
+    };
+
+    let repeated = state
+        .as_ref()
+        .is_some_and(|previous| previous.key == key && previous.snapshot == snapshot);
+    *state = Some(RepeatedTmuxCaptureState { key, snapshot });
+
+    if repeated {
+        repeated_tmux_capture_result().unwrap_or_else(|_| result.to_string())
+    } else {
+        result.to_string()
+    }
+}
+
+/// Extract the pane snapshot text from the standard tool-result envelope.
+fn parse_tmux_capture_snapshot(result: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(result).ok()?;
+    value.get("result")?.as_str().map(ToOwned::to_owned)
+}
+
+/// Synthetic result returned when the model asks for the same unchanged pane again.
+fn repeated_tmux_capture_result() -> Result<String, crate::error::ToolError> {
+    wrap_result(
+        "tmux pane snapshot unchanged from the previous successful capture for the same pane/range. You are repeating the same tmux_capture_pane operation and nothing has changed. Do not poll again immediately with identical arguments; wait, change the selector/range, or take a different action first.",
+    )
+}
+
+/// True when a tool may have changed tmux pane state since the last capture.
+fn tool_may_change_tmux_pane_state(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "run_shell"
+            | "tmux_send_keys"
+            | "tmux_create_session"
+            | "tmux_kill_session"
+            | "tmux_create_pane"
+            | "tmux_kill_pane"
     )
 }
 
@@ -1455,7 +1579,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl crate::tools::Tool for SnapshotCaptureTool {
+    impl crate::tools::Tool for std::sync::Arc<SnapshotCaptureTool> {
         fn name(&self) -> &'static str {
             "tmux_capture_pane"
         }
@@ -1736,12 +1860,12 @@ mod tests {
         config.display.show_tokens = false;
 
         let mut tools = ToolRegistry::new();
-        tools.register(SnapshotCaptureTool {
+        tools.register(std::sync::Arc::new(SnapshotCaptureTool {
             snapshots: StdMutex::new(VecDeque::from(vec![
                 "snapshot-one".to_string(),
                 "snapshot-two".to_string(),
             ])),
-        });
+        }));
         tools.register(EchoTool);
 
         let mut agent = Agent::with_client(config, tools, Box::new(client.clone()));
@@ -1775,5 +1899,29 @@ mod tests {
         assert!(!second_dynamic_context.contains("snapshot-one"));
         assert_eq!(requests[0].messages[1].role, Role::User);
         assert_eq!(requests[1].messages[1].role, Role::User);
+    }
+
+    #[test]
+    fn repeated_identical_tmux_capture_results_return_notice() {
+        let mut state = None;
+        let key = normalized_tmux_capture_key(
+            "tmux_capture_pane",
+            r#"{"session":"","pane":"","why":"Check whether the pane output changed."}"#,
+        )
+        .expect("normalized key");
+        let first = wrap_result("same-pane-output").expect("first envelope");
+        let second = wrap_result("same-pane-output").expect("second envelope");
+
+        let first_result =
+            maybe_suppress_repeated_tmux_capture(&mut state, Some(key.clone()), &first);
+        let second_result = maybe_suppress_repeated_tmux_capture(&mut state, Some(key), &second);
+
+        assert_eq!(
+            parse_tmux_capture_snapshot(&first_result).as_deref(),
+            Some("same-pane-output")
+        );
+        let notice = parse_tmux_capture_snapshot(&second_result).expect("notice payload");
+        assert!(notice.contains("tmux pane snapshot unchanged"));
+        assert!(notice.contains("nothing has changed"));
     }
 }
