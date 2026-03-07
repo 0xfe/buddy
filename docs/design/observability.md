@@ -17,6 +17,12 @@ Buddy can analyze trace files offline:
 - `buddy trace summary <file>`
 - `buddy trace replay <file> --turn <n>`
 - `buddy trace context-evolution <file>`
+- `buddy traceui <file> [--stream]`
+
+`buddy traceui` is a terminal UI for inspecting raw trace events with
+color-coded event families, keyboard navigation, and expandable event detail.
+It parses trace JSONL generically from raw JSON values so unknown future event
+shapes still render instead of failing hard.
 
 ## Verbose Logging
 

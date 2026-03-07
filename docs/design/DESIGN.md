@@ -52,6 +52,7 @@ Detailed inventory: [feature-catalog.md](feature-catalog.md).
   - session resume (`buddy resume <id|--last>`)
   - setup/auth (`buddy init`, `buddy login`, `buddy logout`)
   - trace analysis (`buddy trace summary|replay|context-evolution`)
+  - interactive trace viewer (`buddy traceui <file> [--stream]`)
   - first-run guided init auto-bootstrap when no config exists
 - Global targeting and runtime flags:
   - config/model/base-url overrides
@@ -99,6 +100,7 @@ Detailed inventory: [feature-catalog.md](feature-catalog.md).
   - assistant response on stdout
   - status/chrome on stderr
   - progress/liveness indicators and structured tool/result rendering
+  - `traceui` uses a colorized two-pane alternate-screen viewer with compact event summaries, ~500-character detail previews, `space` expand, arrow/vim navigation, and stream follow/pause behavior
 - Token/context behavior:
   - exact usage tracking when provider returns `usage`
   - heuristic context estimation + warnings

@@ -6,5 +6,5 @@
 
 Current state:
 - active plans:
-  - none
+  - `plan-2026-03-07-traceui.md`
 - all historical plans are archived in `docs/plans/completed/`.

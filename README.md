@@ -55,6 +55,7 @@ tmux attach -t buddy-agent-mo # on a separate terminal (or use the exact attach 
 
 # Optional: runtime event trace (JSONL) for debugging
 buddy --trace /tmp/buddy.trace.jsonl
+buddy traceui /tmp/buddy.trace.jsonl --stream
 
 # Optional: structured diagnostics
 buddy -vv
@@ -134,7 +135,7 @@ Full build, test, versioning, and release CI details are in [docs/developer/BUIL
 - [docs/design/remote-execution.md](docs/design/remote-execution.md): local/container/ssh/tmux execution model.
 - [docs/design/terminal-repl.md](docs/design/terminal-repl.md): REPL input/rendering/runtime UX details.
 - [docs/design/observability.md](docs/design/observability.md): runtime trace format, redaction, and debugging workflow.
-- [docs/developer/tracing-cli.md](docs/developer/tracing-cli.md): `buddy trace` summary/replay/context-evolution usage and examples.
+- [docs/developer/tracing-cli.md](docs/developer/tracing-cli.md): `buddy trace` summary/replay/context-evolution plus `buddy traceui` usage and examples.
 - [docs/developer/testing-ui.md](docs/developer/testing-ui.md): tmux-based opt-in UI regression harness.
 - [docs/developer/model-regression-tests.md](docs/developer/model-regression-tests.md): live provider regression suite.
 - [docs/tips/](docs/tips): short tactical notes for contributors and AI agents.

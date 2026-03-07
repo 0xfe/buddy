@@ -116,6 +116,14 @@ pub enum Command {
         #[command(subcommand)]
         command: TraceCommand,
     },
+    /// Interactively inspect a runtime trace file.
+    Traceui {
+        /// Path to JSONL trace file.
+        file: String,
+        /// Keep watching the file for appended events.
+        #[arg(long = "stream", default_value_t = false)]
+        stream: bool,
+    },
 }
 
 /// Trace analysis subcommands.
@@ -331,6 +339,17 @@ mod tests {
             Some(Command::Trace {
                 command: TraceCommand::ContextEvolution { file }
             }) if file == "/tmp/buddy.trace.jsonl"
+        ));
+    }
+
+    // Verifies interactive trace viewer command parsing.
+    #[test]
+    fn traceui_subcommand_parses() {
+        let args = Args::parse_from(["buddy", "traceui", "/tmp/buddy.trace.jsonl", "--stream"]);
+        assert!(matches!(
+            args.command,
+            Some(Command::Traceui { file, stream })
+                if file == "/tmp/buddy.trace.jsonl" && stream
         ));
     }
 }

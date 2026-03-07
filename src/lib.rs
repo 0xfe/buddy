@@ -55,6 +55,8 @@ pub mod tmux;
 pub mod tokens;
 /// Built-in tool implementations and registry.
 pub mod tools;
+/// Interactive trace-viewer primitives used by `buddy traceui`.
+pub mod traceui;
 /// Backward-compatible terminal UI re-exports (`ui::terminal` is canonical).
 pub mod tui;
 /// API model types for chat/completions payloads.

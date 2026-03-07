@@ -123,6 +123,17 @@ pub(crate) async fn run(args: crate::cli::Args) -> i32 {
         return 0;
     }
 
+    if let Some(cli::Command::Traceui { file, stream }) = args.command.as_ref() {
+        if let Err(msg) = buddy::traceui::run(buddy::traceui::TraceUiOptions {
+            file: file.into(),
+            stream: *stream,
+        }) {
+            bootstrap_renderer.error(&msg);
+            return 1;
+        }
+        return 0;
+    }
+
     if let Err(msg) = maybe_run_auto_init(&bootstrap_renderer, &args).await {
         bootstrap_renderer.error(&msg);
         return 1;
