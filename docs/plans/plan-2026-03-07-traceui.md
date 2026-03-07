@@ -81,4 +81,5 @@ The existing trace tooling is useful for summaries and replay, but it is still l
   - Added follow/inspect mode behavior, paused-stream pending counters, and `Esc` resume semantics.
 - 2026-03-07: M4 complete.
   - Added focused tests and docs updates.
-  - Validation and commit ID: pending.
+  - Validation complete: `cargo fmt`, `cargo test traceui -- --nocapture`, `cargo test`.
+  - Implementation commit: `1392df3` (`Add interactive traceui viewer`).
