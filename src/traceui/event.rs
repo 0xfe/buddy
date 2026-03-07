@@ -66,11 +66,8 @@ impl TraceEvent {
             &payload,
             None,
         );
-        let detail_preview = truncate_with_suffix_by_chars(
-            &detail_full,
-            PREVIEW_CHAR_LIMIT,
-            "\n… [space to expand]",
-        );
+        let detail_preview =
+            truncate_with_suffix_by_chars(&detail_full, PREVIEW_CHAR_LIMIT, "\n… [truncated]");
 
         Self {
             line_no,
@@ -94,11 +91,8 @@ impl TraceEvent {
             "Event\n  line: {line_no}\n  family: ParseError\n\nParse error\n  {error}\n\nRaw line\n  {}",
             line.trim_end()
         );
-        let detail_preview = truncate_with_suffix_by_chars(
-            &detail_full,
-            PREVIEW_CHAR_LIMIT,
-            "\n… [space to expand]",
-        );
+        let detail_preview =
+            truncate_with_suffix_by_chars(&detail_full, PREVIEW_CHAR_LIMIT, "\n… [truncated]");
         Self {
             line_no,
             seq: None,
@@ -113,15 +107,6 @@ impl TraceEvent {
             detail_full,
             detail_preview,
             parse_error: true,
-        }
-    }
-
-    /// Return the text that should be shown for this event in the detail pane.
-    pub fn detail(&self, expanded: bool) -> &str {
-        if expanded {
-            &self.detail_full
-        } else {
-            &self.detail_preview
         }
     }
 
@@ -450,6 +435,20 @@ fn render_value_block(out: &mut String, value: &Value, indent: usize, key: Optio
     match value {
         Value::Object(map) => render_object_block(out, map, indent, key),
         Value::Array(items) => render_array_block(out, items, indent, key),
+        Value::String(text) => {
+            if let Some(decoded) = parse_embedded_json(text) {
+                let label = key
+                    .map(|key| format!("{key} (json)"))
+                    .unwrap_or_else(|| "decoded_json".to_string());
+                render_value_block(out, &decoded, indent, Some(label.as_str()));
+            } else {
+                let label = key.map(|key| format!("{key}: ")).unwrap_or_default();
+                out.push_str(&prefix);
+                out.push_str(&label);
+                out.push_str(&scalar_to_string(value));
+                out.push('\n');
+            }
+        }
         _ => {
             let label = key.map(|key| format!("{key}: ")).unwrap_or_default();
             out.push_str(&prefix);
@@ -523,8 +522,23 @@ fn scalar_to_string(value: &Value) -> String {
         Value::Null => "null".to_string(),
         Value::Bool(boolean) => boolean.to_string(),
         Value::Number(number) => number.to_string(),
-        Value::String(text) => text.to_string(),
+        Value::String(text) => serde_json::to_string(text).unwrap_or_else(|_| text.to_string()),
         Value::Object(_) | Value::Array(_) => value_to_inline_string(value),
+    }
+}
+
+/// Decode JSON-looking string payloads so nested structured fields render as
+/// readable blocks instead of opaque inline blobs.
+fn parse_embedded_json(text: &str) -> Option<Value> {
+    let trimmed = text.trim();
+    if !(trimmed.starts_with('{') || trimmed.starts_with('[')) {
+        return None;
+    }
+    let value = serde_json::from_str::<Value>(trimmed).ok()?;
+    if matches!(value, Value::Object(_) | Value::Array(_)) {
+        Some(value)
+    } else {
+        None
     }
 }
 
@@ -622,6 +636,15 @@ mod tests {
         );
         let event = TraceEvent::from_line(1, &line);
         assert!(event.detail_preview.len() < event.detail_full.len());
-        assert!(event.detail_preview.contains("[space to expand]"));
+        assert!(event.detail_preview.contains("[truncated]"));
+    }
+
+    #[test]
+    fn expands_json_encoded_string_fields_in_detail() {
+        let line = r#"{"seq":11,"event":{"type":"Tool","payload":{"call_requested":{"name":"tmux_capture_pane","arguments_json":"{\"target\":\"pane-1\",\"lines\":[\"a\",\"b\"]}"}}}}"#;
+        let event = TraceEvent::from_line(1, line);
+        assert!(event.detail_full.contains("arguments_json (json):"));
+        assert!(event.detail_full.contains("target: \"pane-1\""));
+        assert!(event.detail_full.contains("- \"a\""));
     }
 }

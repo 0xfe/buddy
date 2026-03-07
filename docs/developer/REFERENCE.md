@@ -14,7 +14,7 @@ This page centralizes command, flag, model, theme, config, and tool reference ma
 - `buddy trace summary <file>`: summarize one JSONL runtime trace.
 - `buddy trace replay <file> --turn <n>`: inspect one prompt turn from trace.
 - `buddy trace context-evolution <file>`: inspect context/token/cost evolution over time.
-- `buddy traceui <file> [--stream]`: interactively browse raw trace events with keyboard navigation and expandable event detail.
+- `buddy traceui <file> [--stream]`: interactively browse raw trace events with keyboard navigation, scrollable always-expanded detail, and live streaming follow mode.
 
 Login soft-fail behavior:
 

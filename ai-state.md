@@ -25,7 +25,7 @@ cargo run -- --trace /tmp/buddy.trace.jsonl
 - API/auth/config: `src/api/`, `src/auth/`, `src/config/`.
 - Tooling: `src/tools/` (+ execution backends under `src/tools/execution/`).
 - Terminal UI layers: `src/ui/`, `src/ui/terminal/`, `src/repl/` (`src/tui/` is compatibility re-export only).
-- Trace viewer: `src/traceui/` (generic JSONL parsing, incremental tailing, interactive viewer state/rendering).
+- Trace viewer: `src/traceui/` (generic JSONL parsing, incremental tailing, split-pane interactive viewer state/rendering, diff-based repainting).
 - Shared tmux domain: `src/tmux/`.
 
 ## Invariants to preserve
@@ -42,6 +42,7 @@ cargo run -- --trace /tmp/buddy.trace.jsonl
 - Local execution commonly uses tmux-backed contexts; see `docs/tips/tmux.md` + `docs/design/remote-execution.md`.
 - Managed tmux selector behavior: blank/whitespace `target`/`session`/`pane` inputs normalize to the default shared pane/session, `tmux_capture_pane` auto-falls back to the default shared pane when an explicit managed target is missing, and mutating tools keep strict missing-target errors.
 - All tools now require a concise `why` rationale; non-shell tool calls show that rationale as a plain indented line in the console, `run_shell` keeps justification only in its approval/shell UI, assistant text attached to tool-calling turns is streamed live, repeated unchanged `tmux_capture_pane` snapshots are replaced with an explicit "nothing changed" notice, console reasoning hides `reasoning_stream` duplicates in favor of the final `reasoning` block, and request/session cost estimates are no longer computed or shown.
+- `traceui` keeps the right pane always expanded and vertically scrollable, decodes JSON embedded inside string fields where possible, colorizes structured detail values, and repaints only changed rows to reduce flicker during navigation/streaming.
 - Prompt assembly now adds request-scoped context annotation (`--` section separators, tmux snapshot/route state, actor/action history ledger) plus a final tail-instruction message reinforcing default tmux targeting and shared-shell safety (`set -e`/`exit`/`exec` restrictions).
 
 ## Docs map for AI agents

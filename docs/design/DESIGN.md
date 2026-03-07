@@ -100,7 +100,7 @@ Detailed inventory: [feature-catalog.md](feature-catalog.md).
   - assistant response on stdout
   - status/chrome on stderr
   - progress/liveness indicators and structured tool/result rendering
-  - `traceui` uses a colorized two-pane alternate-screen viewer with compact event summaries, ~500-character detail previews, `space` expand, arrow/vim navigation, and stream follow/pause behavior
+  - `traceui` uses a colorized two-pane alternate-screen viewer with compact event summaries, always-expanded structured detail, typed/colorized right-pane values, vim/arrow event navigation, right-pane vertical scrolling, stream follow/pause behavior, and diff-based repainting to reduce flicker
 - Token/context behavior:
   - exact usage tracking when provider returns `usage`
   - heuristic context estimation + warnings

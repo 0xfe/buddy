@@ -20,9 +20,19 @@ Buddy can analyze trace files offline:
 - `buddy traceui <file> [--stream]`
 
 `buddy traceui` is a terminal UI for inspecting raw trace events with
-color-coded event families, keyboard navigation, and expandable event detail.
+color-coded event families, keyboard navigation, and a split-pane layout.
 It parses trace JSONL generically from raw JSON values so unknown future event
 shapes still render instead of failing hard.
+
+Interaction and rendering notes:
+
+- left pane: compact event summaries with family-aware colors
+- right pane: always-expanded structured detail with colorized keys/scalars
+- nested JSON encoded inside string fields is decoded and rendered recursively when valid
+- `j/k`, arrows, `b/f`, and `g/G` navigate the event list
+- `u/d` scrolls the right-hand detail pane
+- `--stream` follows appended events until you start navigating; `Esc` resumes follow mode
+- redraws are diff-based so unchanged rows are not repainted every poll tick
 
 ## Verbose Logging
 
