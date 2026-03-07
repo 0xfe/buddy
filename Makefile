@@ -70,6 +70,7 @@ test:
 
 test-ui-regression:
 	cargo test --test ui_tmux_regression -- --ignored --nocapture
+	cargo test --test traceui_tmux_regression -- --ignored --nocapture
 
 test-model-regression:
 	env -u BUDDY_API_KEY -u AGENT_API_KEY -u BUDDY_BASE_URL -u AGENT_BASE_URL -u BUDDY_MODEL -u AGENT_MODEL cargo test --test model_regression -- --ignored --nocapture

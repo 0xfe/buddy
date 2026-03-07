@@ -14,6 +14,7 @@ real REPL rendering behavior in tmux.
 Integration test entrypoint:
 
 - `tests/ui_tmux_regression.rs`
+- `tests/traceui_tmux_regression.rs`
 
 Harness utilities:
 
@@ -42,6 +43,15 @@ Current scenarios:
 5. Missing-target suppression flow:
    - Fake model repeats the same missing `tmux_send_keys` target.
    - Verify repeated identical failures are suppressed with deterministic guidance.
+6. Traceui split-pane visibility flow:
+   - Launch `buddy traceui` against a synthetic trace file with pathological long left-pane rows.
+   - Verify the divider and right-pane detail remain visible.
+7. Traceui detail-scroll flow:
+   - Launch `buddy traceui` against a trace file whose selected event detail exceeds the pane height.
+   - Use raw keypresses to scroll and verify lower content appears.
+8. Traceui stream pause/resume flow:
+   - Launch `buddy traceui --stream`, append new events, navigate away from follow mode, and verify paused buffering.
+   - Resume with `Esc` and verify the newest event is selected again.
 
 ## Runtime Dependencies
 
@@ -83,6 +93,7 @@ Opt-in direct cargo command:
 
 ```bash
 cargo test --test ui_tmux_regression -- --ignored --nocapture
+cargo test --test traceui_tmux_regression -- --ignored --nocapture
 ```
 
 Makefile wrapper:
@@ -93,12 +104,13 @@ make test-ui-regression
 
 ## Determinism Strategy
 
-1. The integration test starts a local scripted fake model HTTP server.
+1. REPL scenarios start a local scripted fake model HTTP server.
 2. The fake server returns:
    - tool-call response on request #1,
    - final assistant text on request #2.
 3. Responses include short delays to exercise spinner/liveness UI paths.
-4. The test writes and uses an isolated `buddy.toml` profile that targets the fake server.
+4. Traceui scenarios instead write synthetic JSONL trace files directly and drive the viewer with raw tmux keypresses.
+5. Each test uses isolated HOME/work directories under its artifact root.
 
 ## Extension Guidance
 

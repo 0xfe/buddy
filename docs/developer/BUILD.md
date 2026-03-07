@@ -10,7 +10,7 @@ Core targets:
 make build          # cargo build --release
 make build-debug    # cargo build
 make test           # cargo test
-make test-ui-regression # tmux UI regressions (ignored by default)
+make test-ui-regression # tmux REPL + traceui regressions (ignored by default)
 make test-model-regression # live model/provider regressions (ignored by default)
 make prompt-eval MODEL=gpt-spark PROMPTS=prompts/eval.txt
 make test-installer-smoke # offline installer smoke test
@@ -39,7 +39,7 @@ make test
 Optional/explicit suites:
 
 ```bash
-# tmux-based UI integration regressions
+# tmux-based REPL + traceui integration regressions
 make test-ui-regression
 
 # live provider/model regressions

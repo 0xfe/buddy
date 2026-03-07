@@ -362,6 +362,28 @@ impl StyledLine {
     }
 }
 
+/// Clip one styled line to a fixed width and pad the remainder.
+fn fit_styled_line(line: &StyledLine, width: usize, fill_color: Color) -> StyledLine {
+    let mut fitted = StyledLine::default();
+    let mut used = 0usize;
+    for span in &line.spans {
+        if used >= width {
+            break;
+        }
+        let remaining = width.saturating_sub(used);
+        let clipped = clip_to_width(&span.text, remaining);
+        if clipped.is_empty() {
+            continue;
+        }
+        used = used.saturating_add(clipped.chars().count());
+        fitted.push(clipped, span.color, span.bold);
+    }
+    if used < width {
+        fitted.push(" ".repeat(width - used), fill_color, false);
+    }
+    fitted
+}
+
 /// Concrete frame snapshot used for diff-based terminal repainting.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RenderFrame {
@@ -460,7 +482,8 @@ fn build_frame(state: &TraceUiState, cols: u16, rows: u16) -> RenderFrame {
         }
         let mut line = StyledLine::default();
         if let Some(left) = list_lines.get(row_idx) {
-            line.spans.extend(left.spans.clone());
+            line.spans
+                .extend(fit_styled_line(left, list_width, Color::White).spans);
         } else {
             line.push(" ".repeat(list_width), Color::White, false);
         }
@@ -468,7 +491,10 @@ fn build_frame(state: &TraceUiState, cols: u16, rows: u16) -> RenderFrame {
         line.push("│", Color::DarkGrey, false);
         line.push(" ", Color::DarkGrey, false);
         if let Some(right) = detail_lines.get(row_idx) {
-            line.spans.extend(right.spans.clone());
+            line.spans
+                .extend(fit_styled_line(right, detail_width, Color::White).spans);
+        } else {
+            line.push(" ".repeat(detail_width), Color::White, false);
         }
         lines[target_row] = line;
     }
@@ -941,5 +967,16 @@ mod tests {
         let frame = build_frame(&state, 100, 20);
         renderer.last_frame = Some(frame.clone());
         assert_eq!(renderer.last_frame.as_ref(), Some(&frame));
+    }
+
+    #[test]
+    fn long_left_panel_rows_do_not_hide_right_panel() {
+        let mut event = event(1);
+        event.title = "title ".repeat(20);
+        event.summary = "summary ".repeat(30);
+        let state = TraceUiState::new(PathBuf::from("trace.jsonl"), false, vec![event]);
+        let frame = build_frame(&state, 90, 16);
+        let first_body_row = styled_line_to_plain(&frame.lines[2]);
+        assert!(first_body_row.contains("│ Tool/result"));
     }
 }

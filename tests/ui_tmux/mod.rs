@@ -2,6 +2,7 @@
 //!
 //! This module intentionally keeps shell/tmux orchestration in one place so
 //! ignored integration tests can focus on expected UI behavior assertions.
+#![allow(dead_code)]
 
 use serde_json::json;
 use std::fs;
@@ -100,9 +101,27 @@ pub struct TmuxHarness {
 impl TmuxHarness {
     /// Create a detached tmux session and resolve the primary pane target.
     pub fn start(session_name: &str) -> HarnessResult<Self> {
+        Self::start_sized(session_name, 120, 40)
+    }
+
+    /// Create a detached tmux session with an explicit terminal size.
+    pub fn start_sized(session_name: &str, cols: u16, rows: u16) -> HarnessResult<Self> {
         // Best-effort cleanup for stale buddy-managed sessions from prior test runs.
         cleanup_test_managed_tmux_session(session_name);
-        run_tmux(["new-session", "-d", "-s", session_name, "-n", "harness"])?;
+        let cols = cols.to_string();
+        let rows = rows.to_string();
+        run_tmux([
+            "new-session",
+            "-d",
+            "-x",
+            &cols,
+            "-y",
+            &rows,
+            "-s",
+            session_name,
+            "-n",
+            "harness",
+        ])?;
         let pane_target = run_tmux([
             "display-message",
             "-p",
@@ -146,6 +165,14 @@ impl TmuxHarness {
     pub fn send_line(&self, line: &str) -> HarnessResult<()> {
         run_tmux(["send-keys", "-t", &self.pane_target, "-l", line])?;
         run_tmux(["send-keys", "-t", &self.pane_target, "Enter"])?;
+        Ok(())
+    }
+
+    /// Send one or more key tokens into the harness pane.
+    pub fn send_keys(&self, keys: &[&str]) -> HarnessResult<()> {
+        let mut args = vec!["send-keys", "-t", &self.pane_target];
+        args.extend(keys.iter().copied());
+        run_tmux(args)?;
         Ok(())
     }
 
@@ -257,9 +284,15 @@ impl TmuxHarness {
             shell_quote(model_profile),
             shell_quote(&self.session_name)
         );
+        self.launch_recorded_command(&run, &cast_path)
+    }
+
+    /// Build an asciinema wrapper for an arbitrary command.
+    pub fn launch_recorded_command(&self, command: &str, cast_path: &Path) -> String {
+        let cast_path = canonicalize_path(cast_path);
         format!(
             "asciinema record --overwrite -q --command {} {}",
-            shell_quote(&run),
+            shell_quote(command),
             shell_quote(&cast_path.display().to_string())
         )
     }
